@@ -1,3 +1,118 @@
+.sign-button {
+  font-family: 'Rye', 'Georgia', serif;
+  font-size: 15px;
+  letter-spacing: 0.5px;
+  color: #f3e2b3;
+  background:
+    radial-gradient(ellipse at top, rgba(255, 255, 255, 0.06), transparent 60%),
+    linear-gradient(155deg, #7a4a26 0%, #5c3418 55%, #472710 100%);
+  border: 3px solid #2b160a;
+  border-radius: 10px;
+  box-shadow:
+    inset 0 0 0 2px #c99a4e,
+    inset 0 0 0 5px #2b160a,
+    inset 0 2px 4px rgba(255, 255, 255, 0.15),
+    inset 0 -3px 6px rgba(0, 0, 0, 0.5),
+    0 3px 0 #1a0f06,
+    0 6px 10px rgba(0, 0, 0, 0.45);
+  padding: 13px 18px;
+  cursor: pointer;
+  text-shadow: 1px 1px 0 #000, 0 0 8px rgba(255, 200, 110, 0.25);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+}
+
+.sign-button:hover:not(:disabled) {
+  filter: brightness(1.12);
+  transform: translateY(-2px);
+  box-shadow:
+    inset 0 0 0 2px #ffcf7a,
+    inset 0 0 0 5px #2b160a,
+    inset 0 2px 4px rgba(255, 255, 255, 0.2),
+    inset 0 -3px 6px rgba(0, 0, 0, 0.5),
+    0 4px 0 #1a0f06,
+    0 9px 14px rgba(0, 0, 0, 0.5);
+}
+
+.sign-button:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 0 0 2px #c99a4e,
+    inset 0 0 0 5px #2b160a,
+    inset 0 2px 4px rgba(255, 255, 255, 0.1),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.5),
+    0 1px 0 #1a0f06,
+    0 2px 4px rgba(0, 0, 0, 0.4);
+}
+
+.sign-button:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.55) brightness(0.75);
+  text-shadow: none;
+}
+
+.sign-button:focus-visible {
+  outline: 2px solid #ffcf7a;
+  outline-offset: 3px;
+}
+
+.currency-badge {
+  font-family: 'Rye', 'Georgia', serif;
+  font-size: 15px;
+  color: #f3e2b3;
+  background:
+    radial-gradient(ellipse at top, rgba(255, 255, 255, 0.08), transparent 60%),
+    linear-gradient(155deg, #6b3f1d 0%, #472710 100%);
+  border: 2px solid #2b160a;
+  border-radius: 999px;
+  box-shadow:
+    inset 0 0 0 2px #c99a4e,
+    inset 0 0 0 4px #2b160a,
+    inset 0 2px 3px rgba(255, 255, 255, 0.12),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.5),
+    0 3px 6px rgba(0, 0, 0, 0.4);
+  padding: 6px 16px 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-shadow: 1px 1px 0 #000;
+}
+
+.currency-badge img {
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.6));
+}
+
+@keyframes popout-in {
+  0% { transform: scale(0.3) translateY(40px); opacity: 0; }
+  60% { transform: scale(1.04) translateY(-6px); opacity: 1; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+
+.popout-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1600;
+}
+
+.popout-bubble {
+  width: 100%;
+  height: 100%;
+  transform-origin: bottom left;
+  animation: popout-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.title-sign {
+  font-family: 'Rye', 'Georgia', serif;
+  font-weight: 400;
+  letter-spacing: 3px;
+  background: linear-gradient(180deg, #ffe9b3 0%, #d9a441 55%, #a9701e 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: #d9a441;
+  -webkit-text-stroke: 1.5px #2b160a;
+  text-shadow: 3px 3px 0 #2b160a, 0 0 24px rgba(255, 200, 110, 0.4);
+}
+
 .counter {
   font-size: 16px;
   padding: 5px 10px;

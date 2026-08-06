@@ -32,6 +32,10 @@ db.exec(`
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   )
 `);
+// 'normal' = deck livre, usa qualquer carta (ignora a coleção do jogador), pra jogo casual.
+// 'rank' = montado só com as cópias que o jogador realmente possui e tem disponíveis (não reservadas
+// em Breeding/Farming/Forno) no momento da montagem.
+try { db.exec("ALTER TABLE decks ADD COLUMN mode TEXT NOT NULL DEFAULT 'normal'"); } catch (e) {}
 
 // ---------- Decks pré-montados padrão (criados 1x, se ainda não existirem) ----------
 function expandPairs(pairs) {
@@ -115,21 +119,34 @@ app.get('/api/cards/:cardNumber', (req, res) => {
 
 // Salva um novo deck
 app.post('/api/decks', (req, res) => {
-  const { name, mainDeckCardNumbers, soulDeckCardNumbers, colors } = req.body;
+  const { name, mainDeckCardNumbers, soulDeckCardNumbers, colors, mode } = req.body;
 
   if (!name || !mainDeckCardNumbers || !soulDeckCardNumbers) {
     return res.status(400).json({ error: 'Dados incompletos.' });
   }
 
+  const deckMode = mode === 'rank' ? 'rank' : 'normal';
+
+  if (deckMode === 'rank') {
+    const counts = {};
+    for (const num of mainDeckCardNumbers) counts[num] = (counts[num] || 0) + 1;
+    for (const [num, needed] of Object.entries(counts)) {
+      if (getAvailableQuantity(num) < needed) {
+        return res.status(400).json({ error: `Deck Rank inválido: você não tem ${needed} cópia(s) disponível(is) de ${num}.` });
+      }
+    }
+  }
+
   const stmt = db.prepare(`
-    INSERT INTO decks (name, main_deck, soul_deck, colors)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO decks (name, main_deck, soul_deck, colors, mode)
+    VALUES (?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     name,
     JSON.stringify(mainDeckCardNumbers),
     JSON.stringify(soulDeckCardNumbers),
-    JSON.stringify(colors || [])
+    JSON.stringify(colors || []),
+    deckMode
   );
 
   res.json({ id: result.lastInsertRowid, message: 'Deck salvo com sucesso.' });
@@ -137,7 +154,7 @@ app.post('/api/decks', (req, res) => {
 
 // Lista todos os decks salvos (resumo, com os 2 primeiros Lucky Pals pra exibição)
 app.get('/api/decks', (req, res) => {
-  const rows = db.prepare('SELECT id, name, colors, main_deck, created_at FROM decks ORDER BY created_at DESC').all();
+  const rows = db.prepare('SELECT id, name, colors, main_deck, created_at, mode FROM decks ORDER BY created_at DESC').all();
   const getCard = db.prepare('SELECT * FROM cards WHERE card_number = ?');
 
   const decks = rows.map(r => {
@@ -155,6 +172,7 @@ app.get('/api/decks', (req, res) => {
       name: r.name,
       colors: JSON.parse(r.colors),
       created_at: r.created_at,
+      mode: r.mode || 'normal',
       luckyPals
     };
   });
@@ -186,6 +204,7 @@ app.get('/api/decks/:id', (req, res) => {
     id: row.id,
     name: row.name,
     colors: JSON.parse(row.colors),
+    mode: row.mode || 'normal',
     mainDeck: mainNumbers.map(buildCard),
     soulDeck: soulNumbers.map(buildCard)
   });
@@ -209,6 +228,38 @@ db.exec(`
 // Cria o jogador único (id=1) se ainda não existir — sem sistema de login por enquanto
 if (!db.prepare('SELECT id FROM players WHERE id = 1').get()) {
   db.prepare('INSERT INTO players (id, gold_coins, pal_fluid) VALUES (1, 500, 0)').run();
+}
+// Cópias "reservadas" (ocupadas em Breeding/Farming/Forno) — contam pra posse (limite de 4 e Fluido
+// de Pal ao exceder), mas ficam indisponíveis pra outra tarefa até serem liberadas de volta.
+try { db.exec('ALTER TABLE player_cards ADD COLUMN reserved INTEGER NOT NULL DEFAULT 0'); } catch (e) {}
+
+function getAvailableQuantity(cardNumber) {
+  const row = db.prepare('SELECT quantity, reserved FROM player_cards WHERE card_number = ?').get(cardNumber);
+  if (!row) return 0;
+  return row.quantity - row.reserved;
+}
+
+// Agrupa números repetidos (ex.: os 2 pais do Breeding sendo a mesma carta) antes de checar/reservar
+function groupCounts(cardNumbers) {
+  const counts = {};
+  for (const num of cardNumbers) counts[num] = (counts[num] || 0) + 1;
+  return counts;
+}
+
+function hasEnoughAvailable(cardNumbers) {
+  return Object.entries(groupCounts(cardNumbers)).every(([num, needed]) => getAvailableQuantity(num) >= needed);
+}
+
+function reserveCards(cardNumbers) {
+  for (const [num, count] of Object.entries(groupCounts(cardNumbers))) {
+    db.prepare('UPDATE player_cards SET reserved = reserved + ? WHERE card_number = ?').run(count, num);
+  }
+}
+
+function releaseCards(cardNumbers) {
+  for (const [num, count] of Object.entries(groupCounts(cardNumbers))) {
+    db.prepare('UPDATE player_cards SET reserved = MAX(0, reserved - ?) WHERE card_number = ?').run(count, num);
+  }
 }
 // Adiciona colunas de controle de trial deck se ainda não existirem (upgrade de banco já existente)
 try { db.exec('ALTER TABLE players ADD COLUMN bought_td01 INTEGER NOT NULL DEFAULT 0'); } catch (e) {}
@@ -269,9 +320,8 @@ app.post('/api/farming/start', (req, res) => {
   const cards = cardNumbers.map(num => db.prepare("SELECT * FROM cards WHERE card_number = ? AND card_type = 'Pal'").get(num));
   if (cards.some(c => !c)) return res.status(400).json({ error: 'Carta inválida.' });
 
-  for (const num of cardNumbers) {
-    const owned = db.prepare('SELECT quantity FROM player_cards WHERE card_number = ?').get(num);
-    if (!owned?.quantity) return res.status(400).json({ error: 'Você precisa possuir todas as cartas escolhidas.' });
+  if (!hasEnoughAvailable(cardNumbers)) {
+    return res.status(400).json({ error: 'Você precisa ter cópias disponíveis de todas as cartas escolhidas (algumas podem estar ocupadas em outra tarefa).' });
   }
 
   const allKeywords = cardNumbers.flatMap(getPalWorkKeywords);
@@ -294,6 +344,8 @@ app.post('/api/farming/start', (req, res) => {
     INSERT INTO farming_slot (id, pal_card_numbers, start_time, ready_time, duration_ms, repeat_on, harvest_count)
     VALUES (1, ?, ?, ?, ?, ?, 0)
   `).run(JSON.stringify(cardNumbers), startTime.toISOString(), readyTime.toISOString(), durationMs, repeat ? 1 : 0);
+
+  reserveCards(cardNumbers);
 
   res.json({ readyTime: readyTime.toISOString() });
 });
@@ -341,6 +393,7 @@ app.post('/api/farming/claim', (req, res) => {
   if (new Date() < new Date(slot.ready_time)) return res.status(400).json({ error: 'Ainda não está pronto.' });
 
   harvestIngredients();
+  releaseCards(JSON.parse(slot.pal_card_numbers));
   db.prepare('DELETE FROM farming_slot WHERE id = 1').run(); // sem repetir, encerra e libera o slot
 
   const player = db.prepare('SELECT * FROM players WHERE id = 1').get();
@@ -360,14 +413,39 @@ const OVEN_RECIPES = {
   special_cake: { amount: 30, column: 'special_cake_count' }
 };
 
+const OVEN_BASE_MINUTES = 5;
+
+function computeBakeReductionMinutes(cost) {
+  if (cost >= 1 && cost <= 4) return 2;
+  if (cost >= 5 && cost <= 7) return 3.5;
+  if (cost >= 8) return 4;
+  return 0; // sem custo
+}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS oven_slot (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    type TEXT,
+    kindling_card_number TEXT,
+    start_time TEXT,
+    ready_time TEXT
+  )
+`);
+
+function getActiveOvenSlot() {
+  return db.prepare('SELECT * FROM oven_slot WHERE id = 1').get();
+}
+
 app.post('/api/farming/bake', (req, res) => {
+  if (getActiveOvenSlot()) return res.status(400).json({ error: 'Já existe algo assando no forno.' });
+
   const { type, kindlingCardNumber } = req.body;
   const recipe = OVEN_RECIPES[type];
   if (!recipe) return res.status(400).json({ error: 'Receita inválida.' });
 
   if (!kindlingCardNumber) return res.status(400).json({ error: 'Escolha um Pal com Kindling pra acender o forno.' });
-  const owned = db.prepare('SELECT quantity FROM player_cards WHERE card_number = ?').get(kindlingCardNumber);
-  if (!owned?.quantity) return res.status(400).json({ error: 'Você não possui esse Pal.' });
+  if (getAvailableQuantity(kindlingCardNumber) < 1) return res.status(400).json({ error: 'Você não tem esse Pal disponível (ele pode estar ocupado em outra tarefa).' });
+  const kindlingCard = db.prepare('SELECT * FROM cards WHERE card_number = ?').get(kindlingCardNumber);
   const keywords = getPalWorkKeywords(kindlingCardNumber);
   if (!keywords.includes('kindling')) return res.status(400).json({ error: 'Esse Pal não tem "Kindling".' });
 
@@ -377,9 +455,50 @@ app.post('/api/farming/bake', (req, res) => {
   }
 
   db.prepare(`
-    UPDATE players SET wheat = wheat - ?, lettuce = lettuce - ?, tomato = tomato - ?, ${recipe.column} = ${recipe.column} + 1
+    UPDATE players SET wheat = wheat - ?, lettuce = lettuce - ?, tomato = tomato - ?
     WHERE id = 1
   `).run(recipe.amount, recipe.amount, recipe.amount);
+
+  const reductionMinutes = computeBakeReductionMinutes(kindlingCard?.cost ?? 0);
+  const durationMs = Math.max(0, (OVEN_BASE_MINUTES - reductionMinutes) * 60 * 1000);
+  const startTime = new Date();
+  const readyTime = new Date(startTime.getTime() + durationMs);
+
+  db.prepare(`
+    INSERT INTO oven_slot (id, type, kindling_card_number, start_time, ready_time)
+    VALUES (1, ?, ?, ?, ?)
+  `).run(type, kindlingCardNumber, startTime.toISOString(), readyTime.toISOString());
+
+  reserveCards([kindlingCardNumber]);
+
+  res.json({ ...db.prepare('SELECT * FROM players WHERE id = 1').get(), readyTime: readyTime.toISOString() });
+});
+
+app.get('/api/farming/oven-status', (req, res) => {
+  const slot = getActiveOvenSlot();
+  if (!slot) return res.json({ active: false });
+
+  const kindlingCard = db.prepare('SELECT * FROM cards WHERE card_number = ?').get(slot.kindling_card_number);
+
+  res.json({
+    active: true,
+    type: slot.type,
+    kindlingPal: kindlingCard ? { ...kindlingCard, colors: JSON.parse(kindlingCard.colors), image_url: `http://localhost:3001/${kindlingCard.image_path}` } : null,
+    startTime: slot.start_time,
+    readyTime: slot.ready_time,
+    isReady: new Date() >= new Date(slot.ready_time)
+  });
+});
+
+app.post('/api/farming/oven-claim', (req, res) => {
+  const slot = getActiveOvenSlot();
+  if (!slot) return res.status(400).json({ error: 'Nenhum Forno em andamento.' });
+  if (new Date() < new Date(slot.ready_time)) return res.status(400).json({ error: 'Ainda não está pronto.' });
+
+  const recipe = OVEN_RECIPES[slot.type];
+  db.prepare(`UPDATE players SET ${recipe.column} = ${recipe.column} + 1 WHERE id = 1`).run();
+  releaseCards([slot.kindling_card_number]);
+  db.prepare('DELETE FROM oven_slot WHERE id = 1').run();
 
   res.json(db.prepare('SELECT * FROM players WHERE id = 1').get());
 });
@@ -519,10 +638,8 @@ app.post('/api/breeding/start', (req, res) => {
     return res.status(400).json({ error: 'Já existe um Breeding em andamento.' });
   }
 
-  const owned1 = db.prepare('SELECT quantity FROM player_cards WHERE card_number = ?').get(parent1CardNumber);
-  const owned2 = db.prepare('SELECT quantity FROM player_cards WHERE card_number = ?').get(parent2CardNumber);
-  if (!owned1?.quantity || !owned2?.quantity) {
-    return res.status(400).json({ error: 'Você precisa possuir as duas cartas escolhidas.' });
+  if (!hasEnoughAvailable([parent1CardNumber, parent2CardNumber])) {
+    return res.status(400).json({ error: 'Você precisa ter cópias disponíveis das duas cartas escolhidas (elas podem estar ocupadas em outra tarefa).' });
   }
 
   const card1 = db.prepare("SELECT * FROM cards WHERE card_number = ? AND card_type = 'Pal'").get(parent1CardNumber);
@@ -541,6 +658,8 @@ app.post('/api/breeding/start', (req, res) => {
     VALUES (1, ?, ?, ?, ?, ?, 0)
   `).run(parent1CardNumber, parent2CardNumber, startTime.toISOString(), readyTime.toISOString(), result.card_number);
 
+  reserveCards([parent1CardNumber, parent2CardNumber]);
+
   res.json({ readyTime: readyTime.toISOString() });
 });
 
@@ -548,6 +667,7 @@ app.post('/api/breeding/cancel', (req, res) => {
   const slot = getActiveBreedingSlot();
   if (!slot) return res.status(400).json({ error: 'Nenhum Breeding em andamento.' });
 
+  releaseCards([slot.parent1, slot.parent2]);
   db.prepare('DELETE FROM breeding_slot WHERE id = 1').run();
   res.json({ cancelled: true });
 });
@@ -624,6 +744,7 @@ app.post('/api/breeding/claim', (req, res) => {
     db.prepare('UPDATE players SET pal_fluid = ? WHERE id = 1').run(player.pal_fluid + fluidGained);
   }
 
+  releaseCards([slot.parent1, slot.parent2]);
   db.prepare('DELETE FROM breeding_slot WHERE id = 1').run(); // libera o slot pro próximo Breeding
 
   res.json({
@@ -882,21 +1003,21 @@ app.post('/api/shop/buy-trial-deck', (req, res) => {
 
 // Cartas que o jogador possui e a quantidade de cada uma (pra tela "Coleção")
 app.get('/api/player/cards', (req, res) => {
-  res.json(db.prepare('SELECT card_number, quantity FROM player_cards WHERE quantity > 0').all());
+  res.json(db.prepare('SELECT card_number, quantity, reserved FROM player_cards WHERE quantity > 0').all());
 });
 
 // Craftar carta com Fluido de Pal (até 4 cópias)
-const CRAFT_COSTS = { RR: 50, R: 30, U: 20, C: 10 };
+const CRAFT_COSTS = { RR: 100, R: 50, U: 30, C: 15 };
 
 function getCraftCost(card) {
   if (CRAFT_COSTS[card.rarity]) return CRAFT_COSTS[card.rarity];
 
   if (card.rarity === 'TD') {
     const cost = card.cost ?? 8; // cartas sem custo (Events/Structures sem cost) caem em "demais"
-    if (cost >= 1 && cost <= 3) return 10;
-    if (cost >= 4 && cost <= 6) return 20;
-    if (cost === 7) return 30;
-    return 50; // demais
+    if (cost >= 1 && cost <= 3) return 15;
+    if (cost >= 4 && cost <= 6) return 30;
+    if (cost === 7) return 50;
+    return 100; // demais
   }
 
   return null; // outras raridades (SR/SP/OSR/SSP) continuam não-craftáveis por enquanto

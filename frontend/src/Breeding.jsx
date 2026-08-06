@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useLanguage } from './i18n/LanguageContext'
 
 const API_URL = 'http://localhost:3001'
 
 function CardPicker({ onSelect, onClose, ownedPals }) {
+  const { t } = useLanguage()
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={onClose}>
       <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: '14px', padding: '20px', width: '500px', maxWidth: '90vw', maxHeight: '80vh', overflowY: 'auto' }}>
-        <h3 style={{ marginTop: 0 }}>Escolha um Pal da sua coleção</h3>
+        <h3 style={{ marginTop: 0 }}>{t('choosePalTitle')}</h3>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: '10px' }}>
           {ownedPals.map(card => (
             <div key={card.card_number} onClick={() => onSelect(card)} style={{ cursor: 'pointer', textAlign: 'center' }}>
@@ -16,13 +18,15 @@ function CardPicker({ onSelect, onClose, ownedPals }) {
             </div>
           ))}
         </div>
-        {ownedPals.length === 0 && <p style={{ color: '#999' }}>Você ainda não tem cartas de Pal na coleção.</p>}
+        {ownedPals.length === 0 && <p style={{ color: '#999' }}>{t('noPalsOwned')}</p>}
       </div>
     </div>
   )
 }
 
-function Breeding() {
+function Breeding({ onClose } = {}) {
+  const { t } = useLanguage()
+  const [isOpen, setIsOpen] = useState(false)
   const [ownedPals, setOwnedPals] = useState([])
   const [parent1, setParent1] = useState(null)
   const [parent2, setParent2] = useState(null)
@@ -52,10 +56,12 @@ function Breeding() {
     loadStatus()
     fetch(`${API_URL}/api/player`).then(r => r.json()).then(setPlayer)
     const clockInterval = setInterval(() => setNow(Date.now()), 1000)
-    const pollInterval = setInterval(() => loadStatus(), 5000) // corrige o "preso" até virar Chocar
+    const pollInterval = setInterval(() => { loadStatus(); loadOwnedPals() }, 5000) // corrige o "preso" até virar Chocar; também recarrega os Pals disponíveis (podem ter sido liberados em outra tela)
+    const openTimeout = setTimeout(() => setIsOpen(true), 100)
     return () => {
       clearInterval(clockInterval)
       clearInterval(pollInterval)
+      clearTimeout(openTimeout)
     }
   }, [])
 
@@ -64,8 +70,9 @@ function Breeding() {
       fetch(`${API_URL}/api/cards`).then(r => r.json()),
       fetch(`${API_URL}/api/player/cards`).then(r => r.json())
     ]).then(([allCards, owned]) => {
-      const ownedNumbers = new Set(owned.map(o => o.card_number))
-      setOwnedPals(allCards.filter(c => c.card_type === 'Pal' && ownedNumbers.has(c.card_number)))
+      // só mostra Pals com pelo menos 1 cópia disponível — as ocupadas em outra tarefa não aparecem
+      const availableNumbers = new Set(owned.filter(o => o.quantity - o.reserved > 0).map(o => o.card_number))
+      setOwnedPals(allCards.filter(c => c.card_type === 'Pal' && availableNumbers.has(c.card_number)))
     })
   }
 
@@ -83,26 +90,12 @@ function Breeding() {
         const data = await res.json()
         if (!res.ok) throw new Error(data.error)
         loadStatus()
+        loadOwnedPals()
         setParent1(null)
         setParent2(null)
       })
       .catch(err => alert(err.message))
   }
-  const finishBreedingNow = async () => {
-    try {
-      const response = await fetch(`${API_URL}/api/breeding/debug-finish`, {
-        method: "POST",
-      });
-
-      console.log("Status:", response.status);
-      console.log("URL:", response.url);
-
-      const text = await response.text();
-      console.log(text);
-    } catch (e) {
-      console.error(e);
-    }
-  };
   const claimResult = () => {
     fetch(`${API_URL}/api/breeding/claim`, { method: 'POST' })
       .then(async res => {
@@ -121,7 +114,7 @@ function Breeding() {
 
   const formatCountdown = (readyTime) => {
     const diff = new Date(readyTime).getTime() - now
-    if (diff <= 0) return 'Pronto!'
+    if (diff <= 0) return t('countdownReady')
     const h = Math.floor(diff / 3600000)
     const m = Math.floor((diff % 3600000) / 60000)
     const s = Math.floor((diff % 60000) / 1000)
@@ -129,40 +122,62 @@ function Breeding() {
   }
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '700px', margin: '0 auto', textAlign: 'center' }}>
-      <Link to="/"><button style={{ marginBottom: '20px' }}>← Voltar ao Menu</button></Link>
-      <h1 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
-        <img src="/egg.png" alt="Breeding" style={{ width: '48px', height: '48px' }} /> Breeding
-      </h1>
-      <p style={{ color: '#777' }}>Combine 2 Pals da sua coleção pra gerar um novo, baseado na fórmula real do jogo. O tempo varia de 10 minutos a 24h, dependendo da raridade do resultado.</p>
+    <div style={{
+      minHeight: '100vh', background: onClose ? 'transparent' : '#1a1a2e',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px',
+      boxSizing: 'border-box', overflow: 'auto'
+    }}>
+      <div style={{
+        width: 'min(360px, 92vw)', height: 'min(720px, 92vh)', background: '#000', borderRadius: '36px',
+        padding: '10px', boxShadow: '0 20px 60px rgba(0,0,0,0.6)', position: 'relative', flexShrink: 0
+      }}>
+        <div style={{
+          width: '100%', height: '100%', borderRadius: '28px',
+          backgroundImage: 'url(/tabua.png)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat',
+          overflow: 'hidden', position: 'relative',
+          transform: isOpen ? 'scale(1)' : 'scale(0.85)',
+          opacity: isOpen ? 1 : 0,
+          transition: 'transform 0.35s ease, opacity 0.35s ease',
+          display: 'flex', flexDirection: 'column'
+        }}>
+          <div style={{ padding: '14px 16px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h2 style={{ margin: 0, fontSize: '20px', display: 'flex', alignItems: 'center', gap: '8px', color: '#fff3d6', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>
+              <img src="/egg.png" alt="Breeding" style={{ width: '24px', height: '24px' }} /> Breeding
+            </h2>
+            {onClose
+              ? <button onClick={onClose} style={{ fontSize: '13px', color: '#ffd479', background: 'none', border: 'none', cursor: 'pointer', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>{t('exit')}</button>
+              : <Link to="/" style={{ fontSize: '13px', color: '#ffd479', textDecoration: 'none', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>{t('exit')}</Link>}
+          </div>
+          <div style={{ padding: '0 16px 16px', overflowY: 'auto', flex: 1, textAlign: 'center' }}>
+      <p style={{ color: '#fff3d6', textShadow: '1px 1px 2px rgba(0,0,0,0.7)', fontSize: '13px' }}>{t('breedingIntro')}</p>
 
-      {!status && <p>Carregando...</p>}
+      {!status && <p>{t('loading')}</p>}
 
       {status && !status.active && (
         <>
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '30px', margin: '30px 0' }}>
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '16px', margin: '20px 0' }}>
             <div onClick={() => setPickingSide(1)} style={{ cursor: 'pointer', width: '140px' }}>
               {parent1 ? (
                 <img src={parent1.image_url} alt={parent1.name} style={{ width: '100%', borderRadius: '10px' }} />
               ) : (
-                <div style={{ width: '140px', height: '196px', border: '2px dashed #ccc', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999' }}>
-                  + Escolher Pal
+                <div style={{ width: '140px', height: '196px', border: '2px dashed #f3e2b3', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff3d6', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>
+                  {t('choosePalPlaceholder')}
                 </div>
               )}
-              <p style={{ fontSize: '13px', marginTop: '6px' }}>{parent1?.name || 'Pai 1'}</p>
+              <p style={{ fontSize: '13px', marginTop: '6px', color: '#fff3d6', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>{parent1?.name || t('parent1Fallback')}</p>
             </div>
 
-            <div style={{ fontSize: '32px' }}>+</div>
+            <div style={{ fontSize: '32px', color: '#fff3d6', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>+</div>
 
             <div onClick={() => setPickingSide(2)} style={{ cursor: 'pointer', width: '140px' }}>
               {parent2 ? (
                 <img src={parent2.image_url} alt={parent2.name} style={{ width: '100%', borderRadius: '10px' }} />
               ) : (
-                <div style={{ width: '140px', height: '196px', border: '2px dashed #ccc', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999' }}>
-                  + Escolher Pal
+                <div style={{ width: '140px', height: '196px', border: '2px dashed #f3e2b3', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff3d6', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>
+                  {t('choosePalPlaceholder')}
                 </div>
               )}
-              <p style={{ fontSize: '13px', marginTop: '6px' }}>{parent2?.name || 'Pai 2'}</p>
+              <p style={{ fontSize: '13px', marginTop: '6px', color: '#fff3d6', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>{parent2?.name || t('parent2Fallback')}</p>
             </div>
           </div>
 
@@ -171,7 +186,7 @@ function Breeding() {
             disabled={!parent1 || !parent2}
             style={{ padding: '12px 30px', fontSize: '14px', opacity: (!parent1 || !parent2) ? 0.5 : 1 }}>
             <img src="/egg.png" alt="" style={{ width: '18px', height: '18px', verticalAlign: 'middle', marginRight: '6px' }} />
-            Iniciar Breeding
+            {t('startBreeding')}
           </button>
         </>
       )}
@@ -183,22 +198,8 @@ function Breeding() {
             <img src="/egg.png" alt="" style={{ width: '60px', height: '60px' }} />
             <img src={status.parent2.image_url} alt="" style={{ width: '100px', borderRadius: '8px', opacity: 0.7 }} />
           </div>
-          <h2>Chocando o ovo...</h2>
-          <button
-            onClick={finishBreedingNow}
-            style={{
-              marginTop: '12px',
-              padding: '10px 20px',
-              background: '#ff4444',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '8px',
-              cursor: 'pointer'
-            }}
-          >
-              🛠 Finalizar Instantaneamente (DEBUG)
-          </button>
-          <p style={{ fontSize: '20px', fontWeight: 'bold' }}>{formatCountdown(status.readyTime)}</p>
+          <h2 style={{ color: '#fff3d6', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>{t('hatchingEgg')}</h2>
+          <p style={{ fontSize: '20px', fontWeight: 'bold', color: '#fff3d6', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>{formatCountdown(status.readyTime)}</p>
 
           <div style={{ width: '100%', maxWidth: '400px', margin: '16px auto', background: '#eee', borderRadius: '999px', height: '14px', overflow: 'hidden' }}>
             <div style={{
@@ -212,13 +213,13 @@ function Breeding() {
               onClick={() => useCake('cake')}
               disabled={!player || player.cake_count <= 0}
               style={{ padding: '8px 14px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', color: '#000', background: '#fff', border: '1px solid #ccc' }}>
-              <img src="/Cake_icon.webp" alt="" style={{ width: '20px' }} /> Usar Cake ({player?.cake_count || 0}) — -10min
+              <img src="/Cake_icon.webp" alt="" style={{ width: '20px' }} /> {t('useCakeBtn', { count: player?.cake_count || 0 })}
             </button>
             <button
               onClick={() => useCake('special_cake')}
               disabled={!player || player.special_cake_count <= 0}
               style={{ padding: '8px 14px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', color: '#000', background: '#fff', border: '1px solid #ccc' }}>
-              <img src="/Special_Cake_icon.webp" alt="" style={{ width: '20px' }} /> Usar Special Cake ({player?.special_cake_count || 0}) — -1h
+              <img src="/Special_Cake_icon.webp" alt="" style={{ width: '20px' }} /> {t('useSpecialCakeBtn', { count: player?.special_cake_count || 0 })}
             </button>
           </div>
         </div>
@@ -227,8 +228,8 @@ function Breeding() {
       {status && status.active && status.isReady && (
         <div style={{ marginTop: '30px' }}>
           <img src="/egg.png" alt="" style={{ width: '80px', height: '80px' }} />
-          <h2>O ovo está pronto pra eclodir!</h2>
-          <button onClick={claimResult} style={{ padding: '14px 30px', fontSize: '15px' }}>Chocar</button>
+          <h2 style={{ color: '#fff3d6', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>{t('eggReady')}</h2>
+          <button onClick={claimResult} style={{ padding: '14px 30px', fontSize: '15px' }}>{t('hatchBtn')}</button>
         </div>
       )}
 
@@ -246,14 +247,17 @@ function Breeding() {
       {revealedResult && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}>
           <div style={{ background: '#fff', borderRadius: '16px', padding: '30px', textAlign: 'center' }}>
-            <h2>🎉 Eclodiu!</h2>
+            <h2 style={{ color: '#222' }}>{t('hatchedTitle')}</h2>
             <img src={revealedResult.card.image_url} alt={revealedResult.card.name} style={{ width: '180px', borderRadius: '10px', margin: '10px 0' }} />
-            <p style={{ fontWeight: 'bold' }}>{revealedResult.card.name}</p>
-            {revealedResult.fluidGained > 0 && <p>Já tinha 4 cópias — ganhou {revealedResult.fluidGained} 💧 Fluido de Pal</p>}
-            <button onClick={closeReveal} style={{ padding: '10px 24px', marginTop: '10px' }}>Fechar</button>
+            <p style={{ fontWeight: 'bold', color: '#222' }}>{revealedResult.card.name}</p>
+            {revealedResult.fluidGained > 0 && <p style={{ color: '#222' }}>{t('fluidGainedMsg', { n: revealedResult.fluidGained })}</p>}
+            <button onClick={closeReveal} style={{ padding: '10px 24px', marginTop: '10px' }}>{t('close')}</button>
           </div>
         </div>
       )}
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

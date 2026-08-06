@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom'
+import './App.css'
 import CardGrid from './CardGrid'
 import DeckBuilder from './DeckBuilder'
 import { DeckList, DeckDetail } from './MyDecks'
@@ -8,10 +9,48 @@ import MyCollection from './MyCollection'
 import Shop from './Shop'
 import Breeding from './Breeding'
 import Farming from './Farming'
+import { useLanguage } from './i18n/LanguageContext'
+import { translations } from './i18n/translations'
 
 const API_URL = 'http://localhost:3001'
 
+// Emoji de bandeira não renderiza no Windows/Chrome (mostra "BR"/"US" em texto) — usamos SVG.
+function FlagIcon({ country }) {
+  if (country === 'BR') {
+    return (
+      <svg viewBox="0 0 30 21" width="26" height="18" style={{ display: 'block', borderRadius: '2px' }}>
+        <rect width="30" height="21" fill="#009c3b" />
+        <polygon points="15,2.5 27.5,10.5 15,18.5 2.5,10.5" fill="#ffdf00" />
+        <circle cx="15" cy="10.5" r="4.6" fill="#002776" />
+      </svg>
+    )
+  }
+  return (
+    <svg viewBox="0 0 30 21" width="26" height="18" style={{ display: 'block', borderRadius: '2px' }}>
+      <rect width="30" height="21" fill="#fff" />
+      {[0, 1, 2, 3, 4, 5, 6].map(i => (
+        <rect key={i} y={i * 3} width="30" height="3" fill={i % 2 === 0 ? '#b22234' : '#fff'} />
+      ))}
+      <rect width="13" height="12" fill="#3c3b6e" />
+    </svg>
+  )
+}
+
+// As descrições das missões vêm prontas do backend (em português) — traduzimos aqui pelo
+// "code" (estável) em vez de mexer no backend. Cai no texto original se o code não for reconhecido.
+function missionDescription(t, mission) {
+  const key = `missionDesc_${mission.code}`
+  if (translations.pt[key] !== undefined) return t(key)
+  const palTypeMatch = mission.code.match(/^play_3_(\w+)_pals$/)
+  if (palTypeMatch) {
+    const type = palTypeMatch[1].charAt(0).toUpperCase() + palTypeMatch[1].slice(1)
+    return t('missionDescPalType', { type })
+  }
+  return mission.description
+}
+
 function MissionsPopup({ onClose }) {
+  const { t } = useLanguage()
   const [missions, setMissions] = useState([])
   const [loading, setLoading] = useState(true)
 
@@ -42,11 +81,11 @@ function MissionsPopup({ onClose }) {
         padding: '20px', boxShadow: '0 20px 60px rgba(0,0,0,0.4)'
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-          <h2 style={{ margin: 0 }}>📅 Missões Diárias</h2>
+          <h2 style={{ margin: 0, color: '#222' }}>{t('missionsTitle')}</h2>
           <button onClick={onClose} style={{ padding: '4px 10px' }}>✕</button>
         </div>
 
-        {loading && <p>Carregando...</p>}
+        {loading && <p style={{ color: '#222' }}>{t('loading')}</p>}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           {missions.map(m => {
@@ -56,7 +95,7 @@ function MissionsPopup({ onClose }) {
                 border: '1px solid #eee', borderRadius: '10px', padding: '10px',
                 background: m.claimed ? '#f5f5f5' : '#fff'
               }}>
-                <p style={{ margin: '0 0 6px', fontSize: '13px', fontWeight: 600 }}>{m.description}</p>
+                <p style={{ margin: '0 0 6px', fontSize: '13px', fontWeight: 600, color: '#222' }}>{missionDescription(t, m)}</p>
                 <div style={{ background: '#eee', borderRadius: '6px', height: '8px', overflow: 'hidden', marginBottom: '6px' }}>
                   <div style={{ width: `${pct}%`, height: '100%', background: m.completed ? '#34c759' : '#007aff', transition: 'width 0.3s' }} />
                 </div>
@@ -66,10 +105,10 @@ function MissionsPopup({ onClose }) {
                   </span>
                   {m.completed && !m.claimed && (
                     <button onClick={() => claim(m.id)} style={{ padding: '4px 12px', fontSize: '12px', background: '#34c759', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
-                      Resgatar
+                      {t('missionsClaim')}
                     </button>
                   )}
-                  {m.claimed && <span style={{ fontSize: '11px', color: '#34c759' }}>✓ Resgatado</span>}
+                  {m.claimed && <span style={{ fontSize: '11px', color: '#34c759' }}>{t('missionsClaimed')}</span>}
                 </div>
               </div>
             )
@@ -81,48 +120,83 @@ function MissionsPopup({ onClose }) {
 }
 
 function MainMenu() {
+  const { lang, toggleLang, t } = useLanguage()
   const [player, setPlayer] = useState(null)
   const [showMissions, setShowMissions] = useState(false)
+  const [isNight, setIsNight] = useState(false)
+  const [popup, setPopup] = useState(null)
 
   useEffect(() => {
     fetch(`${API_URL}/api/player`).then(r => r.json()).then(setPlayer)
   }, [])
 
   return (
-    <div style={{ padding: '2rem', textAlign: 'center', minHeight: '100vh', position: 'relative', boxSizing: 'border-box' }}>
-      <h1>Palworld TCG</h1>
+    <div style={{
+      padding: '2rem', textAlign: 'center', minHeight: '100vh', position: 'relative', boxSizing: 'border-box',
+      backgroundImage: `url(${isNight ? '/night.png' : '/ambient.webp'})`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat'
+    }}>
+      <div style={{ position: 'fixed', top: '20px', left: '20px', display: 'flex', gap: '8px' }}>
+        <button
+          className="currency-badge"
+          onClick={() => setIsNight(n => !n)}
+          style={{ padding: '8px 14px', fontSize: '18px', cursor: 'pointer' }}
+        >
+          {isNight ? '🌙' : '☀️'}
+        </button>
+        <button
+          className="currency-badge"
+          onClick={toggleLang}
+          title={lang === 'pt' ? 'Switch to English' : 'Mudar para Português'}
+          style={{
+            width: '42px', height: '42px', padding: 0, cursor: 'pointer',
+            borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center'
+          }}
+        >
+          <FlagIcon country={lang === 'pt' ? 'BR' : 'US'} />
+        </button>
+      </div>
+
+      <h1 className="title-sign">Palworld TCG</h1>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxWidth: '300px', margin: '0 auto' }}>
-        <Link to="/catalog"><button style={{ width: '100%', padding: '12px' }}>📚 Catálogo</button></Link>
-        <Link to="/mycollection"><button style={{ width: '100%', padding: '12px' }}>📖 Coleção</button></Link>
-        <Link to="/deckbuilder"><button style={{ width: '100%', padding: '12px' }}>Montar Deck</button></Link>
-        <Link to="/mydecks"><button style={{ width: '100%', padding: '12px' }}>Meus Decks</button></Link>
-        <button style={{ width: '100%', padding: '12px' }} disabled>Encontrar Partida (em breve)</button>
-        <Link to="/game"><button style={{ width: '100%', padding: '12px' }}>Partida contra Bot</button></Link>
+        <Link to="/catalog"><button className="sign-button" style={{ width: '100%' }}>{t('menuCatalog')}</button></Link>
+        <Link to="/mycollection"><button className="sign-button" style={{ width: '100%' }}>{t('menuCollection')}</button></Link>
+        <Link to="/deckbuilder"><button className="sign-button" style={{ width: '100%' }}>{t('menuDeckBuilder')}</button></Link>
+        <Link to="/mydecks"><button className="sign-button" style={{ width: '100%' }}>{t('menuMyDecks')}</button></Link>
+        <button className="sign-button" style={{ width: '100%' }} disabled>{t('menuFindMatch')}</button>
+        <Link to="/game"><button className="sign-button" style={{ width: '100%' }}>{t('menuBotMatch')}</button></Link>
       </div>
 
       <div style={{ position: 'fixed', bottom: '20px', left: '20px', display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'flex-start' }}>
-        <Link to="/shop"><button style={{ padding: '12px 20px' }}>🛍️ Loja</button></Link>
-        <Link to="/farming"><button style={{ padding: '12px 20px' }}>🌱 Farming</button></Link>
-        <Link to="/breeding">
-          <button style={{ padding: '12px 20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <img src="/egg.png" alt="Breeding" style={{ width: '28px', height: '28px' }} />
-            Breeding
-          </button>
-        </Link>
-        <button onClick={() => setShowMissions(true)} style={{ padding: '12px 20px' }}>📅 Missões Diárias</button>
+        <button className="sign-button" onClick={() => setPopup('shop')}>{t('menuShop')}</button>
+        <button className="sign-button" onClick={() => setPopup('farming')}>{t('menuFarming')}</button>
+        <button className="sign-button" onClick={() => setPopup('breeding')} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <img src="/egg.png" alt="Breeding" style={{ width: '28px', height: '28px' }} />
+          Breeding
+        </button>
+        <button className="sign-button" onClick={() => setShowMissions(true)}>{t('menuDailyMissions')}</button>
       </div>
 
       {showMissions && <MissionsPopup onClose={() => setShowMissions(false)} />}
 
+      {popup && (
+        <div className="popout-overlay">
+          <div key={popup} className="popout-bubble">
+            {popup === 'shop' && <Shop onClose={() => setPopup(null)} />}
+            {popup === 'farming' && <Farming onClose={() => setPopup(null)} />}
+            {popup === 'breeding' && <Breeding onClose={() => setPopup(null)} />}
+          </div>
+        </div>
+      )}
+
       {player && (
         <div style={{ position: 'fixed', bottom: '20px', right: '20px', display: 'flex', gap: '10px' }}>
-          <div style={{ background: '#f0f0f0', borderRadius: '10px', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <img src="/gold-coin.png" alt="Gold" style={{ width: '18px', height: '18px' }} />
+          <div className="currency-badge">
+            <img src="/gold-coin.png" alt="Gold" style={{ width: '22px', height: '22px' }} />
             <strong>{player.gold_coins}</strong>
           </div>
-          <div style={{ background: '#f0f0f0', borderRadius: '10px', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <img src="/pal-fluid.png" alt="Fluido de Pal" style={{ width: '18px', height: '18px' }} />
+          <div className="currency-badge">
+            <img src="/pal-fluid.png" alt={t('palFluidAlt')} style={{ width: '22px', height: '22px' }} />
             <strong>{player.pal_fluid}</strong>
           </div>
         </div>

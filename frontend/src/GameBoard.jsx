@@ -1,13 +1,12 @@
 import { useEffect, useState, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { io } from 'socket.io-client'
+import { useLanguage } from './i18n/LanguageContext'
 
 const API_URL = 'http://localhost:3001'
 
 // Conexão única e persistente durante toda a vida da aba — sem connect/disconnect manual
 const socket = io(API_URL)
-
-const CHOICE_LABELS = { rock: '✊ Pedra', paper: '✋ Papel', scissors: '✌️ Tesoura' }
 
 function CardSlot({ label, width = '80px', height = '112px', highlight = false }) {
   return (
@@ -97,6 +96,8 @@ function Overlay({ children }) {
 }
 
 function GameBoard() {
+  const { t } = useLanguage()
+  const CHOICE_LABELS = { rock: t('rockLabel'), paper: t('paperLabel'), scissors: t('scissorsLabel') }
   const [stage, setStage] = useState('selectDeck')
   const [decks, setDecks] = useState([])
   const [rpsResult, setRpsResult] = useState(null)
@@ -192,8 +193,8 @@ function GameBoard() {
   if (stage === 'selectDeck') {
     return (
       <div style={{ padding: '2rem', textAlign: 'center' }}>
-        <Link to="/"><button style={{ marginBottom: '16px' }}>← Voltar ao Menu</button></Link>
-        <h2>Escolha seu deck pra enfrentar o Bot</h2>
+        <Link to="/"><button style={{ marginBottom: '16px' }}>{t('backToMenu')}</button></Link>
+        <h2>{t('gbChooseDeck')}</h2>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', justifyContent: 'center', marginTop: '16px' }}>
           {decks.map(d => (
             <button key={d.id} onClick={() => startMatch(d.id)} style={{ padding: '14px 20px' }}>
@@ -201,7 +202,7 @@ function GameBoard() {
             </button>
           ))}
         </div>
-        {decks.length === 0 && <p>Nenhum deck salvo ainda. Vá em "Montar Deck" primeiro.</p>}
+        {decks.length === 0 && <p>{t('gbNoDecks')}</p>}
       </div>
     )
   }
@@ -209,8 +210,8 @@ function GameBoard() {
   if (stage === 'rps' || stage === 'waitingBotOrder') {
     return (
       <Overlay>
-        <h2>🪨📄✂️ Jokenpô!</h2>
-        <p>Quem ganhar decide quem começa a partida.</p>
+        <h2>{t('gbRpsTitle')}</h2>
+        <p>{t('gbRpsIntro')}</p>
         {!rpsResult && (
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '16px' }}>
             {Object.entries(CHOICE_LABELS).map(([key, label]) => (
@@ -220,10 +221,10 @@ function GameBoard() {
         )}
         {rpsResult && (
           <div style={{ marginTop: '16px' }}>
-            <p>Você: {CHOICE_LABELS[rpsResult.playerChoice]} vs Bot: {CHOICE_LABELS[rpsResult.botChoice]}</p>
-            {rpsResult.result === 'draw' && <p><strong>Empate!</strong> Escolha de novo.</p>}
-            {rpsResult.result === 'win' && <p><strong>Você venceu o Jokenpô!</strong></p>}
-            {rpsResult.result === 'lose' && <p><strong>O Bot venceu o Jokenpô</strong> e escolheu ir primeiro.</p>}
+            <p>{t('gbRpsVs', { player: CHOICE_LABELS[rpsResult.playerChoice], bot: CHOICE_LABELS[rpsResult.botChoice] })}</p>
+            {rpsResult.result === 'draw' && <p><strong>{t('gbRpsDraw')}</strong></p>}
+            {rpsResult.result === 'win' && <p><strong>{t('gbRpsWin')}</strong></p>}
+            {rpsResult.result === 'lose' && <p><strong>{t('gbRpsLose')}</strong></p>}
           </div>
         )}
         {rpsResult?.result === 'draw' && (
@@ -240,11 +241,11 @@ function GameBoard() {
   if (stage === 'chooseOrder') {
     return (
       <Overlay>
-        <h2>Você venceu o Jokenpô!</h2>
-        <p>Prefere jogar primeiro ou em segundo?</p>
+        <h2>{t('gbRpsWin')}</h2>
+        <p>{t('gbChooseOrderQuestion')}</p>
         <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '16px' }}>
-          <button onClick={() => chooseOrder(true)} style={{ padding: '12px 20px' }}>Ir primeiro</button>
-          <button onClick={() => chooseOrder(false)} style={{ padding: '12px 20px' }}>Ir em segundo</button>
+          <button onClick={() => chooseOrder(true)} style={{ padding: '12px 20px' }}>{t('gbGoFirst')}</button>
+          <button onClick={() => chooseOrder(false)} style={{ padding: '12px 20px' }}>{t('gbGoSecond')}</button>
         </div>
       </Overlay>
     )
@@ -253,16 +254,16 @@ function GameBoard() {
   if (stage === 'mulligan') {
     return (
       <Overlay>
-        <h2>Sua mão inicial</h2>
+        <h2>{t('gbMulliganTitle')}</h2>
         <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', margin: '16px 0', flexWrap: 'wrap' }}>
           {mulliganHand.map(c => (
             <img key={c.card_number} src={c.image_url} alt={c.name} style={{ width: '70px', borderRadius: '6px' }} />
           ))}
         </div>
-        <p>Deseja manter essa mão ou fazer mulligan (embaralhar e comprar 5 novas)?</p>
+        <p>{t('gbMulliganQuestion')}</p>
         <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '12px' }}>
-          <button onClick={() => decideMulligan(true)} style={{ padding: '12px 20px' }}>Manter mão</button>
-          <button onClick={() => decideMulligan(false)} style={{ padding: '12px 20px' }}>Mulligan</button>
+          <button onClick={() => decideMulligan(true)} style={{ padding: '12px 20px' }}>{t('gbKeepHand')}</button>
+          <button onClick={() => decideMulligan(false)} style={{ padding: '12px 20px' }}>{t('gbMulligan')}</button>
         </div>
       </Overlay>
     )
@@ -271,13 +272,13 @@ function GameBoard() {
   if (stage === 'gameOver') {
     return (
       <Overlay>
-        <h2>{gameState.winner === 'Você' ? '🎉 Você venceu!' : '💀 Você perdeu!'}</h2>
-        <Link to="/"><button style={{ marginTop: '16px', padding: '12px 20px' }}>Voltar ao Menu</button></Link>
+        <h2>{gameState.winner === 'Você' ? t('gbYouWin') : t('gbYouLose')}</h2>
+        <Link to="/"><button style={{ marginTop: '16px', padding: '12px 20px' }}>{t('backToMenu')}</button></Link>
       </Overlay>
     )
   }
 
-  if (!gameState) return <p style={{ padding: '2rem' }}>Carregando partida...</p>
+  if (!gameState) return <p style={{ padding: '2rem' }}>{t('gbLoadingMatch')}</p>
 
   const { player, bot, hand, currentPhase, turnNumber, isPlayerTurn } = gameState
 
@@ -322,9 +323,9 @@ function GameBoard() {
       padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px', boxSizing: 'border-box'
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Link to="/"><button style={{ fontSize: '12px' }}>← Sair da Partida</button></Link>
+        <Link to="/"><button style={{ fontSize: '12px' }}>{t('gbExitMatch')}</button></Link>
         <div style={{ color: '#fff', fontWeight: 600, fontSize: '13px', textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>
-          Turno {turnNumber} — {isPlayerTurn ? 'sua vez' : 'vez do bot'}
+          {t('gbTurn', { n: turnNumber, whoseTurn: isPlayerTurn ? t('gbYourTurn') : t('gbBotTurn') })}
         </div>
       </div>
 
@@ -333,13 +334,13 @@ function GameBoard() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
           <strong style={{ color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.6)', fontSize: '13px' }}>🤖 {bot.playerName}</strong>
           <div style={{ display: 'flex', gap: '10px' }}>
-            <CardSlot label={`Deck (${bot.deckCount})`} width="56px" height="76px" />
-            <CardSlot label={`Cemitério (${bot.graveyardCount})`} width="56px" height="76px" />
+            <CardSlot label={t('gbDeckCount', { n: bot.deckCount })} width="56px" height="76px" />
+            <CardSlot label={t('gbGraveyard', { n: bot.graveyardCount })} width="56px" height="76px" />
           </div>
           <SoulRow standing={bot.soulsStanding} rested={bot.soulsRested} />
           <SoulCount standing={bot.soulsStanding} rested={bot.soulsRested} />
           <span style={{ color: '#fff', fontSize: '12px', textShadow: '0 1px 3px rgba(0,0,0,0.6)' }}>
-            ❤️ {bot.life} | Mão: {bot.handCount}
+            {t('gbLifeHand', { life: bot.life, hand: bot.handCount })}
           </span>
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', minHeight: '90px', marginTop: '6px' }}>
@@ -372,10 +373,10 @@ function GameBoard() {
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginTop: '6px' }}>
-          <strong style={{ color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.6)', fontSize: '13px' }}>🧑 {player.playerName}</strong>
+          <strong style={{ color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.6)', fontSize: '13px' }}>🧑 {player.playerName === 'Você' ? t('youLabel') : player.playerName}</strong>
           <div style={{ display: 'flex', gap: '10px' }}>
-            <CardSlot label={`Deck (${player.deckCount})`} width="56px" height="76px" />
-            <CardSlot label={`Cemitério (${player.graveyardCount})`} width="56px" height="76px" />
+            <CardSlot label={t('gbDeckCount', { n: player.deckCount })} width="56px" height="76px" />
+            <CardSlot label={t('gbGraveyard', { n: player.graveyardCount })} width="56px" height="76px" />
           </div>
           <ResourceCounter resources={player.resources} />
           <SoulRow standing={player.soulsStanding} rested={player.soulsRested} />
@@ -389,15 +390,15 @@ function GameBoard() {
         <button onClick={drawWithSouls}
                 disabled={!isPlayerTurn || currentPhase !== 'main' || player.soulsStanding < 3}
                 style={{ padding: '6px 14px', fontSize: '12px' }}>
-          🔮 Comprar carta (3 Souls)
+          {t('gbDrawWithSouls')}
         </button>
         {selectedPalIndex !== null ? (
           <button onClick={() => attackWithPal(selectedPalIndex)} style={{ padding: '6px 16px', fontSize: '13px' }}>
-            ⚔️ Atacar o Bot com esse Pal
+            {t('gbAttackWithPal')}
           </button>
         ) : (
           <button onClick={advancePhase} disabled={!isPlayerTurn} style={{ padding: '6px 20px', fontSize: '13px' }}>
-            Encerrar Turno →
+            {t('gbEndTurn')}
           </button>
         )}
       </div>

@@ -8,15 +8,16 @@ export function countCopies(deck, card) {
   return deck.filter(c => c.name === card.name).length
 }
 
+// Erros retornados como { key, params } — o chamador (DeckBuilder) traduz com t(key, params)
 export function validateMainDeck(mainDeck, chosenColors) {
   const errors = []
 
   if (mainDeck.length !== MAIN_DECK_SIZE) {
-    errors.push(`Main Deck deve ter exatamente ${MAIN_DECK_SIZE} cartas (atual: ${mainDeck.length}).`)
+    errors.push({ key: 'mainDeckSizeError', params: { size: MAIN_DECK_SIZE, current: mainDeck.length } })
   }
 
   if (chosenColors.size > MAX_COLORS) {
-    errors.push(`Máximo de ${MAX_COLORS} cores permitidas (atual: ${chosenColors.size}).`)
+    errors.push({ key: 'maxColorsError', params: { max: MAX_COLORS, current: chosenColors.size } })
   }
 
   const uniqueCards = [...new Map(mainDeck.map(c => [c.card_number, c])).values()]
@@ -25,7 +26,7 @@ export function validateMainDeck(mainDeck, chosenColors) {
     const matchesChosenColor = card.colors?.some(c => chosenColors.has(c))
 
     if (!isColorless && !matchesChosenColor) {
-      errors.push(`${card.name} não pertence às cores escolhidas.`)
+      errors.push({ key: 'cardNotInColorsError', params: { name: card.name } })
     }
   }
 
@@ -35,13 +36,13 @@ export function validateMainDeck(mainDeck, chosenColors) {
   }
   for (const [name, count] of Object.entries(grouped)) {
     if (count > MAX_COPIES_PER_NAME) {
-      errors.push(`${name} tem ${count} cópias (máximo ${MAX_COPIES_PER_NAME}).`)
+      errors.push({ key: 'tooManyCopiesError', params: { name, count, max: MAX_COPIES_PER_NAME } })
     }
   }
 
   const luckyCount = mainDeck.filter(c => c.is_lucky).length
   if (luckyCount > MAX_LUCKY_PALS) {
-    errors.push(`Deck tem ${luckyCount} cartas Lucky (máximo ${MAX_LUCKY_PALS}).`)
+    errors.push({ key: 'tooManyLuckyError', params: { count: luckyCount, max: MAX_LUCKY_PALS } })
   }
 
   return { isValid: errors.length === 0, errors }
@@ -51,11 +52,11 @@ export function validateSoulDeck(soulDeck) {
   const errors = []
 
   if (soulDeck.length !== SOUL_DECK_SIZE) {
-    errors.push(`Soul Deck deve ter exatamente ${SOUL_DECK_SIZE} cartas (atual: ${soulDeck.length}).`)
+    errors.push({ key: 'soulDeckSizeError', params: { size: SOUL_DECK_SIZE, current: soulDeck.length } })
   }
 
   if (soulDeck.some(c => c.card_type !== 'Soul')) {
-    errors.push('Soul Deck só pode conter cartas do tipo Soul.')
+    errors.push({ key: 'soulDeckOnlySoulError' })
   }
 
   return { isValid: errors.length === 0, errors }
