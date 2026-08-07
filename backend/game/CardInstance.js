@@ -1,12 +1,30 @@
+const { getEffectivePower, getEffectiveStrike } = require('./effects/EffectEngine')
+
 class PalInstance {
   constructor(cardData) {
     this.data = cardData
     this.isStanding = true
     this.damageMarked = 0
+    this.tempPowerBonus = 0
+    this.tempStrikeBonus = 0
+    this.actUsedThisTurn = false
+    this.cannotBlockUntilEndOfTurn = false
+    this.exiledCards = [] // { data, ownerState }[] — cartas exiladas POR esta carta (ver EffectEngine 'exile')
   }
 
-  get isDestroyed() {
-    return this.damageMarked >= this.data.power
+  get power() { return this.data.power }
+  get strike() { return this.data.strike }
+
+  effectivePower(ownerState, opponentState) {
+    return getEffectivePower(this, ownerState, opponentState)
+  }
+
+  effectiveStrike(ownerState, opponentState) {
+    return getEffectiveStrike(this, ownerState, opponentState)
+  }
+
+  isDestroyed(ownerState, opponentState) {
+    return this.damageMarked >= this.effectivePower(ownerState, opponentState)
   }
 
   rest() { this.isStanding = false }
@@ -21,6 +39,9 @@ class StructureInstance {
     this.data = cardData
     this.damageMarked = 0
     this.isStanding = true
+    this.tempPowerBonus = 0
+    this.tempStrikeBonus = 0
+    this.actUsedThisTurn = false
   }
 
   get durability() { return this.data.power }
@@ -30,4 +51,17 @@ class StructureInstance {
   stand() { this.isStanding = true }
 }
 
-module.exports = { PalInstance, StructureInstance }
+class GearInstance {
+  constructor(cardData) {
+    this.data = cardData
+    this.isStanding = true
+    this.tempPowerBonus = 0
+    this.tempStrikeBonus = 0
+    this.actUsedThisTurn = false
+  }
+
+  rest() { this.isStanding = false }
+  stand() { this.isStanding = true }
+}
+
+module.exports = { PalInstance, StructureInstance, GearInstance }

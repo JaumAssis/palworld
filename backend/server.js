@@ -8,6 +8,7 @@ const Database = require('better-sqlite3');
 const { PlayerState, shuffle } = require('./game/PlayerState');
 const { TurnManager } = require('./game/TurnManager');
 const { resolveRPS, randomChoice } = require('./game/RockPaperScissors');
+const EffectEngine = require('./game/effects/EffectEngine');
 
 function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
@@ -1102,12 +1103,26 @@ io.on('connection', (socket) => {
     const stmt = db.prepare('SELECT * FROM cards WHERE card_number = ?');
     return numbers.map(num => {
       const c = stmt.get(num);
+      let effect_text = null;
+      let pal_name = null;
+      let typepal = [];
+      if (c.extra_data) {
+        try {
+          const parsed = JSON.parse(c.extra_data)?.data;
+          effect_text = parsed?.effect_text || null;
+          pal_name = parsed?.pal_name || null;
+          typepal = parsed?.typepal || [];
+        } catch (e) {}
+      }
       return {
         ...c,
         colors: JSON.parse(c.colors),
         keywords: JSON.parse(c.keywords),
         is_lucky: !!c.is_lucky,
-        image_url: `http://localhost:3001/${c.image_path}`
+        image_url: `http://localhost:3001/${c.image_path}`,
+        effect_text,
+        pal_name,
+        typepal
       };
     });
   }
@@ -1125,17 +1140,55 @@ io.on('connection', (socket) => {
     if (!match) return;
     checkWinMission();
     const { turnManager } = match;
+
+    // Night (5.3) é um estado contínuo (ex: Shadowbeak "enquanto descansada, é noite") — não é uma
+    // ação única como "It becomes night", então nunca tinha uma linha de log avisando a transição.
+    const currentlyNight = turnManager.isNight;
+    if (match._lastKnownNight === undefined) match._lastKnownNight = currentlyNight;
+    if (currentlyNight !== match._lastKnownNight) {
+      turnManager._addLog(currentlyNight ? 'Anoiteceu.' : 'Amanheceu.');
+      match._lastKnownNight = currentlyNight;
+    }
+
+    const pending = turnManager.pendingEffect;
+    const battle = turnManager.pendingBattle;
     socket.emit('bot:state', {
       turnNumber: turnManager.turnNumber,
       currentPhase: turnManager.currentPhase,
       activePlayer: turnManager.activePlayer.playerName,
       isPlayerTurn: turnManager.activePlayer === match.playerState,
-      player: match.playerState.toPublicState(),
-      bot: match.botState.toPublicState(),
+      player: match.playerState.toPublicState(match.botState),
+      bot: match.botState.toPublicState(match.playerState),
       hand: match.playerState.hand, // mão completa só pro dono
+      isNight: turnManager.isNight,
       gameOver: turnManager.gameOver,
       winner: turnManager.winner ? turnManager.winner.playerName : null,
-      log: turnManager.log.slice(-10)
+      log: turnManager.log.slice(-10),
+      pendingEffect: pending ? {
+        kind: pending.kind,
+        sourceCardName: pending.sourceCardName,
+        description: pending.description,
+        optional: pending.optional,
+        validTargets: pending.validTargets,
+        min: pending.min,
+        max: pending.max,
+        options: pending.options ? pending.options.map(o => o.description) : null,
+        cards: pending.cards ? pending.cards.map(entry => ({
+          cardNumber: entry.card.card_number, name: entry.card.name, imageUrl: entry.card.image_url, selectable: entry.selectable
+        })) : null
+      } : null,
+      pendingBattle: battle ? {
+        waitingFor: battle.waitingFor,
+        attackerName: battle.attackerInstance.data.name,
+        validBlockers: (battle.validBlockers || []).map(p => match.playerState.basePals.indexOf(p)),
+        quickOptions: (battle.quickOptions || []).map(o => ({
+          cardNumber: o.card.card_number, name: o.card.name, imageUrl: o.card.image_url, kind: o.kind
+        })),
+        interruptCard: battle.interruptCard ? {
+          cardNumber: battle.interruptCard.card_number, name: battle.interruptCard.name, imageUrl: battle.interruptCard.image_url
+        } : null
+      } : null,
+      lastDamageReveal: turnManager.lastDamageReveal
     });
   }
 
@@ -1236,7 +1289,12 @@ io.on('connection', (socket) => {
       const playablePal = bot.hand.find(c => c.card_type === 'Pal' && c.cost <= bot.soulsStanding);
       if (playablePal) {
         await delay(5000);
-        bot.tryDeployPal(playablePal);
+        const result = bot.tryDeployPal(playablePal);
+        if (result.success) {
+          EffectEngine.runTrigger(tm, 'onDeploy', result.instance, bot, match.playerState, { isBot: true });
+          EffectEngine.notifyAllyDeploy(tm, bot, match.playerState, result.instance, { isBot: true });
+          tm.checkOverloadedPals(bot, match.playerState, result.instance, true);
+        }
         emitState();
         deployedSomething = true;
       }
@@ -1246,8 +1304,15 @@ io.on('connection', (socket) => {
     for (const pal of [...bot.basePals]) {
       if (pal.isStanding && !tm.gameOver) {
         await delay(5000);
-        tm.attackPlayer(pal);
+        const tauntTargets = EffectEngine.getForcedTauntTargets(match.playerState, pal);
+        const target = tauntTargets.length > 0 ? { type: 'pal', instance: tauntTargets[0] } : { type: 'player' };
+        const result = tm.declareAttack(pal, target, { isBot: true });
         emitState();
+        // Se pausou (jogador tem escolha de bloqueio/Quick Step), espera ele resolver antes de seguir
+        if (result.paused && tm.pendingBattle) {
+          await tm.pendingBattle.waitPromise;
+          emitState();
+        }
       }
     }
 
@@ -1272,7 +1337,7 @@ io.on('connection', (socket) => {
 
   // 5. Jogador clica em "Encerrar Turno" (só age se for a vez dele, na Main Phase)
   socket.on('bot:advancePhase', () => {
-    if (!match || match.turnManager.gameOver) return;
+    if (!match || match.turnManager.gameOver || match.turnManager.pendingEffect || match.turnManager.pendingBattle) return;
     const tm = match.turnManager;
     if (tm.activePlayer !== match.playerState || tm.currentPhase !== 'main') {
       console.log(`[DEBUG] Encerrar Turno ignorado — activePlayer=${tm.activePlayer.playerName} phase=${tm.currentPhase}`);
@@ -1285,8 +1350,16 @@ io.on('connection', (socket) => {
   });
 
   // 6. Jogador deploya um Pal da mão
+  const DEPLOY_FAIL_MESSAGES = {
+    NOT_ENOUGH_SOUL: 'Você não tem Souls em pé suficientes para pagar o custo dessa carta.'
+  };
+
   socket.on('bot:deployPal', ({ cardNumber }) => {
     if (!match || match.turnManager.gameOver) return;
+    if (match.turnManager.pendingEffect || match.turnManager.pendingBattle) {
+      socket.emit('bot:error', { message: 'Resolva o efeito ou a batalha pendente antes de jogar outra carta.' });
+      return;
+    }
     const card = match.playerState.hand.find(c => c.card_number === cardNumber);
     if (!card) return;
     const result = match.playerState.tryDeployPal(card);
@@ -1297,6 +1370,11 @@ io.on('connection', (socket) => {
       for (const type of palTypes) {
         incrementMission('play_pal_type', type, 1);
       }
+      EffectEngine.runTrigger(match.turnManager, 'onDeploy', result.instance, match.playerState, match.botState, { isBot: false });
+      EffectEngine.notifyAllyDeploy(match.turnManager, match.playerState, match.botState, result.instance, { isBot: false });
+      match.turnManager.checkOverloadedPals(match.playerState, match.botState, result.instance, false);
+    } else {
+      socket.emit('bot:error', { message: DEPLOY_FAIL_MESSAGES[result.reason] || 'Não foi possível deployar essa carta agora.' });
     }
     emitState();
   });
@@ -1304,12 +1382,19 @@ io.on('connection', (socket) => {
   // 6b. Jogador deploya uma Structure da mão
   socket.on('bot:deployStructure', ({ cardNumber }) => {
     if (!match || match.turnManager.gameOver) return;
+    if (match.turnManager.pendingEffect || match.turnManager.pendingBattle) {
+      socket.emit('bot:error', { message: 'Resolva o efeito ou a batalha pendente antes de jogar outra carta.' });
+      return;
+    }
     const card = match.playerState.hand.find(c => c.card_number === cardNumber);
     if (!card) return;
     const result = match.playerState.tryDeployStructure(card);
     if (result.success) {
       incrementMission('play_structure', null, 1);
       incrementMission('play_any', null, 1);
+      EffectEngine.runTrigger(match.turnManager, 'onDeploy', result.instance, match.playerState, match.botState, { isBot: false });
+    } else {
+      socket.emit('bot:error', { message: DEPLOY_FAIL_MESSAGES[result.reason] || 'Não foi possível deployar essa carta agora.' });
     }
     emitState();
   });
@@ -1317,56 +1402,192 @@ io.on('connection', (socket) => {
   // 6c. Jogador deploya um Gear da mão
   socket.on('bot:deployGear', ({ cardNumber }) => {
     if (!match || match.turnManager.gameOver) return;
+    if (match.turnManager.pendingEffect || match.turnManager.pendingBattle) {
+      socket.emit('bot:error', { message: 'Resolva o efeito ou a batalha pendente antes de jogar outra carta.' });
+      return;
+    }
     const card = match.playerState.hand.find(c => c.card_number === cardNumber);
     if (!card) return;
     const result = match.playerState.tryDeployGear(card);
     if (result.success) {
       incrementMission('play_gear', null, 1);
       incrementMission('play_any', null, 1);
+      const gearInstance = { data: card, tempPowerBonus: 0, tempStrikeBonus: 0 };
+      EffectEngine.runTrigger(match.turnManager, 'onDeploy', gearInstance, match.playerState, match.botState, { isBot: false });
+    } else {
+      socket.emit('bot:error', { message: DEPLOY_FAIL_MESSAGES[result.reason] || 'Não foi possível deployar essa carta agora.' });
     }
     emitState();
   });
 
-  // 6e. Jogador joga um Event: por enquanto só paga custo e vai pro cemitério (efeito real vem depois)
+  // 6e. Jogador joga um Event: paga custo, vai pro cemitério e resolve o efeito (se houver)
   socket.on('bot:deployEvent', ({ cardNumber }) => {
     if (!match || match.turnManager.gameOver) return;
+    if (match.turnManager.pendingEffect || match.turnManager.pendingBattle) {
+      socket.emit('bot:error', { message: 'Resolva o efeito ou a batalha pendente antes de jogar outra carta.' });
+      return;
+    }
     const card = match.playerState.hand.find(c => c.card_number === cardNumber);
     if (!card) return;
-    if (!match.playerState.paySoulCost(card.cost)) return;
+    if (!match.playerState.paySoulCost(card.cost)) {
+      socket.emit('bot:error', { message: DEPLOY_FAIL_MESSAGES.NOT_ENOUGH_SOUL });
+      return;
+    }
     match.playerState.hand = match.playerState.hand.filter(c => c.card_number !== cardNumber);
     match.playerState.graveyard.push(card);
     incrementMission('play_event', null, 1);
     incrementMission('play_any', null, 1);
+    const eventInstance = { data: card, tempPowerBonus: 0, tempStrikeBonus: 0 };
+    const startedModal = EffectEngine.startModalChoice(match.turnManager, eventInstance, match.playerState, match.botState);
+    if (!startedModal) {
+      EffectEngine.runTrigger(match.turnManager, 'onPlay', eventInstance, match.playerState, match.botState, { isBot: false });
+    }
     emitState();
   });
 
   // 6d. Jogador suspende 3 Souls pra comprar 1 carta extra
   socket.on('bot:drawWithSouls', () => {
-    if (!match || match.turnManager.gameOver) return;
+    if (!match || match.turnManager.gameOver || match.turnManager.pendingEffect || match.turnManager.pendingBattle) return;
     if (match.turnManager.activePlayer !== match.playerState || match.turnManager.currentPhase !== 'main') return;
     const result = match.playerState.drawWithSoulCost(3);
-    if (result.success) incrementMission('soul_draw', null, 1);
+    if (result.success) {
+      incrementMission('soul_draw', null, 1);
+    } else if (result.reason === 'ALREADY_USED') {
+      socket.emit('bot:error', { message: 'Você já suspendeu Souls pra comprar carta neste turno (só é permitido 1x por turno).' });
+    }
+    emitState();
+  });
+
+  // 6e2. Jogador ativa uma habilidade ACT de um Pal/Structure/Gear em campo
+  socket.on('bot:activateAbility', ({ zone, index, actIndex }) => {
+    if (!match || match.turnManager.gameOver || match.turnManager.pendingEffect || match.turnManager.pendingBattle) return;
+    if (match.turnManager.activePlayer !== match.playerState || match.turnManager.currentPhase !== 'main') return;
+    if (!['basePals', 'baseStructures', 'baseGear'].includes(zone)) return;
+    const instance = match.playerState[zone][index];
+    if (!instance) return;
+    const result = EffectEngine.activateAbility(match.turnManager, instance, match.playerState, match.botState, actIndex || 0, { isBot: false });
+    if (!result.success) {
+      socket.emit('bot:error', { message: 'Não foi possível ativar essa habilidade agora.' });
+      return;
+    }
+    emitState();
+  });
+
+  // 6f. Jogador escolhe o alvo de um efeito pendente (ou pula, se opcional)
+  socket.on('bot:resolveEffectTarget', ({ owner, index, skip }) => {
+    if (!match || match.turnManager.gameOver || !match.turnManager.pendingEffect) return;
+    if (!skip) {
+      const valid = match.turnManager.pendingEffect.validTargets.some(t => t.owner === owner && t.index === index);
+      if (!valid) return;
+    } else if (!match.turnManager.pendingEffect.optional) {
+      return;
+    }
+    EffectEngine.continuePendingEffect(match.turnManager, { owner, index, skip });
+    emitState();
+  });
+
+  // 6f1b. Jogador escolhe uma carta revelada/olhada (topo do deck, cemitério ou mão) ou pula
+  socket.on('bot:resolveCardChoice', ({ index, skip }) => {
+    if (!match || match.turnManager.gameOver || !match.turnManager.pendingEffect) return;
+    if (match.turnManager.pendingEffect.kind !== 'cardChoice') return;
+    if (!skip) {
+      if (!match.turnManager.pendingEffect.cards[index]?.selectable) return;
+    } else if (!match.turnManager.pendingEffect.optional) {
+      return;
+    }
+    EffectEngine.resolveCardChoice(match.turnManager, { index, skip });
+    emitState();
+  });
+
+  // 6f2. Jogador escolhe a quantidade de X ao pagar um custo variável (Consume X Material, etc.)
+  socket.on('bot:resolveAmount', ({ amount }) => {
+    if (!match || match.turnManager.gameOver) return;
+    if (!match.turnManager.pendingEffect || match.turnManager.pendingEffect.kind !== 'amount') return;
+    EffectEngine.continuePendingEffect(match.turnManager, { amount });
+    emitState();
+  });
+
+  // 6f3. Jogador escolhe uma das opções de um efeito modal ("Choose 1 of the following")
+  socket.on('bot:resolveModalChoice', ({ optionIndex }) => {
+    if (!match || match.turnManager.gameOver) return;
+    if (!match.turnManager.pendingEffect || match.turnManager.pendingEffect.kind !== 'modal') return;
+    EffectEngine.resolveModalChoice(match.turnManager, optionIndex);
     emitState();
   });
 
   // 7. Jogador ataca o oponente diretamente com um Pal (índice na base)
   socket.on('bot:attack', ({ palIndex }) => {
-    if (!match || match.turnManager.gameOver) return;
+    if (!match || match.turnManager.gameOver || match.turnManager.pendingEffect || match.turnManager.pendingBattle) return;
     const pal = match.playerState.basePals[palIndex];
     if (!pal) return;
-    const result = match.turnManager.attackPlayer(pal);
+    const result = match.turnManager.declareAttack(pal, { type: 'player' });
+    if (result.reason === 'TAUNT_FORCED') {
+      socket.emit('bot:error', { message: 'Seu oponente tem uma carta com Taunt que precisa ser atacada primeiro.' });
+      return;
+    }
     if (result.damageDealt > 0) incrementMission('deal_damage', null, result.damageDealt);
     checkWinMission();
     emitState();
   });
 
-  // 7b. Jogador ataca um Pal Rested do bot (batalha Pal vs Pal)
+  // 7b. Jogador ataca um Pal do bot (batalha Pal vs Pal)
   socket.on('bot:attackPal', ({ attackerIndex, targetIndex }) => {
-    if (!match || match.turnManager.gameOver) return;
+    if (!match || match.turnManager.gameOver || match.turnManager.pendingEffect || match.turnManager.pendingBattle) return;
     const attacker = match.playerState.basePals[attackerIndex];
     const target = match.botState.basePals[targetIndex];
     if (!attacker || !target) return;
-    match.turnManager.attackOpponentPal(attacker, target);
+    const result = match.turnManager.declareAttack(attacker, { type: 'pal', instance: target });
+    if (result.reason === 'TAUNT_FORCED' || result.reason === 'TARGET_NOT_VALID') {
+      socket.emit('bot:error', { message: 'Esse Pal não pode ser atacado agora.' });
+      return;
+    }
+    emitState();
+  });
+
+  // 7b2. Jogador ataca uma Structure descansada do bot
+  socket.on('bot:attackStructure', ({ attackerIndex, targetIndex }) => {
+    if (!match || match.turnManager.gameOver || match.turnManager.pendingEffect || match.turnManager.pendingBattle) return;
+    const attacker = match.playerState.basePals[attackerIndex];
+    const target = match.botState.baseStructures[targetIndex];
+    if (!attacker || !target) return;
+    const result = match.turnManager.declareAttack(attacker, { type: 'structure', instance: target });
+    if (result.reason === 'TAUNT_FORCED' || result.reason === 'TARGET_NOT_VALID') {
+      socket.emit('bot:error', { message: 'Essa Structure não pode ser atacada agora.' });
+      return;
+    }
+    emitState();
+  });
+
+  // 7c. Jogador decide se bloqueia o ataque em curso do bot (Block Declaration Step)
+  socket.on('bot:resolveBlock', ({ blockerIndex, none }) => {
+    if (!match || match.turnManager.gameOver) return;
+    if (!match.turnManager.pendingBattle || match.turnManager.pendingBattle.waitingFor !== 'block') return;
+    match.turnManager.resolveBlock({ blockerIndex, none });
+    emitState();
+  });
+
+  // 7d. Jogador joga uma carta Quick/Interrupt (ou passa) durante o Quick Step do ataque do bot
+  socket.on('bot:resolveQuickStep', ({ cardNumber, kind, pass }) => {
+    if (!match || match.turnManager.gameOver) return;
+    if (!match.turnManager.pendingBattle || match.turnManager.pendingBattle.waitingFor !== 'quick') return;
+    match.turnManager.resolveQuickStep({ cardNumber, kind, pass });
+    emitState();
+  });
+
+  // 7d2. Jogador escolhe COMO pagar o custo do Interrupt (suspender 1 Soul, ou descartar 1 carta extra)
+  socket.on('bot:resolveInterruptCost', ({ method }) => {
+    if (!match || match.turnManager.gameOver) return;
+    if (!match.turnManager.pendingBattle || match.turnManager.pendingBattle.waitingFor !== 'interruptCost') return;
+    if (method !== 'soul' && method !== 'discard') return;
+    match.turnManager.resolveInterruptCost({ method });
+    emitState();
+  });
+
+  // 7d3. Jogador escolhe QUAL carta extra descartar pro custo do Interrupt (método "descarte")
+  socket.on('bot:resolveInterruptDiscard', ({ cardNumber }) => {
+    if (!match || match.turnManager.gameOver) return;
+    if (!match.turnManager.pendingBattle || match.turnManager.pendingBattle.waitingFor !== 'interruptDiscardChoice') return;
+    match.turnManager.resolveInterruptDiscard({ cardNumber });
     emitState();
   });
 

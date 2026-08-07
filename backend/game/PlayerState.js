@@ -1,4 +1,5 @@
-const { PalInstance, StructureInstance } = require('./CardInstance')
+const { PalInstance, StructureInstance, GearInstance } = require('./CardInstance')
+const EffectEngine = require('./effects/EffectEngine')
 
 const MAX_PALS_IN_BASE = 5
 
@@ -22,7 +23,31 @@ class PlayerState {
 
     this.resources = { wood: 0, fruit: 0 }
 
+    this.material = 0
+    this.ingredient = 0
+
     this.isFirstPlayer = false
+    this.soulDrawUsedThisTurn = false // regra 8.5.2: suspender 3 souls pra comprar só 1x por turno
+  }
+
+  gainMaterial(amount) { this.material += amount }
+  gainIngredient(amount) { this.ingredient += amount }
+
+  // Efeito "escolha N souls e fique-os em pé" — inverso de paySoulCost
+  standSouls(amount) {
+    const toStand = Math.min(amount, this.soulsRested)
+    this.soulsRested -= toStand
+    this.soulsStanding += toStand
+  }
+
+  // Efeito "increase your soul by N card(s) in the rest state" — como addSouls, mas entra descansado
+  addRestedSoul(amount) {
+    const spaceLeft = this.maxSouls - this.totalSouls
+    const toAdd = Math.min(amount, spaceLeft, this.soulDeck.length)
+    for (let i = 0; i < toAdd; i++) {
+      this.soulDeck.shift()
+      this.soulsRested++
+    }
   }
 
   get totalSouls() { return this.soulsStanding + this.soulsRested }
@@ -55,13 +80,15 @@ class PlayerState {
   standAll() {
     this.soulsStanding += this.soulsRested
     this.soulsRested = 0
-    for (const pal of this.basePals) pal.stand()
+    for (const pal of this.basePals) { pal.stand(); pal.actUsedThisTurn = false }
+    for (const s of this.baseStructures) { s.stand(); s.actUsedThisTurn = false }
+    for (const g of this.baseGear) { g.stand(); g.actUsedThisTurn = false }
   }
 
+  // Regra 11.5 (Overloaded Pals Resolution): passar de 5 Pals NÃO bloqueia o deploy — o Pal recém
+  // colocado fica garantido, e o excesso é resolvido depois (TurnManager.checkOverloadedPals),
+  // escolhendo qual dos OUTROS Pals já em campo vai pro cemitério.
   tryDeployPal(card) {
-    if (this.basePals.length >= MAX_PALS_IN_BASE) {
-      return { success: false, reason: 'BASE_FULL' }
-    }
     if (!this.paySoulCost(card.cost)) {
       return { success: false, reason: 'NOT_ENOUGH_SOUL' }
     }
@@ -86,14 +113,17 @@ class PlayerState {
       return { success: false, reason: 'NOT_ENOUGH_SOUL' }
     }
     this.hand = this.hand.filter(c => c.card_number !== card.card_number)
-    this.baseGear.push(card)
-    return { success: true }
+    const instance = new GearInstance(card)
+    this.baseGear.push(instance)
+    return { success: true, instance }
   }
 
-  // Regra: suspender 3 Souls Standing pra comprar 1 carta extra
+  // Regra 8.5: suspender 3 Souls Standing pra comprar 1 carta extra — só 1x por turno (8.5.2)
   drawWithSoulCost(cost = 3) {
+    if (this.soulDrawUsedThisTurn) return { success: false, reason: 'ALREADY_USED' }
     if (this.soulsStanding < cost) return { success: false, reason: 'NOT_ENOUGH_SOUL' }
     this.paySoulCost(cost)
+    this.soulDrawUsedThisTurn = true
     return this.drawCard()
   }
 
@@ -105,7 +135,7 @@ class PlayerState {
     for (let i = 0; i < 5; i++) this.drawCard()
   }
 
-  toPublicState() {
+  toPublicState(opponentState) {
     return {
       playerName: this.playerName,
       life: this.life,
@@ -114,19 +144,30 @@ class PlayerState {
       graveyardCount: this.graveyard.length,
       basePals: this.basePals.map(p => ({
         cardNumber: p.data.card_number, name: p.data.name,
-        isStanding: p.isStanding, damageMarked: p.damageMarked, power: p.data.power,
-        imageUrl: p.data.image_url
+        isStanding: p.isStanding, damageMarked: p.damageMarked, power: p.effectivePower(this, opponentState),
+        powerBonus: p.effectivePower(this, opponentState) - p.data.power,
+        imageUrl: p.data.image_url,
+        hasAct: EffectEngine.getActAbilities(p.data).length > 0,
+        actAvailable: EffectEngine.canActivateAbility(p, this)
       })),
       baseStructures: this.baseStructures.map(s => ({
         cardNumber: s.data.card_number, name: s.data.name, damageMarked: s.damageMarked,
-        imageUrl: s.data.image_url, isStanding: s.isStanding
+        imageUrl: s.data.image_url, isStanding: s.isStanding,
+        hasAct: EffectEngine.getActAbilities(s.data).length > 0,
+        actAvailable: EffectEngine.canActivateAbility(s, this)
       })),
       baseGear: this.baseGear.map(g => ({
-        cardNumber: g.card_number, name: g.name, imageUrl: g.image_url
+        cardNumber: g.data.card_number, name: g.data.name, imageUrl: g.data.image_url,
+        isStanding: g.isStanding,
+        hasAct: EffectEngine.getActAbilities(g.data).length > 0,
+        actAvailable: EffectEngine.canActivateAbility(g, this)
       })),
       soulsStanding: this.soulsStanding,
       soulsRested: this.soulsRested,
-      resources: this.resources
+      resources: this.resources,
+      material: this.material,
+      ingredient: this.ingredient,
+      soulDrawUsedThisTurn: this.soulDrawUsedThisTurn
     }
   }
 }

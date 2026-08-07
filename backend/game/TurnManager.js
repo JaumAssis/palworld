@@ -1,3 +1,7 @@
+const EffectEngine = require('./effects/EffectEngine')
+const { PalInstance, StructureInstance, GearInstance } = require('./CardInstance')
+const { MAX_PALS_IN_BASE } = require('./PlayerState')
+
 const PHASES = ['stand', 'draw', 'soul', 'main', 'end']
 const SOULS_PER_TURN = 2
 const OPENING_HAND_SIZE = 5
@@ -8,6 +12,9 @@ class TurnManager {
     this.player2 = player2
     this.player1.isFirstPlayer = p1GoesFirst
     this.player2.isFirstPlayer = !p1GoesFirst
+    this.player1.turnManagerRef = this
+    this.player2.turnManagerRef = this
+    this.nightUntilTurn = null
 
     const second = p1GoesFirst ? player2 : player1
     second.addSouls(1)
@@ -22,12 +29,26 @@ class TurnManager {
     this.gameOver = false
     this.winner = null
     this.log = []
+    this._damageRevealSeq = 0
+    this.lastDamageReveal = null
 
     this._addLog(`Jogo iniciado. ${this.activePlayer.playerName} começa.`)
   }
 
   get defendingPlayer() {
     return this.activePlayer === this.player1 ? this.player2 : this.player1
+  }
+
+  // "It becomes night until the end of the opponent's next turn", ou uma carta específica
+  // descansada que faz "while this card is in the rest state, it is night".
+  get isNight() {
+    if (this.nightUntilTurn != null && this.turnNumber <= this.nightUntilTurn) return true
+    for (const p of [this.player1, this.player2]) {
+      for (const pal of p.basePals) {
+        if (!pal.isStanding && EffectEngine.getParsedEffects(pal.data).cont.some(f => f.type === 'nightWhileResting')) return true
+      }
+    }
+    return false
   }
 
   _addLog(msg) {
@@ -62,6 +83,7 @@ class TurnManager {
     switch (this.currentPhase) {
       case 'stand':
         this.activePlayer.standAll()
+        this.activePlayer.soulDrawUsedThisTurn = false
         this.setPhase('draw')
         break
 
@@ -94,11 +116,32 @@ class TurnManager {
   _endPhaseCleanup() {
     for (const pal of this.activePlayer.basePals) pal.damageMarked = 0
     for (const s of this.activePlayer.baseStructures) s.damageMarked = 0
+
+    // Buffs "até o fim do turno" valem pra qualquer Pal buffado, não só do jogador ativo
+    for (const p of [this.player1, this.player2]) {
+      for (const pal of p.basePals) {
+        pal.tempPowerBonus = 0
+        pal.tempStrikeBonus = 0
+        pal.cannotBlockUntilEndOfTurn = false
+      }
+    }
+
+    // Vigilance: fica em pé já no fim do próprio turno (protegido no turno do oponente)
+    for (const pal of this.activePlayer.basePals) {
+      if (!pal.isStanding && EffectEngine.hasKeyword(pal.data, 'Vigilance')) pal.stand()
+    }
+
+    const isBot = this.activePlayer === this.player2
+    const opponent = this.activePlayer === this.player1 ? this.player2 : this.player1
+    for (const pal of [...this.activePlayer.basePals]) {
+      EffectEngine.runTrigger(this, 'onEndOfTurn', pal, this.activePlayer, opponent, { isBot })
+    }
   }
 
   _endTurn() {
     this.activePlayer = this.activePlayer === this.player1 ? this.player2 : this.player1
     this.turnNumber++
+    if (this.nightUntilTurn != null && this.turnNumber > this.nightUntilTurn) this.nightUntilTurn = null
     this._addLog(`--- Turno ${this.turnNumber}: vez de ${this.activePlayer.playerName} ---`)
     this.setPhase('stand')
     this.advanceUntilMain()
@@ -109,82 +152,435 @@ class TurnManager {
     this._addLog(`[${this.activePlayer.playerName}] Fase: ${phase}`)
   }
 
-  // ---------- Combate ----------
+  // ---------- Combate (9. Battle — Attack Declaration / Block Declaration / Quick Step / Damage / End) ----------
 
-  attackPlayer(attackerPalInstance) {
-    if (!attackerPalInstance.isStanding) {
-      return { success: false, reason: 'PAL_RESTED' }
+  // target: { type: 'player' } ou { type: 'pal'|'structure', instance }
+  declareAttack(attackerInstance, target, { isBot } = {}) {
+    if (!attackerInstance.isStanding) {
+      return { success: false, reason: 'ATTACKER_RESTED' }
     }
-    attackerPalInstance.rest()
-    const defender = this.defendingPlayer
-    const strike = attackerPalInstance.data.strike
+    const attackerState = this.activePlayer
+    const defenderState = this.defendingPlayer
 
+    if (target.type === 'pal' && !EffectEngine.canBeAttackedBy(target.instance, attackerInstance)) {
+      return { success: false, reason: 'TARGET_NOT_VALID' }
+    }
+    // Structure (9.2.3): só é alvo válido se estiver descansada — sem equivalente a Assault
+    if (target.type === 'structure' && target.instance.isStanding) {
+      return { success: false, reason: 'TARGET_NOT_VALID' }
+    }
+    const forcedTaunt = EffectEngine.getForcedTauntTargets(defenderState, attackerInstance)
+    if (forcedTaunt.length > 0 && (target.type !== 'pal' || !forcedTaunt.includes(target.instance))) {
+      return { success: false, reason: 'TAUNT_FORCED' }
+    }
+
+    const triggerNames = target.type === 'structure' ? ['onAttack', 'onAttackStructure'] : ['onAttack']
+    return this._runAttackTriggers(triggerNames, 0, attackerInstance, attackerState, defenderState, target, isBot)
+  }
+
+  // Roda onAttack/onAttackStructure em sequência — se um deles pausar esperando o jogador (ex: Elphidran,
+  // "you may reveal 1 card from hand"), a batalha (e a revelação de dano por vida) só é montada depois
+  // que TODOS os gatilhos de ataque tiverem terminado de resolver (ver _resumeAttackAfterTrigger).
+  _runAttackTriggers(triggerNames, index, attackerInstance, attackerState, defenderState, target, isBot) {
+    if (index >= triggerNames.length) {
+      return this._proceedAttack(attackerInstance, attackerState, defenderState, target, isBot)
+    }
+    const result = EffectEngine.runTrigger(this, triggerNames[index], attackerInstance, attackerState, defenderState, { isBot })
+    if (result.paused) {
+      this._pendingAttackContinuation = { triggerNames, index: index + 1, attackerInstance, attackerState, defenderState, target, isBot }
+      return { success: true, paused: true }
+    }
+    return this._runAttackTriggers(triggerNames, index + 1, attackerInstance, attackerState, defenderState, target, isBot)
+  }
+
+  // Chamado pelo EffectEngine sempre que um pendingEffect termina de resolver (sem reabrir outro) —
+  // só faz algo se essa resolução era parte da cadeia de gatilhos de um ataque em andamento.
+  _resumeAttackAfterTrigger() {
+    const cont = this._pendingAttackContinuation
+    if (!cont) return
+    this._pendingAttackContinuation = null
+    this._runAttackTriggers(cont.triggerNames, cont.index, cont.attackerInstance, cont.attackerState, cont.defenderState, cont.target, cont.isBot)
+  }
+
+  _proceedAttack(attackerInstance, attackerState, defenderState, target, isBot) {
+    attackerInstance.rest()
+
+    let resolveWait
+    const waitPromise = new Promise(resolve => { resolveWait = resolve })
+    const battle = {
+      attackerInstance, attackerState, defenderState, target,
+      nullified: false, blockResolved: false, quickResolved: false,
+      waitPromise, resolveWait
+    }
+    this.pendingBattle = battle
+    return this._advanceBattle(battle)
+  }
+
+  // Passo 9.4 (Block) e 9.5 (Quick Step) — cada um só pausa de fato se houver escolha real
+  // (mesma filosofia do pendingEffect: 0 opções válidas = pula automático).
+  _advanceBattle(battle) {
+    const defenderIsBot = battle.defenderState === this.player2
+
+    if (!battle.blockResolved) {
+      const validBlockers = EffectEngine.getValidBlockers(battle)
+      if (validBlockers.length === 0) {
+        battle.blockResolved = true
+      } else if (defenderIsBot) {
+        const chosen = EffectEngine.pickBotBlocker(battle, validBlockers)
+        if (chosen) this._applyBlock(battle, chosen)
+        battle.blockResolved = true
+      } else {
+        battle.waitingFor = 'block'
+        battle.validBlockers = validBlockers
+        this.pendingBattle = battle
+        return { success: true, paused: true }
+      }
+    }
+
+    if (!battle.quickResolved) {
+      if (defenderIsBot) {
+        battle.quickResolved = true // decisão de escopo: bot nunca joga Quick/Interrupt
+      } else {
+        const quickOptions = EffectEngine.getPlayableQuickCards(battle.defenderState)
+        if (quickOptions.length === 0) {
+          battle.quickResolved = true
+        } else {
+          battle.waitingFor = 'quick'
+          battle.quickOptions = quickOptions
+          this.pendingBattle = battle
+          return { success: true, paused: true }
+        }
+      }
+    }
+
+    // Se o atacante foi destruído/removido durante o Quick Step (ex: Dark Cannon mirando nele
+    // mesmo), o ataque não tem mais quem o realize — trata como anulado, sem dano nenhum.
+    const attackerGone = !battle.attackerState.basePals.includes(battle.attackerInstance)
+    const skipDamage = battle.nullified || attackerGone
+
+    this.pendingBattle = null
+    const damageResult = skipDamage ? {} : this._resolveDamage(battle)
+    if (!skipDamage) {
+      EffectEngine.runTrigger(this, 'onEndOfBattleAttacked', battle.attackerInstance, battle.attackerState, battle.defenderState, { isBot: battle.attackerState === this.player2 })
+    }
+    battle.resolveWait()
+    return { success: true, paused: false, nullified: skipDamage, ...damageResult }
+  }
+
+  _applyBlock(battle, blockerInstance) {
+    blockerInstance.rest()
+    battle.target = { type: 'pal', instance: blockerInstance }
+    this._addLog(`${battle.defenderState.playerName} bloqueou o ataque de ${battle.attackerInstance.data.name} com ${blockerInstance.data.name}.`)
+  }
+
+  // Retomada do Block Declaration Step (chamado pelo handler bot:resolveBlock)
+  resolveBlock(choice) {
+    const battle = this.pendingBattle
+    if (!battle || battle.waitingFor !== 'block') return { success: false }
+    if (!choice.none) {
+      const chosen = battle.defenderState.basePals[choice.blockerIndex]
+      if (!chosen || !battle.validBlockers.includes(chosen)) return { success: false }
+      this._applyBlock(battle, chosen)
+    }
+    battle.blockResolved = true
+    return this._advanceBattle(battle)
+  }
+
+  // Retomada do Quick Step (chamado pelo handler bot:resolveQuickStep)
+  resolveQuickStep(choice) {
+    const battle = this.pendingBattle
+    if (!battle || battle.waitingFor !== 'quick') return { success: false }
+
+    if (choice.pass) {
+      battle.quickResolved = true
+      return this._advanceBattle(battle)
+    }
+
+    const option = battle.quickOptions.find(o => o.card.card_number === choice.cardNumber && o.kind === choice.kind)
+    if (!option) return { success: false }
+
+    if (option.kind === 'interrupt') {
+      // 12.8.2: duas formas de pagar o custo do Interrupt — se AMBAS estiverem disponíveis, o
+      // jogador escolhe; se só uma der, usa ela direto (não tem o que perguntar).
+      const canSoul = battle.defenderState.soulsStanding >= 1
+      const canDiscard = battle.defenderState.hand.length >= 2
+      if (canSoul && canDiscard) {
+        battle.waitingFor = 'interruptCost'
+        battle.interruptCard = option.card
+        this.pendingBattle = battle
+        return { success: true, paused: true }
+      }
+      return this._startInterruptPayment(battle, option.card, canSoul ? 'soul' : 'discard')
+    }
+
+    // kind === 'quick': joga o Event (pode abrir um pendingEffect de escolha de alvo por baixo,
+    // que resolve normalmente — o Quick Step continua aberto depois, pra jogar outra carta ou passar)
+    EffectEngine.playQuickCard(this, option.card, battle.defenderState, battle.attackerState)
+    battle.quickOptions = EffectEngine.getPlayableQuickCards(battle.defenderState)
+    this.pendingBattle = battle
+    return { success: true, paused: true }
+  }
+
+  // Retomada de "qual custo pagar" do Interrupt (chamado pelo handler bot:resolveInterruptCost)
+  resolveInterruptCost(choice) {
+    const battle = this.pendingBattle
+    if (!battle || battle.waitingFor !== 'interruptCost') return { success: false }
+    if (choice.method === 'soul' && battle.defenderState.soulsStanding < 1) return { success: false }
+    if (choice.method === 'discard' && battle.defenderState.hand.length < 2) return { success: false }
+    return this._startInterruptPayment(battle, battle.interruptCard, choice.method)
+  }
+
+  // Descarta a carta do Interrupt em si (sempre) e paga o restante do custo escolhido. No método
+  // "descarte", a carta EXTRA (12.8.2) também é escolhida pelo jogador — só pula a pergunta se
+  // houver 0 ou 1 candidata (nada a escolher de fato).
+  _startInterruptPayment(battle, card, method) {
+    battle.defenderState.hand = battle.defenderState.hand.filter(c => c !== card)
+    battle.defenderState.graveyard.push(card)
+    battle.interruptCard = card
+
+    if (method === 'soul') {
+      battle.defenderState.paySoulCost(1)
+      return this._finishInterrupt(battle)
+    }
+
+    const others = battle.defenderState.hand
+    if (others.length <= 1) {
+      if (others.length === 1) {
+        battle.defenderState.graveyard.push(others[0])
+        battle.defenderState.hand = []
+      }
+      return this._finishInterrupt(battle)
+    }
+
+    battle.waitingFor = 'interruptDiscardChoice'
+    this.pendingBattle = battle
+    return { success: true, paused: true }
+  }
+
+  // Retomada de "qual carta extra descartar" pro custo do Interrupt (bot:resolveInterruptDiscard)
+  resolveInterruptDiscard(choice) {
+    const battle = this.pendingBattle
+    if (!battle || battle.waitingFor !== 'interruptDiscardChoice') return { success: false }
+    const idx = battle.defenderState.hand.findIndex(c => c.card_number === choice.cardNumber)
+    if (idx === -1) return { success: false }
+    const [discarded] = battle.defenderState.hand.splice(idx, 1)
+    battle.defenderState.graveyard.push(discarded)
+    return this._finishInterrupt(battle)
+  }
+
+  _finishInterrupt(battle) {
+    battle.nullified = true
+    battle.quickResolved = true
+    this._addLog(`${battle.defenderState.playerName} ativou Interrupt com ${battle.interruptCard.name} — o ataque foi anulado.`)
+    return this._advanceBattle(battle)
+  }
+
+  // Passo 9.6 — resolve o dano depois que Block e Quick Step já foram decididos
+  _resolveDamage(battle) {
+    const { attackerInstance, attackerState, defenderState, target } = battle
+
+    if (target.type === 'pal') {
+      EffectEngine.runTrigger(this, 'onAttacked', target.instance, defenderState, attackerState, { isBot: defenderState === this.player2 })
+      return this.resolveBattle(attackerInstance, target.instance)
+    }
+
+    if (target.type === 'structure') {
+      // 9.6.3.2 — dano unidirecional, a Structure não bate de volta no atacante
+      const power = attackerInstance.effectivePower(attackerState, defenderState)
+      target.instance.damageMarked += power
+      const structureDestroyed = target.instance.isDestroyed
+      if (structureDestroyed) {
+        const idx = defenderState.baseStructures.indexOf(target.instance)
+        if (idx !== -1) {
+          defenderState.baseStructures.splice(idx, 1)
+          defenderState.graveyard.push(target.instance.data)
+        }
+      }
+      return { structureDestroyed }
+    }
+
+    const strike = attackerInstance.effectiveStrike(attackerState, defenderState)
     const revealed = []
     for (let i = 0; i < strike; i++) {
-      if (defender.deck.length === 0) {
-        this._endGame(this.activePlayer)
-        return { success: true, gameEnded: true }
+      if (defenderState.deck.length === 0) {
+        this._endGame(attackerState)
+        return { gameEnded: true }
       }
-      revealed.push(defender.deck.shift())
+      revealed.push(defenderState.deck.shift())
     }
 
     const canceled = revealed.some(c => c.is_lucky)
     let damageDealt = 0
-
     if (!canceled) {
-      defender.life -= strike
+      defenderState.life -= strike
       damageDealt = strike
     }
+    defenderState.graveyard.push(...revealed)
 
-    defender.graveyard.push(...revealed)
-
-    if (defender.life <= 0) {
-      this._endGame(this.activePlayer)
-      return { success: true, canceled, damageDealt, revealed, gameEnded: true }
+    this.lastDamageReveal = {
+      id: ++this._damageRevealSeq,
+      attackerName: attackerInstance.data.name,
+      defenderName: defenderState.playerName,
+      canceled,
+      damageDealt,
+      cards: revealed.map(c => ({ cardNumber: c.card_number, name: c.name, imageUrl: c.image_url, isLucky: !!c.is_lucky }))
     }
 
-    return { success: true, canceled, damageDealt, revealed, gameEnded: false }
-  }
-
-  // Ataca um Pal Rested do oponente (regra: só Pals Rested podem ser alvo)
-  attackOpponentPal(attackerInstance, targetInstance) {
-    if (!attackerInstance.isStanding) {
-      return { success: false, reason: 'ATTACKER_RESTED' }
+    if (defenderState.life <= 0) {
+      this._endGame(attackerState)
+      return { canceled, damageDealt, revealed, gameEnded: true }
     }
-    if (targetInstance.isStanding) {
-      return { success: false, reason: 'TARGET_NOT_RESTED' }
-    }
-    attackerInstance.rest()
-    const result = this.resolveBattle(attackerInstance, targetInstance)
-    return { success: true, ...result }
+    return { canceled, damageDealt, revealed, gameEnded: false }
   }
 
   resolveBattle(attackerInstance, defenderInstance) {
-    defenderInstance.damageMarked += attackerInstance.data.power
-    attackerInstance.damageMarked += defenderInstance.data.power
+    const attackerState = this.activePlayer
+    const defenderState = this.defendingPlayer
+
+    const attackerPower = attackerInstance.effectivePower(attackerState, defenderState)
+    const defenderPower = defenderInstance.effectivePower(defenderState, attackerState)
+    defenderInstance.damageMarked += attackerPower
+    attackerInstance.damageMarked += defenderPower
 
     const results = { attackerDestroyed: false, defenderDestroyed: false }
 
-    if (defenderInstance.isDestroyed) {
-      this._removePal(defenderInstance)
+    if (defenderInstance.isDestroyed(defenderState, attackerState)) {
+      this._sendToGraveyard(defenderInstance, defenderState)
       results.defenderDestroyed = true
+
+      if (EffectEngine.hasKeyword(attackerInstance.data, 'Breakthrough')) {
+        const strike = attackerInstance.effectiveStrike(attackerState, defenderState)
+        defenderState.life -= strike
+        this._addLog(`${attackerInstance.data.name} (Breakthrough) causou ${strike} de dano direto em ${defenderState.playerName}.`)
+        if (defenderState.life <= 0) this._endGame(attackerState)
+      }
     }
-    if (attackerInstance.isDestroyed) {
-      this._removePal(attackerInstance)
+    if (attackerInstance.isDestroyed(attackerState, defenderState)) {
+      this._sendToGraveyard(attackerInstance, attackerState)
       results.attackerDestroyed = true
+
+      if (!results.defenderDestroyed && EffectEngine.hasKeyword(attackerInstance.data, 'Retaliate')) {
+        this._sendToGraveyard(defenderInstance, defenderState)
+        results.defenderDestroyed = true
+      }
     }
     return results
   }
 
-  _removePal(palInstance) {
-    for (const p of [this.player1, this.player2]) {
-      const idx = p.basePals.indexOf(palInstance)
-      if (idx !== -1) {
-        p.basePals.splice(idx, 1)
-        p.graveyard.push(palInstance.data)
-        break
+  checkAndRemoveIfDestroyed(instance, ownerState, opponentState) {
+    if (instance.isDestroyed(ownerState, opponentState)) {
+      this._sendToGraveyard(instance, ownerState)
+      return true
+    }
+    return false
+  }
+
+  _sendToGraveyard(palInstance, ownerState) {
+    const idx = ownerState.basePals.indexOf(palInstance)
+    if (idx === -1) return
+    ownerState.basePals.splice(idx, 1)
+    ownerState.graveyard.push(palInstance.data)
+
+    const opponentState = ownerState === this.player1 ? this.player2 : this.player1
+    const isBot = ownerState !== this.player1
+    EffectEngine.runTrigger(this, 'onGraveyard', palInstance, ownerState, opponentState, { isBot })
+    EffectEngine.runTrigger(this, 'onLeaveBase', palInstance, ownerState, opponentState, { isBot })
+  }
+
+  _returnToHand(palInstance, ownerState) {
+    const idx = ownerState.basePals.indexOf(palInstance)
+    if (idx === -1) return
+    ownerState.basePals.splice(idx, 1)
+    ownerState.hand.push(palInstance.data)
+
+    const opponentState = ownerState === this.player1 ? this.player2 : this.player1
+    EffectEngine.runTrigger(this, 'onLeaveBase', palInstance, ownerState, opponentState, { isBot: ownerState !== this.player1 })
+  }
+
+  // Devolve os Pals guardados em sourceInstance.exiledCards (exilados POR essa carta) pro campo
+  // (em pé... na verdade descansados, "in the rest state") ou pra mão do dono original de cada um.
+  returnExiledPals(sourceInstance, destination) {
+    const exiled = sourceInstance.exiledCards || []
+    for (const rec of exiled) {
+      if (destination === 'hand' || rec.ownerState.basePals.length >= MAX_PALS_IN_BASE) {
+        rec.ownerState.hand.push(rec.data)
+      } else {
+        const inst = new PalInstance(rec.data)
+        inst.rest()
+        rec.ownerState.basePals.push(inst)
       }
     }
+    sourceInstance.exiledCards = []
+  }
+
+  // Deploy "de efeito" (fora do fluxo normal de jogar da mão) — usado por cardSelect (Chillet, Lyleen,
+  // busca no cemitério, etc). `payCost` só é true pra "deploy com desconto" (Elizabee/Beegarde); as
+  // demais variantes (deploy grátis, deploy direto do cemitério já descansado) não cobram Soul.
+  deployCardFree(casterState, opponentState, cardData, { rested = false, payCost = false, discount = 0 } = {}) {
+    if (payCost) {
+      const cost = Math.max(0, (cardData.cost || 0) - discount)
+      if (!casterState.paySoulCost(cost)) {
+        casterState.hand.push(cardData) // não deu pra pagar — devolve pra mão em vez de perder a carta
+        return { success: false, reason: 'NOT_ENOUGH_SOUL' }
+      }
+    }
+
+    const isBot = casterState !== this.player1
+    let instance
+
+    if (cardData.card_type === 'Pal') {
+      instance = new PalInstance(cardData)
+      if (rested) instance.rest()
+      casterState.basePals.push(instance)
+      this._addLog(`${casterState.playerName} deployou ${cardData.name}.`)
+      EffectEngine.runTrigger(this, 'onDeploy', instance, casterState, opponentState, { isBot })
+      EffectEngine.notifyAllyDeploy(this, casterState, opponentState, instance, { isBot })
+      this.checkOverloadedPals(casterState, opponentState, instance, isBot)
+    } else if (cardData.card_type === 'Structure') {
+      instance = new StructureInstance(cardData)
+      if (rested) instance.rest()
+      casterState.baseStructures.push(instance)
+      this._addLog(`${casterState.playerName} deployou ${cardData.name}.`)
+    } else if (cardData.card_type === 'Gear') {
+      instance = new GearInstance(cardData)
+      if (rested) instance.rest()
+      casterState.baseGear.push(instance)
+      this._addLog(`${casterState.playerName} deployou ${cardData.name}.`)
+    } else {
+      casterState.hand.push(cardData)
+      return { success: false, reason: 'UNSUPPORTED_TYPE' }
+    }
+
+    return { success: true, instance }
+  }
+
+  // Regra 11.5 (Overloaded Pals Resolution): passar do limite de 5 Pals não bloqueia o deploy — o
+  // Pal recém-colocado (`justDeployed`) fica garantido, e o jogador (dono da base) escolhe qual dos
+  // OUTROS Pals já em campo vai pro cemitério até voltar ao limite. Só deployamos 1 Pal por vez neste
+  // jogo, então o excedente é sempre exatamente 1.
+  checkOverloadedPals(casterState, opponentState, justDeployed, isBot) {
+    if (casterState.basePals.length <= MAX_PALS_IN_BASE) return { paused: false }
+    const others = casterState.basePals.filter(p => p !== justDeployed)
+    const toRemove = others.length - (MAX_PALS_IN_BASE - 1)
+    if (toRemove <= 0) return { paused: false }
+
+    if (isBot) {
+      const sorted = [...others].sort((a, b) => (a.data.power || 0) - (b.data.power || 0))
+      for (let i = 0; i < toRemove; i++) this._sendToGraveyard(sorted[i], casterState)
+      return { paused: false }
+    }
+
+    const owner = casterState === this.player1 ? 'player' : 'bot'
+    this.pendingEffect = {
+      kind: 'effect',
+      sourceCardName: justDeployed.data.name,
+      description: `Sua base excedeu o limite de ${MAX_PALS_IN_BASE} Pals — escolha 1 para enviar ao cemitério.`,
+      optional: false,
+      actions: [{ type: 'destroy', target: { mode: 'choose' } }],
+      instance: justDeployed, casterState, opponentState, context: {},
+      validTargets: others.map(p => ({ owner, index: casterState.basePals.indexOf(p) }))
+    }
+    return { paused: true }
   }
 
   _endGame(winner) {
