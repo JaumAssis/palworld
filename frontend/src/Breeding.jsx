@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useLanguage } from './i18n/LanguageContext'
-
-const API_URL = 'http://localhost:3001'
+import { apiFetch } from './api'
 
 function CardPicker({ onSelect, onClose, ownedPals }) {
   const { t } = useLanguage()
@@ -37,16 +36,15 @@ function Breeding({ onClose } = {}) {
   const [player, setPlayer] = useState(null)
 
   const useCake = (type) => {
-    fetch(`${API_URL}/api/breeding/use-cake`, {
+    apiFetch('/api/breeding/use-cake', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type })
     })
       .then(async res => {
         const data = await res.json()
         if (!res.ok) throw new Error(data.error)
         loadStatus()
-        fetch(`${API_URL}/api/player`).then(r => r.json()).then(setPlayer)
+        apiFetch('/api/player').then(r => r.json()).then(setPlayer)
       })
       .catch(err => alert(err.message))
   }
@@ -54,7 +52,7 @@ function Breeding({ onClose } = {}) {
   useEffect(() => {
     loadOwnedPals()
     loadStatus()
-    fetch(`${API_URL}/api/player`).then(r => r.json()).then(setPlayer)
+    apiFetch('/api/player').then(r => r.json()).then(setPlayer)
     const clockInterval = setInterval(() => setNow(Date.now()), 1000)
     const pollInterval = setInterval(() => { loadStatus(); loadOwnedPals() }, 5000) // corrige o "preso" até virar Chocar; também recarrega os Pals disponíveis (podem ter sido liberados em outra tela)
     const openTimeout = setTimeout(() => setIsOpen(true), 100)
@@ -67,8 +65,8 @@ function Breeding({ onClose } = {}) {
 
   function loadOwnedPals() {
     Promise.all([
-      fetch(`${API_URL}/api/cards`).then(r => r.json()),
-      fetch(`${API_URL}/api/player/cards`).then(r => r.json())
+      apiFetch('/api/cards').then(r => r.json()),
+      apiFetch('/api/player/cards').then(r => r.json())
     ]).then(([allCards, owned]) => {
       // só mostra Pals com pelo menos 1 cópia disponível — as ocupadas em outra tarefa não aparecem
       const availableNumbers = new Set(owned.filter(o => o.quantity - o.reserved > 0).map(o => o.card_number))
@@ -77,13 +75,12 @@ function Breeding({ onClose } = {}) {
   }
 
   function loadStatus() {
-    fetch(`${API_URL}/api/breeding/status`).then(r => r.json()).then(setStatus)
+    apiFetch('/api/breeding/status').then(r => r.json()).then(setStatus)
   }
 
   const startBreeding = () => {
-    fetch(`${API_URL}/api/breeding/start`, {
+    apiFetch('/api/breeding/start', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ parent1CardNumber: parent1.card_number, parent2CardNumber: parent2.card_number })
     })
       .then(async res => {
@@ -97,7 +94,7 @@ function Breeding({ onClose } = {}) {
       .catch(err => alert(err.message))
   }
   const claimResult = () => {
-    fetch(`${API_URL}/api/breeding/claim`, { method: 'POST' })
+    apiFetch('/api/breeding/claim', { method: 'POST' })
       .then(async res => {
         const data = await res.json()
         if (!res.ok) throw new Error(data.error)

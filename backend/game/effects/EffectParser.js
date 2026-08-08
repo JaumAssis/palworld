@@ -139,6 +139,7 @@ function parseTargetedActions(text, target) {
   const actions = []
   let m
   if ((m = /deal (\d+) Damage/i.exec(text))) actions.push({ type: 'damage', amount: +m[1], target })
+  else if ((m = /gets? (\d+|X) Damage\b/i.exec(text))) actions.push({ type: 'damage', amount: parseAmount(m[1]), target })
   if ((m = /Power ([+-]\d+)/i.exec(text))) actions.push({ type: 'buffPower', amount: +m[1], duration: 'endOfTurn', target })
   if ((m = /Strike ([+-]\d+)/i.exec(text))) actions.push({ type: 'buffStrike', amount: +m[1], duration: 'endOfTurn', target })
   if (/\brest (it|them|this card)\b/i.test(text)) actions.push({ type: 'rest', target })
@@ -156,6 +157,9 @@ function parseUntargetedActions(text) {
   let m
   if ((m = /Get (\d+) Material\b/i.exec(text))) actions.push({ type: 'gainMaterial', amount: +m[1] })
   if ((m = /Get (\d+) Ingredient\b/i.exec(text))) actions.push({ type: 'gainIngredient', amount: +m[1] })
+  if ((m = /Get either (\d+) Material or (\d+) Ingredient\b/i.exec(text))) {
+    actions.push({ type: 'chooseResourceEither', materialAmount: +m[1], ingredientAmount: +m[2] })
+  }
   if ((m = /Draw (\d+|X) card/i.exec(text))) actions.push({ type: 'draw', amount: parseAmount(m[1]) })
   if ((m = /[Gg]ain (\d+) life/i.exec(text))) actions.push({ type: 'gainLife', amount: +m[1] })
   if ((m = /[Cc]hoose (\d+) souls?,? and stand them/i.exec(text))) actions.push({ type: 'standSouls', amount: +m[1] })
@@ -166,14 +170,23 @@ function parseUntargetedActions(text) {
     actions.push({ type: 'opponentDiscardChoice' })
   } else if (/choose 1 card from your hand,? and discards? it/i.test(text)) {
     actions.push({ type: 'discardOwnHandChoice' })
-  }
-  if ((m = /\bdiscard (\d+|a) cards? from hand\b/i.exec(text))) {
+  } else if (/\byou may discard (?:\d+|a) cards? from hand\b/i.test(text)) {
+    // "You may discard 1 card from hand. If you discarded this way, ..." (Lovander) — diferente de
+    // "discard N cards from hand" (sem "you may"): aqui é OPCIONAL e a carta é ESCOLHIDA, não aleatória.
+    actions.push({ type: 'discardOwnHandChoice', optional: true })
+  } else if ((m = /\bdiscard (\d+|a) cards? from hand\b/i.exec(text))) {
     actions.push({ type: 'discardOwnHandRandom', amount: /a/i.test(m[1]) ? 1 : +m[1] })
   }
   if (/your opponent chooses 1 of their Pals,? and puts? it into the graveyard/i.test(text)) {
     actions.push({ type: 'opponentDestroyChoice' })
   }
   if (/it becomes night until the end of the opponent's next turn/i.test(text)) actions.push({ type: 'setNight' })
+  // "Reduce the cost of playing your next gear from hand by X until end of turn." (Primitive Furnace) —
+  // X vem do custo "Consume X Material" (context.chosenAmount), sem fórmula própria; "does not become
+  // ◇0 or less" (o piso de custo 1) é aplicado na hora de deployar a gear, não aqui no parse.
+  if ((m = /Reduce the cost of playing your next gear from hand by (\d+|X)\b/i.exec(text))) {
+    actions.push({ type: 'discountNextGear', amount: parseAmount(m[1]) })
+  }
   if (/deploy the Pal exiled by this card into the owner's base in the rest state/i.test(text)) {
     actions.push({ type: 'returnExiledToField' })
   }
@@ -218,6 +231,10 @@ function parseSentence(sentence) {
     const before = sentence.replace(/\breturn this card to hand\b/i, '')
     return [...parseUntargetedActions(before), { type: 'returnToHand', target: { mode: 'self' } }]
   }
+  if (/\bput this card into the graveyard\b/i.test(sentence)) {
+    const before = sentence.replace(/\bput this card into the graveyard\b/i, '')
+    return [...parseUntargetedActions(before), { type: 'destroy', target: { mode: 'self' } }]
+  }
   return parseUntargetedActions(sentence)
 }
 
@@ -229,6 +246,7 @@ function parseXFormula(text) {
   if (/number of your structures/i.test(text)) return { type: 'countStructures' }
   if (/number of your gears|your number of gears/i.test(text)) return { type: 'countGears' }
   if (/number of your souls|your number of souls/i.test(text)) return { type: 'countSouls' }
+  if (/this card's power/i.test(text)) return { type: 'selfPower' }
   let m
   if ((m = /cost of the assigned Pal\s*([+-]\s*\d+)?/i.exec(text))) {
     return { type: 'costOfContextPal', modifier: m[1] ? parseInt(m[1].replace(/\s/g, ''), 10) : 0 }
@@ -259,7 +277,160 @@ function extractPrecondition(rawBody) {
   return null
 }
 
+// "Choose 1 Pal, and it gets Power +200 until end of turn. If its main name is 《Foxparks》, it gets
+// the skill in 〈〉 until end of turn. 〈AUTO OnAttack Choose up to 1 Pal, and deal 700 Damage〉." (Foxparks'
+// Harness) — concede uma habilidade temporária ao Pal escolhido, condicionada ao nome principal dele.
+// Precisa rodar no texto CRU (antes de stripAsides, que apagaria o conteúdo de 〈〉) — mesmo motivo do
+// hasRestingNocturnal acima.
+function parseGrantSkillIfMainNameClause(rawBody) {
+  const m = /^(.*?)\.\s*If its main name is 《([^》]+)》,\s*it gets the skill in 〈\s*〉 until end of turn\.\s*〈\s*AUTO\s+(OnAttack|OnDeploy)\b\s*(.*?)\s*〉\.?$/i.exec(rawBody.trim())
+  if (!m) return null
+
+  const baseActions = parseClauseBody(stripAsides(m[1]) + '.')
+  const chooseAction = baseActions.find(a => a.target && a.target.mode === 'choose')
+  if (!chooseAction) return null
+
+  const grantedActions = parseClauseBody(stripAsides(m[4]) + '.')
+  if (!grantedActions.length) return null
+
+  baseActions.push({
+    type: 'grantSkillIfMainName',
+    target: chooseAction.target,
+    palName: m[2],
+    triggerType: m[3].toLowerCase() === 'onattack' ? 'onAttack' : 'onDeploy',
+    grantedActions
+  })
+  return baseActions
+}
+
+// "Choose 1 Pal, and it gets Power +200 until end of turn. If its main name is 《Pengullet》, instead it
+// gets Power +500 and the skill in 〈〉 until end of turn. 〈ACT [Rest this card] Choose all of your
+// opponent's Pals, and they get X Damage. X is equal to this card's Power. Put this card into the
+// graveyard〉." (Pengullet Rocket Launcher) — diferente da Foxparks' Harness: o buff é SUBSTITUÍDO (não
+// somado) e a habilidade concedida é uma ACT própria (não um gatilho AUTO) — ver 'grantedActs' no
+// EffectEngine, que funciona como uma 2a entrada em getAllActAbilities() só pra essa instância.
+function parseReplaceBuffAndGrantActIfMainNameClause(rawBody) {
+  const m = /^Choose 1 Pal, and it gets Power \+(\d+) until end of turn\.\s*If its main name is 《([^》]+)》,\s*instead it gets Power \+(\d+) and the skill in 〈\s*〉 until end of turn\.\s*〈\s*(ACT\s*\[[^\]]*\][^〉]*)〉\.?$/i.exec(rawBody.trim())
+  if (!m) return null
+
+  const grantedAbility = parseActLine(m[4].replace(/^ACT\s*/i, ''))
+  if (!grantedAbility) return null
+  grantedAbility.description = m[4].trim()
+
+  const target = { mode: 'choose', upTo: false, count: 1, side: 'any', filter: {} }
+  return [
+    { type: 'buffPower', amount: +m[1], duration: 'endOfTurn', target },
+    {
+      type: 'replaceBuffAndGrantActIfMainName',
+      target,
+      palName: m[2],
+      defaultAmount: +m[1],
+      replacementAmount: +m[3],
+      grantedAbility
+    }
+  ]
+}
+
+// "Choose 1 Pal, and it gets Power +200 until end of turn. If its main name is 《Digtoise》, get either
+// 2 Material or 2 Ingredient." (Digtoise's Headband) — a consequência é pro CASTER (não pro Pal
+// escolhido), só condicionada ao nome principal dele — por isso não usa 'grantSkill'/'replaceBuff'.
+function parseMainNameResourceChoiceClause(rawBody) {
+  const m = /^(.*?)\.\s*If its main name is 《([^》]+)》,\s*get either (\d+) Material or (\d+) Ingredient\.?$/i.exec(rawBody.trim())
+  if (!m) return null
+
+  const baseActions = parseClauseBody(stripAsides(m[1]) + '.')
+  const chooseAction = baseActions.find(a => a.target && a.target.mode === 'choose')
+  if (!chooseAction) return null
+
+  baseActions.push({
+    type: 'runIfMainName',
+    target: chooseAction.target,
+    palName: m[2],
+    thenActions: [{ type: 'chooseResourceEither', materialAmount: +m[3], ingredientAmount: +m[4] }]
+  })
+  return baseActions
+}
+
+// "The Pal assigned to this card gets the skill in 〈〉 until the end of the opponent's next turn.
+// 〈CONT Taunt (...)〉." (No Pals Beyond Sign) — sem condição de nome, e o alvo é o Pal pago como custo
+// ("Assign 1 Pal"), não uma escolha nova — reaproveita o mode 'contextPal' já usado por 'Exile the
+// assigned Pal' em parseSentence.
+function parseGrantTauntToAssignedClause(rawBody) {
+  const m = /^The Pal assigned to this card gets the skill in 〈\s*〉 until the end of the opponent's next turn\.\s*〈\s*CONT\s+Taunt\b[^〉]*〉\.?$/i.exec(rawBody.trim())
+  if (!m) return null
+  return [{ type: 'grantTauntUntilOpponentNextTurn', target: { mode: 'contextPal' } }]
+}
+
+// "This card gets Power +500 and the skill in 〈〉 until end of turn." / "Until end of turn, this card
+// gets Power +500, and the skill in 〈〉." / "Choose 1 Pal, and it gets Power +200 and the skill in
+// 〈〉 until end of turn." — concede uma KEYWORD estática (Breakthrough/Assault/Stealth/Vigilance) até
+// o fim do turno, pra si mesma ou pro Pal escolhido. (Digtoise x2, Gumoss, Cawgnito Hat, Grappling Gun)
+function parseGrantKeywordBuffClause(rawBody) {
+  const trimmed = rawBody.trim()
+  const keywordAfter = m => {
+    const kw = /〈\s*(?:AUTO|CONT)\s+([A-Za-z]+)\b[^〉]*〉\.?$/i.exec(m)
+    return kw ? normalizeKeywordName(kw[1]) : null
+  }
+
+  let m = /^Choose 1 Pal, and it gets Power \+(\d+) and the skill in 〈\s*〉 until end of turn\.\s*(.*)$/i.exec(trimmed)
+  if (m) {
+    const keyword = keywordAfter(m[2])
+    if (!keyword) return null
+    const target = { mode: 'choose', upTo: false, count: 1, side: 'any', filter: {} }
+    return [
+      { type: 'buffPower', amount: +m[1], duration: 'endOfTurn', target },
+      { type: 'grantKeywordUntilEndOfTurn', target, keyword }
+    ]
+  }
+
+  m = /^(?:This card|It) gets Power \+(\d+) and the skill in 〈\s*〉 until end of turn\.\s*(.*)$/i.exec(trimmed)
+  if (!m) m = /^Until end of turn, this card gets Power \+(\d+),? and the skill in 〈\s*〉\.\s*(.*)$/i.exec(trimmed)
+  if (m) {
+    const keyword = keywordAfter(m[2])
+    if (!keyword) return null
+    const target = { mode: 'self' }
+    return [
+      { type: 'buffPower', amount: +m[1], duration: 'endOfTurn', target },
+      { type: 'grantKeywordUntilEndOfTurn', target, keyword }
+    ]
+  }
+
+  return null
+}
+
+// "Stand all Pals assigned this turn. Until end of turn, your Pals cannot be assigned, and must
+// attack as much as possible (Includes Pals deployed after activating this ability)." (Alarm Bell) —
+// 3 efeitos de estado do JOGADOR (não de um alvo escolhido): reerguer quem foi assinalado neste
+// turno, bloquear novos "assign" até o fim do turno, e forçar ataque com tudo que ficar em pé.
+function parseStandAssignedForceAttackClause(rawBody) {
+  const m = /^Stand all Pals assigned this turn\.\s*Until end of turn, your Pals cannot be assigned, and must attack as much as possible\b/i.exec(rawBody.trim())
+  if (!m) return null
+  return [
+    { type: 'standAllAssignedThisTurn' },
+    { type: 'preventAssignUntilEndOfTurn' },
+    { type: 'mustAttackAllUntilEndOfTurn' }
+  ]
+}
+
 function parseClauseBodyTopLevel(rawBody) {
+  const replaceBuffAndGrantAct = parseReplaceBuffAndGrantActIfMainNameClause(rawBody)
+  if (replaceBuffAndGrantAct) return replaceBuffAndGrantAct
+
+  const grantSkill = parseGrantSkillIfMainNameClause(rawBody)
+  if (grantSkill) return grantSkill
+
+  const mainNameResourceChoice = parseMainNameResourceChoiceClause(rawBody)
+  if (mainNameResourceChoice) return mainNameResourceChoice
+
+  const grantTaunt = parseGrantTauntToAssignedClause(rawBody)
+  if (grantTaunt) return grantTaunt
+
+  const grantKeywordBuff = parseGrantKeywordBuffClause(rawBody)
+  if (grantKeywordBuff) return grantKeywordBuff
+
+  const standAssignedForceAttack = parseStandAssignedForceAttackClause(rawBody)
+  if (standAssignedForceAttack) return standAssignedForceAttack
+
   const pre = extractPrecondition(rawBody)
   if (pre) {
     const actions = parseClauseBody(stripAsides(pre.rest))
@@ -316,13 +487,15 @@ function parseCardSelectClause(body) {
     return { type: 'cardRevealBranch', filter: parseCardFilterText(m[1]), onMatch: 'hand', onNoMatch: 'graveyard' }
   }
 
-  // "Look at/Reveal the top N cards..., choose (up to) 1 X from among them and {add to hand|deploy it},
-  //  and {shuffle the rest with the deck|put the remaining cards into the graveyard}. [If 0, bônus.]"
-  m = /^(?:Look at|Reveal) the top (\d+) cards? of your deck,?\s*choose (up to 1|1) (.+?) from among them and (add (?:it|them) to hand|deploy (?:it|them)),?\s*and (shuffle the rest of the cards with the deck|put the remaining cards? into the graveyard)\.?(?:\s*If you (?:choose|chose) 0 cards?,\s*(.+?)\.?)?$/i.exec(body)
+  // "Look at/Reveal the top N cards..., choose (up to) 1+ X from among them and {add to hand|deploy
+  //  it/them}, and {shuffle the rest with the deck|put the remaining cards into the graveyard}. [If 0,
+  //  bônus.]" — "up to 2" (Reptyro Cryst) exige escolher mais de uma carta da mesma revelação, não só 1.
+  m = /^(?:Look at|Reveal) the top (\d+) cards? of your deck,?\s*choose (up to \d+|\d+) (.+?) from among them and (add (?:it|them) to hand|deploy (?:it|them)),?\s*and (shuffle the rest of the cards with the deck|put the remaining cards? into the graveyard)\.?(?:\s*If you (?:choose|chose) 0 cards?,\s*(.+?)\.?)?$/i.exec(body)
   if (m) {
     const zeroBonus = m[6] ? parseClauseBody(m[6]) : null
+    const maxPicks = parseInt(/\d+/.exec(m[2])[0], 10)
     return {
-      type: 'cardSelect', source: 'deckTop', count: +m[1], mandatory: !/up to/i.test(m[2]),
+      type: 'cardSelect', source: 'deckTop', count: +m[1], mandatory: !/up to/i.test(m[2]), maxPicks,
       filter: parseCardFilterText(m[3]), destination: /deploy/i.test(m[4]) ? 'deploy' : 'hand',
       remainder: /shuffle/i.test(m[5]) ? 'shuffle' : 'graveyard',
       zeroBonus: zeroBonus && zeroBonus.length ? zeroBonus : null
@@ -392,7 +565,7 @@ function extractXFormula(body) {
 // "{Ação opcional}. If you {discarded/butchered} ... this way, {consequência}." — a consequência
 // só roda em tempo de execução se a ação principal realmente aconteceu (ver EffectEngine).
 function parseThenClause(body) {
-  const m = /^(.*?)\.\s*If you (?:discarded|butchered)(?: 1 or more cards)? this way,?\s*(.*)$/i.exec(body)
+  const m = /^(.*?)\.\s*If you (?:discarded|butchered|put)(?: 1 or more (?:cards|Pals))? this way,?\s*(.*)$/i.exec(body)
   if (!m) return null
   const primary = parseClauseBody(m[1] + '.')
   const consequence = parseClauseBody(m[2])
@@ -487,7 +660,7 @@ function parseCostItem(item) {
   if (/^Consume X Ingredient$/i.test(item)) return { type: 'consumeIngredientX' }
   if ((m = /^Consume (\d+) Material$/i.exec(item))) return { type: 'consumeMaterial', amount: +m[1] }
   if ((m = /^Consume (\d+) Ingredient$/i.exec(item))) return { type: 'consumeIngredient', amount: +m[1] }
-  if (/^Assign 1 Pal$/i.test(item)) return { type: 'assignPal' }
+  if ((m = /^Assign (\d+) Pals?$/i.exec(item))) return { type: 'assignPal', amount: +m[1] }
   if (/^Butcher 1 (?:other )?Pal$/i.test(item)) return { type: 'butcherPal' }
   if (/^Discard X cards? from hand$/i.test(item)) return { type: 'discardHandX' }
   if ((m = /^Discard (\d+) cards? from hand$/i.exec(item))) return { type: 'discardHand', amount: +m[1] }
@@ -557,8 +730,24 @@ function pushClause(bucket, body, unhandled) {
 function classifyLine(line, result) {
   let m
 
-  if ((m = /^AUTO\s+(Brave|Serious)\s+(\d+)\b/i.exec(line))) {
-    result.keywords.push({ name: normalizeKeywordName(m[1]), value: +m[2] })
+  // "AUTO Brave 300 (OnAttack This card gets Power +300 until end of turn)" — mecanismo fixo, já
+  // aplicado direto no EffectEngine (runTrigger onAttack) a partir só do valor; a aside não é lida.
+  if ((m = /^AUTO\s+Brave\s+(\d+)\b/i.exec(line))) {
+    result.keywords.push({ name: 'Brave', value: +m[1] })
+    return
+  }
+  // "AUTO Serious 400 (OnAssign Choose 1 Pal, and it gets Power +400 until end of turn)" (Rooby,
+  // Teafant, Tanzee) — ao contrário de Brave, o alvo pode ser QUALQUER Pal (não só a própria carta),
+  // então precisa mesmo interpretar a aside como um gatilho 'onAssign' de verdade, não hardcoded.
+  if ((m = /^AUTO\s+Serious\s+(\d+)\s*\(OnAssign\s+([^)]*)\)/i.exec(line))) {
+    result.keywords.push({ name: 'Serious', value: +m[1] })
+    const actions = parseClauseBodyTopLevel(m[2])
+    if (actions.length && !hasUnresolvedX(actions)) result.onAssign.push(actions)
+    else result.unhandled.push(line)
+    return
+  }
+  if ((m = /^AUTO\s+Serious\s+(\d+)\b/i.exec(line))) {
+    result.keywords.push({ name: 'Serious', value: +m[1] })
     return
   }
 
@@ -614,6 +803,15 @@ function classifyLine(line, result) {
     else result.unhandled.push(line)
     return
   }
+  // "AUTO When this card is assigned to a 「Farming」 structure, draw 1 card." (Mau Cryst, Dumud) —
+  // diferente do Serious (onAssign incondicional): só dispara se a STRUCTURE/GEAR de destino tiver
+  // esse work_keyword. Precisa saber o destino em tempo de execução, daí a categoria própria.
+  if ((m = /^AUTO\s+When this card is assigned to an? 「([^」]+)」 structure,?\s*(.*)$/i.exec(line))) {
+    const actions = parseClauseBodyTopLevel(m[2])
+    if (actions.length && !hasUnresolvedX(actions)) result.onAssignToWorkStructure.push({ workKeyword: m[1], actions })
+    else result.unhandled.push(line)
+    return
+  }
   if (/^ACT\s+Interrupt\b/i.test(line)) {
     // Custo e efeito de Interrupt são fixos pela regra 12.8.2 — só precisa marcar que a carta tem a habilidade
     result.hasInterrupt = true
@@ -621,7 +819,9 @@ function classifyLine(line, result) {
   }
   if ((m = /^ACT\s+(.*)$/i.exec(line))) {
     const parsedAct = parseActLine(m[1])
-    if (parsedAct) { result.act.push(parsedAct); return }
+    // Descrição crua (texto original da linha) — usada pelo front pra listar qual ACT é qual quando
+    // a carta tem mais de uma (ex: Primitive Furnace, Breeding Farm).
+    if (parsedAct) { parsedAct.description = line.trim(); result.act.push(parsedAct); return }
     result.unhandled.push(line)
     return
   }
@@ -669,7 +869,8 @@ function parseModalBlock(effectText) {
 function parseEffectText(effectText) {
   const result = {
     keywords: [], cont: [], onDeploy: [], onAttack: [], onGraveyard: [], onLeaveBase: [], onAttackStructure: [],
-    onEndOfTurn: [], onAttacked: [], onEndOfBattleAttacked: [], onAllyDeploy: [], onAllyButcher: [],
+    onEndOfTurn: [], onAttacked: [], onEndOfBattleAttacked: [], onAllyDeploy: [], onAllyButcher: [], onAssign: [],
+    onAssignToWorkStructure: [],
     onPlay: [], act: [], quick: [], hasInterrupt: false, modal: null, unhandled: []
   }
   if (!effectText || !effectText.trim()) return result

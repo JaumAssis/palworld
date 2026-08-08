@@ -1,0 +1,20 @@
+# dependencies
+node_modules/
+
+# secrets
+.env
+.env.*
+!.env.example
+
+# databases (contains player data / will contain credentials)
+*.db
+*.db-shm
+*.db-wal
+
+# build output
+dist/
+build/
+
+# editor/OS
+.DS_Store
+Thumbs.db

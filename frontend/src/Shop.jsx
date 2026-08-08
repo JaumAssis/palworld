@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useLanguage } from './i18n/LanguageContext'
-
-const API_URL = 'http://localhost:3001'
+import { apiFetch } from './api'
 
 function Shop({ onClose } = {}) {
   const { t } = useLanguage()
@@ -15,7 +14,7 @@ function Shop({ onClose } = {}) {
   const [view, setView] = useState('boosters')
 
   useEffect(() => {
-    fetch(`${API_URL}/api/player`).then(r => r.json()).then(setPlayer)
+    apiFetch('/api/player').then(r => r.json()).then(setPlayer)
     const t = setTimeout(() => setIsOpen(true), 100)
     return () => clearTimeout(t)
   }, [])
@@ -23,9 +22,8 @@ function Shop({ onClose } = {}) {
   const buyTrialDeck = (setCode) => {
     setError('')
     setBuyingTD(setCode)
-    fetch(`${API_URL}/api/shop/buy-trial-deck`, {
+    apiFetch('/api/shop/buy-trial-deck', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ setCode })
     })
       .then(async res => {
@@ -42,9 +40,8 @@ function Shop({ onClose } = {}) {
   }
 
   const buyItem = (item) => {
-    fetch(`${API_URL}/api/shop/buy-item`, {
+    apiFetch('/api/shop/buy-item', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ item })
     })
       .then(async res => {
@@ -58,7 +55,7 @@ function Shop({ onClose } = {}) {
   const buyBooster = () => {
     setError('')
     setBuying(true)
-    fetch(`${API_URL}/api/shop/open-booster`, { method: 'POST' })
+    apiFetch('/api/shop/open-booster', { method: 'POST' })
       .then(async res => {
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || t('buyError'))

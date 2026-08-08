@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useLanguage } from './i18n/LanguageContext'
-
-const API_URL = 'http://localhost:3001'
+import { apiFetch } from './api'
 
 const COLOR_STYLES = {
   Red: { bg: '#fde2e1', text: '#c62828' },
@@ -31,7 +30,7 @@ function DeckList() {
   const navigate = useNavigate()
 
   useEffect(() => {
-    fetch(`${API_URL}/api/decks`)
+    apiFetch('/api/decks')
       .then(res => res.json())
       .then(data => { setDecks(data); setLoading(false) })
   }, [])
@@ -152,7 +151,7 @@ function DeckDetail() {
   const [zoomCard, setZoomCard] = useState(null)
 
   useEffect(() => {
-    fetch(`${API_URL}/api/decks/${id}`)
+    apiFetch(`/api/decks/${id}`)
       .then(res => res.json())
       .then(data => { setDeck(data); setLoading(false) })
   }, [id])

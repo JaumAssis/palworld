@@ -8,7 +8,7 @@ function getParsedEffects(cardData) {
   if (!cardData) {
     return {
       keywords: [], cont: [], onDeploy: [], onAttack: [], onGraveyard: [], onLeaveBase: [], onAttackStructure: [],
-      onPlay: [], act: [], quick: [], hasInterrupt: false, modal: null
+      onAssign: [], onAssignToWorkStructure: [], onPlay: [], act: [], quick: [], hasInterrupt: false, modal: null
     }
   }
   if (!cardData._parsedEffects) {
@@ -19,6 +19,13 @@ function getParsedEffects(cardData) {
 
 function hasKeyword(cardData, name) {
   return getParsedEffects(cardData).keywords.some(k => k.name.toLowerCase() === name.toLowerCase())
+}
+
+// Keyword estática da carta OU concedida temporariamente até o fim do turno (ex: Digtoise ganhando
+// Breakthrough, Gumoss ganhando Assault) — ver 'grantKeywordUntilEndOfTurn' em applyAction.
+function hasKeywordOrGranted(instance, name) {
+  return hasKeyword(instance.data, name) ||
+    !!(instance.grantedKeywordsUntilEndOfTurn && instance.grantedKeywordsUntilEndOfTurn.has(name))
 }
 
 function getKeywordValue(cardData, name) {
@@ -83,7 +90,9 @@ function computeContinuousBonuses(instance, ownerState, opponentState) {
 
   if (night && (hasKeyword(instance.data, 'Nocturnal') || hasContOfType(ownerState, 'grantNocturnalToTeam'))) power += 300
 
-  for (const other of ownerState.basePals) {
+  // colorBuff/nameBuff concedido por OUTRA carta do time — inclui Structure/Gear (ex: Flame Cauldron,
+  // "CONT All of your red Pals get Power +200"), não só outros Pals (mesmo motivo do fieldCardsOf acima).
+  for (const other of fieldCardsOf(ownerState)) {
     if (other === instance) continue
     for (const f of getParsedEffects(other.data).cont) {
       if (f.type === 'colorBuff' && cardColors(instance.data).includes(f.color)) power += f.amount
@@ -132,17 +141,25 @@ function canBeAttackedBy(targetInstance, attackerInstance) {
     }
   }
   if (!targetInstance.isStanding) return true
-  return hasKeyword(attackerInstance.data, 'Assault')
+  return hasKeywordOrGranted(attackerInstance, 'Assault')
+}
+
+// Taunt pode vir da carta (keyword estática) ou de uma concessão temporária (ex: No Pals Beyond Sign —
+// "The Pal assigned to this card gets Taunt until the end of the opponent's next turn").
+function hasGrantedTaunt(instance, turnManager) {
+  return instance.tauntGrantedUntilTurn != null && turnManager.turnNumber <= instance.tauntGrantedUntilTurn
 }
 
 function getForcedTauntTargets(defendingState, attackerInstance) {
-  return defendingState.basePals.filter(p => hasKeyword(p.data, 'Taunt') && canBeAttackedBy(p, attackerInstance))
+  const tm = defendingState.turnManagerRef
+  return defendingState.basePals.filter(p =>
+    (hasKeyword(p.data, 'Taunt') || (tm && hasGrantedTaunt(p, tm))) && canBeAttackedBy(p, attackerInstance))
 }
 
 // ---------- Block Declaration Step (9.4) ----------
 
 function getValidBlockers(battle) {
-  if (hasKeyword(battle.attackerInstance.data, 'Stealth')) return [] // "cannot be blocked" (12.11.2)
+  if (hasKeywordOrGranted(battle.attackerInstance, 'Stealth')) return [] // "cannot be blocked" (12.11.2)
   const currentTargetInstance = battle.target.type === 'pal' ? battle.target.instance : null
   return battle.defenderState.basePals.filter(p =>
     p.isStanding && p !== currentTargetInstance && !p.cannotBlockUntilEndOfTurn
@@ -278,7 +295,7 @@ function resolveCardFilterDynamic(filter = {}, casterState, context) {
 
 // ---------- Variáveis X: fórmula (contagem do tabuleiro) ou escolha do jogador ----------
 
-function resolveFormulaValue(formula, casterState, context) {
+function resolveFormulaValue(formula, casterState, context, sourceInstance, opponentState) {
   if (!formula) return null
   switch (formula.type) {
     case 'countStructures': return casterState.baseStructures.length
@@ -288,12 +305,14 @@ function resolveFormulaValue(formula, casterState, context) {
     case 'costOfContextPal':
       if (!context || !context.contextPal) return null
       return Math.max(0, (context.contextPal.data.cost || 0) + (formula.modifier || 0))
+    case 'selfPower':
+      return sourceInstance ? getEffectivePower(sourceInstance, casterState, opponentState) : null
     default: return null
   }
 }
 
-function resolveXAmount(formula, casterState, context) {
-  const viaFormula = resolveFormulaValue(formula, casterState, context)
+function resolveXAmount(formula, casterState, context, sourceInstance, opponentState) {
+  const viaFormula = resolveFormulaValue(formula, casterState, context, sourceInstance, opponentState)
   if (viaFormula != null) return viaFormula
   return context && context.chosenAmount != null ? context.chosenAmount : 0
 }
@@ -319,7 +338,7 @@ function applyAction(turnManager, action, sourceInstance, casterState, opponentS
     else if (resolvedInstance) targets = [resolvedInstance]
   }
 
-  const amount = action.amount === 'X' ? resolveXAmount(action.amountFormula, casterState, context) : action.amount
+  const amount = action.amount === 'X' ? resolveXAmount(action.amountFormula, casterState, context, sourceInstance, opponentState) : action.amount
 
   switch (action.type) {
     case 'damage':
@@ -403,6 +422,22 @@ function applyAction(turnManager, action, sourceInstance, casterState, opponentS
     case 'standSouls':
       casterState.standSouls(amount)
       return true
+    case 'discountNextGear':
+      casterState.nextGearDiscount = amount
+      turnManager._addLog(`${casterState.playerName} reduziu o custo da próxima Gear jogada da mão em ${amount} até o fim do turno.`)
+      return true
+    // Alarm Bell: 3 efeitos de estado do jogador, não de um alvo escolhido.
+    case 'standAllAssignedThisTurn':
+      for (const p of casterState.assignedThisTurn) p.stand()
+      casterState.assignedThisTurn = []
+      return true
+    case 'preventAssignUntilEndOfTurn':
+      casterState.cannotAssignUntilEndOfTurn = true
+      return true
+    case 'mustAttackAllUntilEndOfTurn':
+      casterState.mustAttackAllUntilEndOfTurn = true
+      turnManager._addLog(`${casterState.playerName} precisa atacar com todos os Pals em pé até o fim do turno (Alarm Bell).`)
+      return true
     case 'addRestedSoul':
       context.soulsBeforeAddRestedSoul = casterState.totalSouls
       casterState.addRestedSoul(amount)
@@ -422,6 +457,80 @@ function applyAction(turnManager, action, sourceInstance, casterState, opponentS
       const discarded = randomDiscard(casterState)
       if (discarded) turnManager._addLog(`${casterState.playerName} descartou ${discarded.name} (efeito de ${sourceInstance.data.name}).`)
       return !!discarded
+    }
+    case 'grantSkillIfMainName': {
+      let granted = false
+      for (const t of targets) {
+        if (t.data.pal_name !== action.palName) continue
+        t.grantedTriggers = t.grantedTriggers || {}
+        t.grantedTriggers[action.triggerType] = t.grantedTriggers[action.triggerType] || []
+        t.grantedTriggers[action.triggerType].push(action.grantedActions)
+        turnManager._addLog(`${t.data.name} ganhou uma habilidade temporária (efeito de ${sourceInstance.data.name}).`)
+        granted = true
+      }
+      return granted
+    }
+    // Pengullet Rocket Launcher: em vez de somar ao +200 base, o buff do Pal com nome principal
+    // batendo é SUBSTITUÍDO por +500, e ele ganha uma ACT própria temporária (grantedActs).
+    case 'replaceBuffAndGrantActIfMainName': {
+      let matched = false
+      for (const t of targets) {
+        if (t.data.pal_name !== action.palName) continue
+        matched = true
+        t.tempPowerBonus += (action.replacementAmount - action.defaultAmount)
+        t.grantedActs = t.grantedActs || []
+        t.grantedActs.push(action.grantedAbility)
+        turnManager._addLog(`${t.data.name} ganhou Power +${action.replacementAmount} (em vez de +${action.defaultAmount}) e uma habilidade ativada temporária (efeito de ${sourceInstance.data.name}).`)
+      }
+      return matched
+    }
+    // Digtoise's Headband: recurso extra pro CASTER (não pro Pal escolhido), condicionado ao nome
+    // principal dele — reaproveita a mesma amarração de 'target' que os casos acima, mas as
+    // sub-ações não têm alvo próprio (afetam o jogador que ativou, não o Pal escolhido).
+    case 'runIfMainName': {
+      let matched = false
+      for (const t of targets) {
+        if (t.data.pal_name !== action.palName) continue
+        matched = true
+        for (const sub of action.thenActions) {
+          applyAction(turnManager, sub, sourceInstance, casterState, opponentState, null, context)
+        }
+      }
+      return matched
+    }
+    // No Pals Beyond Sign: concede Taunt ao Pal "assigned" (custo da própria ACT) até o fim do
+    // próximo turno do oponente — ver hasGrantedTaunt/getForcedTauntTargets.
+    case 'grantTauntUntilOpponentNextTurn':
+      for (const t of targets) t.tauntGrantedUntilTurn = turnManager.turnNumber + 1
+      return targets.length > 0
+    // Digtoise ganhando Breakthrough, Gumoss ganhando Assault, etc. — keyword estática concedida até
+    // o fim do turno (não uma cláusula funcional própria, ao contrário de grantSkillIfMainName).
+    case 'grantKeywordUntilEndOfTurn':
+      for (const t of targets) {
+        t.grantedKeywordsUntilEndOfTurn = t.grantedKeywordsUntilEndOfTurn || new Set()
+        t.grantedKeywordsUntilEndOfTurn.add(action.keyword)
+      }
+      return targets.length > 0
+    // Ranch / Digtoise's Headband: escolha do jogador entre 2 recursos — bot usa heurística fixa
+    // (Material), jogador humano resolve via o mesmo popup 'modal' já usado por "Choose 1 of the
+    // following".
+    case 'chooseResourceEither': {
+      if (casterState !== turnManager.player1) {
+        casterState.gainMaterial(action.materialAmount)
+        turnManager._addLog(`${casterState.playerName} ganhou ${action.materialAmount} Material.`)
+        return true
+      }
+      turnManager.pendingEffect = {
+        kind: 'modal',
+        sourceCardName: sourceInstance.data.name,
+        description: sourceInstance.data.effect_text,
+        options: [
+          { description: `${action.materialAmount} Material`, actions: [{ type: 'gainMaterial', amount: action.materialAmount }] },
+          { description: `${action.ingredientAmount} Ingredient`, actions: [{ type: 'gainIngredient', amount: action.ingredientAmount }] }
+        ],
+        instance: sourceInstance, casterState, opponentState
+      }
+      return true
     }
     default:
       return false
@@ -474,9 +583,15 @@ function resolveClauseActions(turnManager, clauseActions, instance, casterState,
     for (let i = 0; i < handDiscardIdx; i++) {
       applyAction(turnManager, clauseActions[i], instance, casterState, opponentState, null, context)
     }
-    const chooserState = clauseActions[handDiscardIdx].type === 'opponentDiscardChoice' ? opponentState : casterState
+    const discardSpec = clauseActions[handDiscardIdx]
+    const chooserState = discardSpec.type === 'opponentDiscardChoice' ? opponentState : casterState
     const chooserIsBot = chooserState === turnManager.player2
-    const discardAction = { type: 'cardSelect', source: 'hand', mandatory: true, filter: {}, destination: 'discard', remainder: null, zeroBonus: null }
+    // "You may discard 1 card from hand. If you discarded this way, ..." (Lovander) — optional:true
+    // deixa pular a escolha (mandatory:false), e `then` só roda se uma carta foi de fato descartada.
+    const discardAction = {
+      type: 'cardSelect', source: 'hand', mandatory: !discardSpec.optional, filter: {},
+      destination: 'discard', remainder: null, zeroBonus: null, then: clauseActions.then || null
+    }
     return startCardChoice(turnManager, discardAction, instance, chooserState, casterState, chooserIsBot, {})
   }
 
@@ -501,9 +616,16 @@ function resolveClauseActions(turnManager, clauseActions, instance, casterState,
 
   const chooseAction = clauseActions.find(a => a.target && a.target.mode === 'choose')
   if (!chooseAction) {
+    // "Get either 3 Material or 3 Ingredient, and draw 1 card." (Ranch) — a 1a ação (chooseResourceEither)
+    // abre um popup (modal) pro jogador humano; se a 2a ação ("draw") rodasse direto aqui, ela
+    // aconteceria ANTES do jogador responder o popup. Por isso para no meio e guarda o resto pra depois.
     let thenTrigger = false
-    for (const action of clauseActions) {
-      if (applyAction(turnManager, action, instance, casterState, opponentState, null, context)) thenTrigger = true
+    for (let i = 0; i < clauseActions.length; i++) {
+      if (applyAction(turnManager, clauseActions[i], instance, casterState, opponentState, null, context)) thenTrigger = true
+      if (turnManager.pendingEffect) {
+        turnManager._pendingClauseContinuation = { clauseActions, index: i + 1, instance, casterState, opponentState, isBot, context, thenTrigger }
+        return { paused: true }
+      }
     }
     if (clauseActions.then && thenTrigger) {
       resolveRepeatableClause(turnManager, clauseActions.then, instance, casterState, opponentState, isBot, context)
@@ -511,11 +633,47 @@ function resolveClauseActions(turnManager, clauseActions, instance, casterState,
     return { paused: false }
   }
 
+  return resolveChooseAction(turnManager, clauseActions, chooseAction, instance, casterState, opponentState, isBot, context)
+}
+
+// Continuação de uma cláusula "sem alvo" (!chooseAction) que pausou no meio (ex: chooseResourceEither
+// abrindo modal antes de rodar o resto das ações da mesma cláusula).
+function resumeClauseContinuation(turnManager, cont) {
+  let thenTrigger = cont.thenTrigger
+  for (let i = cont.index; i < cont.clauseActions.length; i++) {
+    if (applyAction(turnManager, cont.clauseActions[i], cont.instance, cont.casterState, cont.opponentState, null, cont.context)) thenTrigger = true
+    if (turnManager.pendingEffect) {
+      turnManager._pendingClauseContinuation = { ...cont, index: i + 1, thenTrigger }
+      return { paused: true }
+    }
+  }
+  if (cont.clauseActions.then && thenTrigger) {
+    resolveRepeatableClause(turnManager, cont.clauseActions.then, cont.instance, cont.casterState, cont.opponentState, cont.isBot, cont.context)
+  }
+  return { paused: false }
+}
+
+function resolveChooseAction(turnManager, clauseActions, chooseAction, instance, casterState, opponentState, isBot, context) {
   const spec = chooseAction.target
   const candidates = computeValidTargets(spec, instance, casterState, opponentState)
-  const siblingActions = clauseActions.filter(a => a.target === spec)
+  // "Choose up to 1 Pal, and deal 800 Damage. Choose all of your Pals, and they get Strike +1..."
+  // (Weapon Workbench) — a 2a ação não depende do alvo escolhido (target.mode !== 'choose': all/self/
+  // contextPal/sem alvo), então roda de qualquer forma, não só quando compartilha a MESMA referência
+  // de `spec` (caso das ações "it gets X, and it gets Y" no mesmo Pal escolhido).
+  const siblingActions = clauseActions.filter(a => a.target === spec || !(a.target && a.target.mode === 'choose'))
+  const independentActions = siblingActions.filter(a => a.target !== spec)
 
-  if (candidates.length === 0) return { paused: false }
+  if (candidates.length === 0) {
+    // Sem alvo válido pra escolha (opcional ou não) — as ações independentes ainda acontecem.
+    let thenTrigger = false
+    for (const action of independentActions) {
+      if (applyAction(turnManager, action, instance, casterState, opponentState, null, context)) thenTrigger = true
+    }
+    if (clauseActions.then && thenTrigger) {
+      resolveRepeatableClause(turnManager, clauseActions.then, instance, casterState, opponentState, isBot, context)
+    }
+    return { paused: false }
+  }
 
   if (isBot) {
     const chosen = pickBotTarget(candidates, siblingActions)
@@ -553,7 +711,7 @@ function resolveRepeatableClause(turnManager, clauseActions, instance, casterSta
   if (!clauseActions.repeats) {
     return resolveClauseActions(turnManager, clauseActions, instance, casterState, opponentState, isBot, context)
   }
-  const total = resolveXAmount(clauseActions.repeatFormula, casterState, context)
+  const total = resolveXAmount(clauseActions.repeatFormula, casterState, context, instance, opponentState)
   return runRepeatIterations(turnManager, clauseActions, instance, casterState, opponentState, isBot, context, total, 0)
 }
 
@@ -596,7 +754,15 @@ function startCardChoice(turnManager, action, instance, casterState, opponentSta
     return { paused: false }
   }
 
+  // "choose up to 2 X from among them and deploy them" (Reptyro Cryst) — mais de 1 escolha da MESMA
+  // revelação, só existe (por ora) pra fonte 'deckTop'. maxPicks ausente/1 mantém o fluxo original.
+  const maxPicks = action.maxPicks || 1
+
   if (isBot) {
+    if (maxPicks > 1 && action.source === 'deckTop') {
+      finishMultiCardChoice(turnManager, resolvedAction, instance, casterState, opponentState, context, revealed, matching.slice(0, maxPicks))
+      return { paused: false }
+    }
     const chosen = matching.length ? matching[0] : null
     finishCardChoice(turnManager, resolvedAction, instance, casterState, opponentState, context, revealed, chosen)
     return { paused: false }
@@ -626,7 +792,9 @@ function startCardChoice(turnManager, action, instance, casterState, opponentSta
     description: instance.data.effect_text,
     optional: !action.mandatory || !matching.length,
     action: resolvedAction, instance, casterState, opponentState, context, revealed,
-    cards
+    cards,
+    pickedCards: [],
+    picksLeft: maxPicks
   }
   return { paused: true }
 }
@@ -634,17 +802,79 @@ function startCardChoice(turnManager, action, instance, casterState, opponentSta
 function resolveCardChoice(turnManager, choice) {
   const pending = turnManager.pendingEffect
   if (!pending || pending.kind !== 'cardChoice') return
+
+  if (pending.isCostDiscard) return resolveDiscardCostChoice(turnManager, pending, choice)
+
+  // maxPicks<=1 (padrão/quase todas as cartas): fluxo original, uma escolha só e termina. Importante:
+  // isso tem que checar `action.maxPicks`, não `picksLeft` — numa sequência multi-pick genuína,
+  // picksLeft também chega a 1 na ÚLTIMA rodada, e cair no fluxo original aqui perderia as cartas já
+  // escolhidas nas rodadas anteriores (pending.pickedCards), que o `finishCardChoice` de 1-carta não conhece.
+  if ((pending.action.maxPicks || 1) <= 1) {
+    let chosenCard = null
+    if (!choice.skip) {
+      const entry = pending.cards[choice.index]
+      if (!entry || !entry.selectable) return
+      chosenCard = entry.card
+    } else if (!pending.optional) {
+      return
+    }
+    turnManager.pendingEffect = null
+    finishCardChoice(turnManager, pending.action, pending.instance, pending.casterState, pending.opponentState, pending.context, pending.revealed, chosenCard)
+    if (!turnManager.pendingEffect) turnManager._resumeAttackAfterTrigger()
+    return
+  }
+
+  // "choose up to 2 X from among them and deploy them" (Reptyro Cryst) — mais de 1 escolha da MESMA
+  // revelação: cada escolha reabre o popup com o restante, até acabar picksLeft ou não sobrar candidato.
   let chosenCard = null
   if (!choice.skip) {
     const entry = pending.cards[choice.index]
     if (!entry || !entry.selectable) return
     chosenCard = entry.card
-  } else if (!pending.optional) {
+  } else if (!pending.optional && !pending.pickedCards.length) {
     return
   }
+
+  const pickedCards = chosenCard ? [...pending.pickedCards, chosenCard] : pending.pickedCards
+  const remainingRevealed = chosenCard ? pending.revealed.filter(c => c !== chosenCard) : pending.revealed
+  const picksLeft = pending.picksLeft - (chosenCard ? 1 : 0)
+  const stillMatching = remainingRevealed.filter(c => matchesCardFilter(c, pending.action.filter))
+
   turnManager.pendingEffect = null
-  finishCardChoice(turnManager, pending.action, pending.instance, pending.casterState, pending.opponentState, pending.context, pending.revealed, chosenCard)
+
+  if (chosenCard && picksLeft > 0 && stillMatching.length) {
+    const cards = remainingRevealed.map(card => ({ card, selectable: stillMatching.includes(card) }))
+    turnManager.pendingEffect = {
+      kind: 'cardChoice',
+      sourceCardName: pending.sourceCardName,
+      description: pending.description,
+      optional: true, // já satisfez o mínimo (se era obrigatório) — as escolhas seguintes são sempre opcionais
+      action: pending.action, instance: pending.instance, casterState: pending.casterState,
+      opponentState: pending.opponentState, context: pending.context, revealed: remainingRevealed,
+      cards, pickedCards, picksLeft
+    }
+    return
+  }
+
+  finishMultiCardChoice(turnManager, pending.action, pending.instance, pending.casterState, pending.opponentState, pending.context, pending.revealed, pickedCards)
   if (!turnManager.pendingEffect) turnManager._resumeAttackAfterTrigger()
+}
+
+// Variante de finishCardChoice pra 0-N cartas escolhidas da MESMA revelação (deckTop apenas, por ora).
+function finishMultiCardChoice(turnManager, action, instance, casterState, opponentState, context, revealed, chosenCards) {
+  casterState.deck.splice(0, revealed.length)
+  const remainder = revealed.filter(c => !chosenCards.includes(c))
+  for (const card of chosenCards) applyCardDestination(turnManager, action, casterState, opponentState, instance, card)
+  if (remainder.length) {
+    if (action.remainder === 'shuffle') casterState.deck = shuffleArray([...remainder, ...casterState.deck])
+    else if (action.remainder === 'graveyard') casterState.graveyard.push(...remainder)
+    else if (action.remainder === 'putBack') casterState.deck.unshift(...remainder)
+    else if (action.remainder === 'hand') casterState.hand.push(...remainder)
+  }
+  if (!chosenCards.length && action.zeroBonus) {
+    resolveRepeatableClause(turnManager, action.zeroBonus, instance, casterState, opponentState, false, context)
+  }
+  return { paused: false }
 }
 
 function finishCardChoice(turnManager, action, instance, casterState, opponentState, context, revealed, chosenCard) {
@@ -672,6 +902,12 @@ function finishCardChoice(turnManager, action, instance, casterState, opponentSt
 
   if (!chosenCard && action.zeroBonus) {
     resolveRepeatableClause(turnManager, action.zeroBonus, instance, casterState, opponentState, false, context)
+  }
+
+  // "You may discard 1 card from hand. If you discarded this way, gain 1 life." (Lovander) — só roda
+  // se uma carta foi de fato escolhida/descartada (ao contrário de `andThen`, que é incondicional).
+  if (chosenCard && action.then) {
+    resolveRepeatableClause(turnManager, action.then, instance, casterState, opponentState, false, context)
   }
 
   // "Your opponent chooses 1 card from their hand, and discards it" — roda depois da escolha do
@@ -763,9 +999,11 @@ function runTrigger(turnManager, triggerName, instance, casterState, opponentSta
   }
 
   const clauses = getParsedEffects(instance.data)[triggerName] || []
+  const grantedClauses = (instance.grantedTriggers && instance.grantedTriggers[triggerName]) || []
+  const allClauses = grantedClauses.length ? [...clauses, ...grantedClauses] : clauses
   const repeatCount = shouldDoubleAuto(triggerName, casterState) ? 2 : 1
   for (let rep = 0; rep < repeatCount; rep++) {
-    for (const clauseActions of clauses) {
+    for (const clauseActions of allClauses) {
       const result = resolveRepeatableClause(turnManager, clauseActions, instance, casterState, opponentState, isBot)
       if (result.paused) return { paused: true }
     }
@@ -819,7 +1057,9 @@ function canPayCostItem(item, instance, casterState) {
     case 'consumeMaterialX': return casterState.material >= 1
     case 'consumeIngredientX': return casterState.ingredient >= 1
     case 'discardHandX': return casterState.hand.length >= 1
-    case 'assignPal': return casterState.basePals.some(p => p !== instance && p.isStanding)
+    case 'assignPal':
+      return !casterState.cannotAssignUntilEndOfTurn &&
+        casterState.basePals.filter(p => p !== instance && p.isStanding).length >= (item.amount || 1)
     case 'butcherPal': return casterState.basePals.some(p => p !== instance)
     case 'discardHand': return casterState.hand.length >= item.amount
     case 'discardHandType': return casterState.hand.filter(c => c.card_type === item.cardType).length >= item.amount
@@ -837,11 +1077,26 @@ function getActAbilities(cardData) {
   return getParsedEffects(cardData).act
 }
 
+// Abilities fixas da carta + as concedidas temporariamente a esta instância (ex: Pengullet Rocket
+// Launcher) — concatenadas, então actIndex continua servindo pra ambas (fixas primeiro).
+function getAllActAbilities(instance) {
+  const granted = instance.grantedActs
+  return granted && granted.length ? [...getActAbilities(instance.data), ...granted] : getActAbilities(instance.data)
+}
+
 function canActivateAbility(instance, casterState, actIndex = 0) {
-  const ability = getActAbilities(instance.data)[actIndex]
+  const ability = getAllActAbilities(instance)[actIndex]
   if (!ability) return false
-  if (ability.oncePerTurn && instance.actUsedThisTurn) return false
+  if (ability.oncePerTurn && instance.actUsedThisTurn.has(actIndex)) return false
   return ability.costGroups.some(g => canPayCostGroup(g, instance, casterState))
+}
+
+// Descansa um Pal como custo "[Assign N Pal(s)]" E registra em casterState.assignedThisTurn, pra
+// "Stand all Pals assigned this turn" (Alarm Bell) saber quem reerguer depois. Único ponto de entrada
+// pra isso — os 3 lugares que descansam Pal por custo de assign chamam esta função, nunca .rest() direto.
+function markAssigned(casterState, pal) {
+  pal.rest()
+  casterState.assignedThisTurn.push(pal)
 }
 
 function payCostGroup(turnManager, group, context, pickedInstance, instance, casterState) {
@@ -852,28 +1107,87 @@ function payCostGroup(turnManager, group, context, pickedInstance, instance, cas
       case 'consumeIngredient': casterState.ingredient -= item.amount; break
       case 'consumeMaterialX': casterState.material -= context.chosenAmount; break
       case 'consumeIngredientX': casterState.ingredient -= context.chosenAmount; break
-      case 'assignPal': if (pickedInstance) pickedInstance.rest(); break
+      // Assign N>1 (ex: Breeding Farm) já resta cada Pal escolhido na hora (ver startAssignPalChoice/
+      // continuePendingEffect) — não repete aqui pra não tentar rest() de novo num Pal já descansado.
+      case 'assignPal': if (!context.assignCostResolved && pickedInstance) markAssigned(casterState, pickedInstance); break
       case 'butcherPal': if (pickedInstance) turnManager._sendToGraveyard(pickedInstance, casterState); break
-      case 'discardHand': discardRandomN(casterState, item.amount); break
-      case 'discardHandX': discardRandomN(casterState, context.chosenAmount); break
-      case 'discardHandType': discardRandomOfType(casterState, item.cardType, item.amount); break
+      // Se já passou por startDiscardCostChoice (jogador escolheu quais descartar), não descarta
+      // de novo aqui — só cai no automático quando não havia escolha real a fazer (ver lá).
+      case 'discardHand': if (!context.discardCostResolved) discardRandomN(casterState, item.amount); break
+      case 'discardHandX': if (!context.discardCostResolved) discardRandomN(casterState, context.chosenAmount); break
+      case 'discardHandType': if (!context.discardCostResolved) discardRandomOfType(casterState, item.cardType, item.amount); break
       case 'soulCost': casterState.paySoulCost(item.amount); break
       case 'millTopCards': millTopCards(casterState, item.amount); break
     }
   }
 }
 
-function finishActivation(turnManager, ability, group, context, pickedInstance, instance, casterState, opponentState, isBot) {
+function finishActivation(turnManager, ability, group, context, pickedInstance, instance, casterState, opponentState, isBot, actIndex) {
   if (pickedInstance) context.contextPal = pickedInstance
   const butcheredData = pickedInstance && group.some(item => item.type === 'butcherPal') ? pickedInstance.data : null
   payCostGroup(turnManager, group, context, pickedInstance, instance, casterState)
   if (butcheredData) notifyAllyButcher(turnManager, casterState, opponentState, isBot, butcheredData)
-  if (ability.oncePerTurn) instance.actUsedThisTurn = true
-  const result = resolveRepeatableClause(turnManager, ability.actions, instance, casterState, opponentState, isBot, context)
+  // Controle de "1/Turn" por habilidade (índice), não por carta — uma carta com 2 ACTs independentes
+  // (ex: Primitive Furnace, Breeding Farm) não pode ter uma bloqueando a outra no mesmo turno.
+  if (ability.oncePerTurn) instance.actUsedThisTurn.add(actIndex)
+
+  // "AUTO Serious N (OnAssign ...)" (Rooby, Teafant, Tanzee) — incondicional; "AUTO When this card is
+  // assigned to a 「Farming」 structure, ..." (Mau Cryst, Dumud) — só dispara se `instance` (a carta
+  // sendo ativada, dona do custo de assign) tiver esse work_keyword. Ambos disparam ANTES de resolver
+  // a própria habilidade (ex: Weapon Workbench, que também escolhe alvo — daí a cadeia de continuação,
+  // pra não perder a pausa de nenhum dos dois).
+  const assignedPals = context.assignedPals || (pickedInstance && group.some(item => item.type === 'assignPal') ? [pickedInstance] : [])
+  const steps = buildAssignTriggerSteps(assignedPals, instance)
+  const result = runAssignTriggersThenAbility(turnManager, steps, 0, ability, instance, casterState, opponentState, isBot, context)
   return { success: true, ...result }
 }
 
-function proceedActivation(turnManager, ability, group, context, instance, casterState, opponentState, isBot) {
+function hasWorkKeyword(cardData, keyword) {
+  return (cardData.work_keywords || []).some(k => String(k).toLowerCase() === keyword.toLowerCase())
+}
+
+// Monta a lista de gatilhos "de assign" a disparar pra este grupo de Pals recém-assinalados, na ordem:
+// cada Pal pode ter o onAssign incondicional (Serious) E/OU o onAssignToWorkStructure condicionado ao
+// destino (`destinationInstance` = a carta cujo custo está sendo pago, ex: Ranch).
+function buildAssignTriggerSteps(assignedPals, destinationInstance) {
+  const steps = []
+  for (const pal of assignedPals) {
+    const parsed = getParsedEffects(pal.data)
+    if ((parsed.onAssign || []).length) steps.push({ kind: 'plain', pal })
+    for (const entry of parsed.onAssignToWorkStructure || []) {
+      if (hasWorkKeyword(destinationInstance.data, entry.workKeyword)) {
+        steps.push({ kind: 'workStructure', pal, clauseActions: entry.actions })
+      }
+    }
+  }
+  return steps
+}
+
+function runAssignStep(turnManager, step, casterState, opponentState, isBot) {
+  if (step.kind === 'plain') return runTrigger(turnManager, 'onAssign', step.pal, casterState, opponentState, { isBot })
+  return resolveRepeatableClause(turnManager, step.clauseActions, step.pal, casterState, opponentState, isBot)
+}
+
+// Dispara os gatilhos de assign em sequência e só resolve as ações da própria habilidade depois de
+// todos terminarem — se um deles pausar (ex: "Choose 1 Pal" do Serious pode ser QUALQUER Pal, não só
+// o assinalado), guarda a continuação e retoma depois.
+function runAssignTriggersThenAbility(turnManager, steps, index, ability, instance, casterState, opponentState, isBot, context) {
+  if (index >= steps.length) {
+    return resolveRepeatableClause(turnManager, ability.actions, instance, casterState, opponentState, isBot, context)
+  }
+  const result = runAssignStep(turnManager, steps[index], casterState, opponentState, isBot)
+  if (result.paused) {
+    turnManager._pendingAssignContinuation = { steps, index: index + 1, ability, instance, casterState, opponentState, isBot, context }
+    return { paused: true }
+  }
+  return runAssignTriggersThenAbility(turnManager, steps, index + 1, ability, instance, casterState, opponentState, isBot, context)
+}
+
+function resumeAssignContinuation(turnManager, cont) {
+  return runAssignTriggersThenAbility(turnManager, cont.steps, cont.index, cont.ability, cont.instance, cont.casterState, cont.opponentState, cont.isBot, cont.context)
+}
+
+function proceedActivation(turnManager, ability, group, context, instance, casterState, opponentState, isBot, actIndex) {
   const varItem = group.find(item => VARIABLE_COST_TYPES.includes(item.type))
   if (varItem && context.chosenAmount == null) {
     const max = maxForVariableCost(varItem, casterState)
@@ -887,7 +1201,7 @@ function proceedActivation(turnManager, ability, group, context, instance, caste
         sourceCardName: instance.data.name,
         description: instance.data.effect_text,
         min: 1, max,
-        ability, group, context, instance, casterState, opponentState
+        ability, group, context, instance, casterState, opponentState, actIndex
       }
       return { success: true, paused: true }
     }
@@ -895,6 +1209,13 @@ function proceedActivation(turnManager, ability, group, context, instance, caste
 
   const pickItem = group.find(item => item.type === 'assignPal' || item.type === 'butcherPal')
   if (pickItem) {
+    // "[assign 2 Pals]" (Breeding Farm) — escolhe mais de 1 Pal pra descansar como custo, um por vez.
+    if (pickItem.type === 'assignPal' && (pickItem.amount || 1) > 1) {
+      const result = startAssignPalChoice(turnManager, ability, group, context, instance, casterState, opponentState, isBot, pickItem.amount, actIndex)
+      if (result) return result
+      return finishActivation(turnManager, ability, group, context, null, instance, casterState, opponentState, isBot, actIndex)
+    }
+
     const candidates = casterState.basePals.filter(p =>
       p !== instance && (pickItem.type !== 'assignPal' || p.isStanding)
     )
@@ -902,7 +1223,7 @@ function proceedActivation(turnManager, ability, group, context, instance, caste
 
     if (isBot) {
       const chosen = candidates.reduce((a, b) => (b.data.power < a.data.power ? b : a))
-      return finishActivation(turnManager, ability, group, context, chosen, instance, casterState, opponentState, isBot)
+      return finishActivation(turnManager, ability, group, context, chosen, instance, casterState, opponentState, isBot, actIndex)
     }
 
     turnManager.pendingEffect = {
@@ -910,24 +1231,125 @@ function proceedActivation(turnManager, ability, group, context, instance, caste
       sourceCardName: instance.data.name,
       description: instance.data.effect_text,
       optional: false,
-      ability, group, context, instance, casterState, opponentState,
+      ability, group, context, instance, casterState, opponentState, actIndex,
       validTargets: candidates.map(p => absoluteTarget(turnManager, casterState, { owner: 'caster', instance: p }))
     }
     return { success: true, paused: true }
   }
 
-  return finishActivation(turnManager, ability, group, context, null, instance, casterState, opponentState, isBot)
+  // "[Discard 1 structure from hand]" (Mammorest Cryst), "[Discard 2 cards from hand]" (Jormuntide
+  // Ignis), "[Discard X cards from hand]" (Antique Dresser) etc. — deixa o jogador escolher QUAIS
+  // descartar, em vez do automático (só cai no automático quando não há escolha real, ver a função).
+  const discardItem = group.find(item => ['discardHand', 'discardHandType', 'discardHandX'].includes(item.type))
+  if (discardItem && !context.discardCostResolved) {
+    const paused = startDiscardCostChoice(turnManager, ability, group, context, instance, casterState, opponentState, isBot, discardItem, actIndex)
+    if (paused) return paused
+  }
+
+  return finishActivation(turnManager, ability, group, context, null, instance, casterState, opponentState, isBot, actIndex)
+}
+
+// "[assign N Pals]" com N>1 (só a Breeding Farm hoje) — descansa N Pals escolhidos um por vez, cada
+// escolha reabre o popup de custo (kind:'cost') com o restante, até completar N. Se N candidatos
+// exatos == N necessários (sem escolha real) ou for o bot, resolve direto sem popup. Retorna null
+// quando o chamador deve seguir pro finishActivation normal (custo já 100% resolvido aqui).
+function startAssignPalChoice(turnManager, ability, group, context, instance, casterState, opponentState, isBot, amount, actIndex) {
+  const candidates = casterState.basePals.filter(p => p !== instance && p.isStanding)
+  if (candidates.length < amount) return { success: false, reason: 'CANNOT_PAY' }
+
+  if (isBot || candidates.length === amount) {
+    const chosen = isBot
+      ? [...candidates].sort((a, b) => (a.data.power || 0) - (b.data.power || 0)).slice(0, amount)
+      : candidates.slice(0, amount)
+    for (const p of chosen) markAssigned(casterState, p)
+    context.assignCostResolved = true
+    context.assignedPals = chosen
+    return null
+  }
+
+  turnManager.pendingEffect = {
+    kind: 'cost',
+    sourceCardName: instance.data.name,
+    description: instance.data.effect_text,
+    optional: false,
+    ability, group, context, instance, casterState, opponentState, actIndex,
+    assignAmount: amount, assignChosen: [],
+    validTargets: candidates.map(p => absoluteTarget(turnManager, casterState, { owner: 'caster', instance: p }))
+  }
+  return { success: true, paused: true }
+}
+
+// Abre a escolha (reaproveita o popup de 'cardChoice' — mesmo componente do front, mesmo evento
+// bot:resolveCardChoice) de qual(is) carta(s) da mão descartar pra pagar o custo. Retorna null quando
+// não há escolha real a fazer (só existem N cartas válidas pra descartar N) — nesse caso o chamador
+// segue pro finishActivation normal, que descarta automaticamente via payCostGroup.
+function startDiscardCostChoice(turnManager, ability, group, context, instance, casterState, opponentState, isBot, discardItem, actIndex) {
+  const amount = discardItem.type === 'discardHandX' ? context.chosenAmount : discardItem.amount
+  const filter = discardItem.type === 'discardHandType' ? { cardTypes: [discardItem.cardType] } : {}
+  const matching = casterState.hand.filter(c => matchesCardFilter(c, filter))
+
+  if (matching.length <= amount) return null
+
+  if (isBot) {
+    for (const card of matching.slice(0, amount)) {
+      casterState.hand = casterState.hand.filter(c => c !== card)
+      casterState.graveyard.push(card)
+    }
+    context.discardCostResolved = true
+    return finishActivation(turnManager, ability, group, context, null, instance, casterState, opponentState, isBot, actIndex)
+  }
+
+  turnManager.pendingEffect = {
+    kind: 'cardChoice',
+    isCostDiscard: true,
+    sourceCardName: instance.data.name,
+    description: instance.data.effect_text,
+    optional: false,
+    cards: casterState.hand.map(card => ({ card, selectable: matching.includes(card) })),
+    ability, group, context, instance, casterState, opponentState, actIndex,
+    filter, amount, chosen: []
+  }
+  return { success: true, paused: true }
+}
+
+// Continuação de startDiscardCostChoice: descarta a carta escolhida, e se ainda faltar (amount>1,
+// ex: Jormuntide Ignis descarta 2), reabre o mesmo popup com a mão atualizada; senão retoma o
+// pagamento do resto do custo + a habilidade em si via finishActivation.
+function resolveDiscardCostChoice(turnManager, pending, choice) {
+  const entry = choice.skip ? null : pending.cards[choice.index]
+  if (!choice.skip && (!entry || !entry.selectable)) return
+  turnManager.pendingEffect = null
+
+  const chosen = entry ? [...pending.chosen, entry.card] : pending.chosen
+  if (entry) {
+    pending.casterState.hand = pending.casterState.hand.filter(c => c !== entry.card)
+    pending.casterState.graveyard.push(entry.card)
+  }
+
+  const stillMatching = pending.casterState.hand.filter(c => matchesCardFilter(c, pending.filter))
+  if (entry && chosen.length < pending.amount && stillMatching.length) {
+    turnManager.pendingEffect = {
+      ...pending,
+      chosen,
+      cards: pending.casterState.hand.map(card => ({ card, selectable: stillMatching.includes(card) }))
+    }
+    return
+  }
+
+  pending.context.discardCostResolved = true
+  finishActivation(turnManager, pending.ability, pending.group, pending.context, null, pending.instance, pending.casterState, pending.opponentState, false, pending.actIndex)
+  if (!turnManager.pendingEffect) turnManager._resumeAttackAfterTrigger()
 }
 
 function activateAbility(turnManager, instance, casterState, opponentState, actIndex = 0, { isBot } = {}) {
-  const ability = getActAbilities(instance.data)[actIndex]
+  const ability = getAllActAbilities(instance)[actIndex]
   if (!ability) return { success: false, reason: 'NO_ABILITY' }
-  if (ability.oncePerTurn && instance.actUsedThisTurn) return { success: false, reason: 'ALREADY_USED' }
+  if (ability.oncePerTurn && instance.actUsedThisTurn.has(actIndex)) return { success: false, reason: 'ALREADY_USED' }
 
   const group = ability.costGroups.find(g => canPayCostGroup(g, instance, casterState))
   if (!group) return { success: false, reason: 'CANNOT_PAY' }
 
-  return proceedActivation(turnManager, ability, group, {}, instance, casterState, opponentState, isBot)
+  return proceedActivation(turnManager, ability, group, {}, instance, casterState, opponentState, isBot, actIndex)
 }
 
 // ---------- Retomada de efeito/custo/quantidade pendente ----------
@@ -945,7 +1367,7 @@ function continuePendingEffect(turnManager, choice) {
   if (pending.kind === 'amount') {
     const amount = Math.max(pending.min, Math.min(pending.max, parseInt(choice.amount, 10) || pending.min))
     pending.context.chosenAmount = amount
-    proceedActivation(turnManager, pending.ability, pending.group, pending.context, pending.instance, pending.casterState, pending.opponentState, false)
+    proceedActivation(turnManager, pending.ability, pending.group, pending.context, pending.instance, pending.casterState, pending.opponentState, false, pending.actIndex)
     if (!turnManager.pendingEffect) turnManager._resumeAttackAfterTrigger()
     return
   }
@@ -958,7 +1380,28 @@ function continuePendingEffect(turnManager, choice) {
   }
 
   if (pending.kind === 'cost') {
-    finishActivation(turnManager, pending.ability, pending.group, pending.context, chosenInstance, pending.instance, pending.casterState, pending.opponentState, false)
+    // "[assign N Pals]" (Breeding Farm) — descansa o escolhido já, e se faltar reabre o mesmo popup
+    // com o restante; só chama finishActivation quando os N já foram escolhidos.
+    if (pending.assignAmount) {
+      markAssigned(pending.casterState, chosenInstance)
+      const assignChosen = [...pending.assignChosen, chosenInstance]
+      if (assignChosen.length < pending.assignAmount) {
+        const remaining = pending.casterState.basePals.filter(p => p !== pending.instance && p.isStanding)
+        turnManager.pendingEffect = {
+          ...pending,
+          assignChosen,
+          validTargets: remaining.map(p => absoluteTarget(turnManager, pending.casterState, { owner: 'caster', instance: p }))
+        }
+        return
+      }
+      pending.context.assignCostResolved = true
+      pending.context.assignedPals = assignChosen
+      finishActivation(turnManager, pending.ability, pending.group, pending.context, null, pending.instance, pending.casterState, pending.opponentState, false, pending.actIndex)
+      if (!turnManager.pendingEffect) turnManager._resumeAttackAfterTrigger()
+      return
+    }
+
+    finishActivation(turnManager, pending.ability, pending.group, pending.context, chosenInstance, pending.instance, pending.casterState, pending.opponentState, false, pending.actIndex)
     if (!turnManager.pendingEffect) turnManager._resumeAttackAfterTrigger()
     return
   }
@@ -981,6 +1424,7 @@ function continuePendingEffect(turnManager, choice) {
 module.exports = {
   getParsedEffects,
   hasKeyword,
+  hasKeywordOrGranted,
   getKeywordValue,
   getEffectivePower,
   getEffectiveStrike,
@@ -989,6 +1433,7 @@ module.exports = {
   runTrigger,
   continuePendingEffect,
   getActAbilities,
+  getAllActAbilities,
   canActivateAbility,
   activateAbility,
   getValidBlockers,
@@ -998,5 +1443,7 @@ module.exports = {
   startModalChoice,
   resolveModalChoice,
   resolveCardChoice,
-  notifyAllyDeploy
+  notifyAllyDeploy,
+  resumeAssignContinuation,
+  resumeClauseContinuation
 }

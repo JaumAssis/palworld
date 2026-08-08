@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useLanguage } from './i18n/LanguageContext'
-
-const API_URL = 'http://localhost:3001'
+import { apiFetch } from './api'
 
 function CardGrid() {
   const { t } = useLanguage()
@@ -13,7 +12,7 @@ function CardGrid() {
   const [selectedCard, setSelectedCard] = useState(null)
 
   useEffect(() => {
-    fetch(`${API_URL}/api/cards`)
+    apiFetch('/api/cards')
       .then(res => res.json())
       .then(data => {
         setCards(data)

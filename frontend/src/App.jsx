@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { BrowserRouter, Routes, Route, Link } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Link, Navigate } from 'react-router-dom'
 import './App.css'
 import CardGrid from './CardGrid'
 import DeckBuilder from './DeckBuilder'
@@ -11,8 +11,81 @@ import Breeding from './Breeding'
 import Farming from './Farming'
 import { useLanguage } from './i18n/LanguageContext'
 import { translations } from './i18n/translations'
+import { useAuth } from './auth/AuthContext'
+import { apiFetch } from './api'
 
-const API_URL = 'http://localhost:3001'
+// Bloqueia rotas que exigem login (o backend já rejeita com 401; isso evita o "flash" da
+// tela antes do redirect e cobre navegação direta/F5).
+function RequireAuth({ children }) {
+  const { user, loading } = useAuth()
+  if (loading) return null
+  if (!user) return <Navigate to="/" replace />
+  return children
+}
+
+// Painel de login/cadastro — canto superior esquerdo do menu. Também mostra quem está logado.
+function AuthPanel({ onBlockedAction }) {
+  const { t } = useLanguage()
+  const { user, loading, login, register, logout } = useAuth()
+  const [mode, setMode] = useState('login')
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  if (loading) return <div className="auth-panel" />
+
+  if (user) {
+    return (
+      <div className="auth-panel">
+        <p className="auth-panel-user">{t('authLoggedInAs', { username: user.username })}</p>
+        <button className="sign-button auth-submit" onClick={logout}>{t('authLogout')}</button>
+      </div>
+    )
+  }
+
+  const submit = async (e) => {
+    e.preventDefault()
+    setError('')
+    if (mode === 'register' && password !== confirmPassword) {
+      setError(t('authError_password_mismatch'))
+      return
+    }
+    setSubmitting(true)
+    try {
+      if (mode === 'login') await login(username, password)
+      else await register(username, password)
+    } catch (err) {
+      setError(t(`authError_${err.code || 'unknown'}`))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="auth-panel">
+      <form onSubmit={submit}>
+        <input className="auth-input" placeholder={t('authUsernamePlaceholder')} value={username}
+               onChange={e => setUsername(e.target.value)} autoComplete="username" />
+        <input className="auth-input" type="password" placeholder={t('authPasswordPlaceholder')} value={password}
+               onChange={e => setPassword(e.target.value)} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
+        {mode === 'register' && (
+          <input className="auth-input" type="password" placeholder={t('authConfirmPasswordPlaceholder')} value={confirmPassword}
+                 onChange={e => setConfirmPassword(e.target.value)} autoComplete="new-password" />
+        )}
+        {error && <p className="auth-error">{error}</p>}
+        <button className="sign-button auth-submit" type="submit" disabled={submitting}>
+          {mode === 'login' ? t('authLoginBtn') : t('authRegisterBtn')}
+        </button>
+        <button type="button" className="auth-toggle-mode" onClick={() => { setMode(m => m === 'login' ? 'register' : 'login'); setError('') }}>
+          {mode === 'login' ? t('authSwitchToRegister') : t('authSwitchToLogin')}
+        </button>
+      </form>
+      {onBlockedAction && <p className="auth-hint">{onBlockedAction}</p>}
+    </div>
+  )
+}
 
 // Emoji de bandeira não renderiza no Windows/Chrome (mostra "BR"/"US" em texto) — usamos SVG.
 function FlagIcon({ country }) {
@@ -55,7 +128,7 @@ function MissionsPopup({ onClose }) {
   const [loading, setLoading] = useState(true)
 
   const loadMissions = () => {
-    fetch(`${API_URL}/api/missions/today`).then(r => r.json()).then(data => {
+    apiFetch('/api/missions/today').then(r => r.json()).then(data => {
       setMissions(data)
       setLoading(false)
     })
@@ -64,9 +137,8 @@ function MissionsPopup({ onClose }) {
   useEffect(() => { loadMissions() }, [])
 
   const claim = (missionId) => {
-    fetch(`${API_URL}/api/missions/claim`, {
+    apiFetch('/api/missions/claim', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ missionId })
     }).then(() => loadMissions())
   }
@@ -121,21 +193,44 @@ function MissionsPopup({ onClose }) {
 
 function MainMenu() {
   const { lang, toggleLang, t } = useLanguage()
+  const { user } = useAuth()
   const [player, setPlayer] = useState(null)
   const [showMissions, setShowMissions] = useState(false)
   const [isNight, setIsNight] = useState(false)
   const [popup, setPopup] = useState(null)
+  const [authHint, setAuthHint] = useState(false)
+
+  const refreshPlayer = () => {
+    if (!user) { setPlayer(null); return }
+    apiFetch('/api/player').then(r => r.json()).then(setPlayer)
+  }
+
+  useEffect(() => { refreshPlayer() }, [user])
 
   useEffect(() => {
-    fetch(`${API_URL}/api/player`).then(r => r.json()).then(setPlayer)
-  }, [])
+    if (!authHint) return
+    const timer = setTimeout(() => setAuthHint(false), 3000)
+    return () => clearTimeout(timer)
+  }, [authHint])
+
+  // Ações que dependem de estar logado (o backend já bloqueia com 401; isso só evita abrir
+  // um popup/rota que vai falhar e mostra a dica de login em vez disso).
+  const guard = (action) => {
+    if (!user) { setAuthHint(true); return }
+    action()
+  }
+  const guardedLinkClick = (e) => { if (!user) { e.preventDefault(); setAuthHint(true) } }
 
   return (
     <div style={{
       padding: '2rem', textAlign: 'center', minHeight: '100vh', position: 'relative', boxSizing: 'border-box',
       backgroundImage: `url(${isNight ? '/night.png' : '/ambient.webp'})`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat'
     }}>
-      <div style={{ position: 'fixed', top: '20px', left: '20px', display: 'flex', gap: '8px' }}>
+      <div style={{ position: 'fixed', top: '20px', left: '20px', zIndex: 500 }}>
+        <AuthPanel onBlockedAction={authHint ? t('authHintLoginRequired') : null} />
+      </div>
+
+      <div style={{ position: 'fixed', top: '20px', right: '20px', display: 'flex', gap: '8px' }}>
         <button
           className="currency-badge"
           onClick={() => setIsNight(n => !n)}
@@ -160,31 +255,31 @@ function MainMenu() {
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxWidth: '300px', margin: '0 auto' }}>
         <Link to="/catalog"><button className="sign-button" style={{ width: '100%' }}>{t('menuCatalog')}</button></Link>
-        <Link to="/mycollection"><button className="sign-button" style={{ width: '100%' }}>{t('menuCollection')}</button></Link>
-        <Link to="/deckbuilder"><button className="sign-button" style={{ width: '100%' }}>{t('menuDeckBuilder')}</button></Link>
+        <Link to="/mycollection" onClick={guardedLinkClick}><button className="sign-button" style={{ width: '100%' }}>{t('menuCollection')}</button></Link>
+        <Link to="/deckbuilder" onClick={guardedLinkClick}><button className="sign-button" style={{ width: '100%' }}>{t('menuDeckBuilder')}</button></Link>
         <Link to="/mydecks"><button className="sign-button" style={{ width: '100%' }}>{t('menuMyDecks')}</button></Link>
         <button className="sign-button" style={{ width: '100%' }} disabled>{t('menuFindMatch')}</button>
-        <Link to="/game"><button className="sign-button" style={{ width: '100%' }}>{t('menuBotMatch')}</button></Link>
+        <Link to="/game" onClick={guardedLinkClick}><button className="sign-button" style={{ width: '100%' }}>{t('menuBotMatch')}</button></Link>
       </div>
 
       <div style={{ position: 'fixed', bottom: '20px', left: '20px', display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'flex-start' }}>
-        <button className="sign-button" onClick={() => setPopup('shop')}>{t('menuShop')}</button>
-        <button className="sign-button" onClick={() => setPopup('farming')}>{t('menuFarming')}</button>
-        <button className="sign-button" onClick={() => setPopup('breeding')} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <button className="sign-button" onClick={() => guard(() => setPopup('shop'))}>{t('menuShop')}</button>
+        <button className="sign-button" onClick={() => guard(() => setPopup('farming'))}>{t('menuFarming')}</button>
+        <button className="sign-button" onClick={() => guard(() => setPopup('breeding'))} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <img src="/egg.png" alt="Breeding" style={{ width: '28px', height: '28px' }} />
           Breeding
         </button>
-        <button className="sign-button" onClick={() => setShowMissions(true)}>{t('menuDailyMissions')}</button>
+        <button className="sign-button" onClick={() => guard(() => setShowMissions(true))}>{t('menuDailyMissions')}</button>
       </div>
 
-      {showMissions && <MissionsPopup onClose={() => setShowMissions(false)} />}
+      {showMissions && <MissionsPopup onClose={() => { setShowMissions(false); refreshPlayer() }} />}
 
       {popup && (
         <div className="popout-overlay">
           <div key={popup} className="popout-bubble">
-            {popup === 'shop' && <Shop onClose={() => setPopup(null)} />}
-            {popup === 'farming' && <Farming onClose={() => setPopup(null)} />}
-            {popup === 'breeding' && <Breeding onClose={() => setPopup(null)} />}
+            {popup === 'shop' && <Shop onClose={() => { setPopup(null); refreshPlayer() }} />}
+            {popup === 'farming' && <Farming onClose={() => { setPopup(null); refreshPlayer() }} />}
+            {popup === 'breeding' && <Breeding onClose={() => { setPopup(null); refreshPlayer() }} />}
           </div>
         </div>
       )}
@@ -211,14 +306,14 @@ function App() {
       <Routes>
         <Route path="/" element={<MainMenu />} />
         <Route path="/catalog" element={<CardGrid />} />
-        <Route path="/mycollection" element={<MyCollection />} />
-        <Route path="/shop" element={<Shop />} />
-        <Route path="/breeding" element={<Breeding />} />
-        <Route path="/farming" element={<Farming />} />
-        <Route path="/deckbuilder" element={<DeckBuilder />} />
+        <Route path="/mycollection" element={<RequireAuth><MyCollection /></RequireAuth>} />
+        <Route path="/shop" element={<RequireAuth><Shop /></RequireAuth>} />
+        <Route path="/breeding" element={<RequireAuth><Breeding /></RequireAuth>} />
+        <Route path="/farming" element={<RequireAuth><Farming /></RequireAuth>} />
+        <Route path="/deckbuilder" element={<RequireAuth><DeckBuilder /></RequireAuth>} />
         <Route path="/mydecks" element={<DeckList />} />
         <Route path="/mydecks/:id" element={<DeckDetail />} />
-        <Route path="/game" element={<GameBoard />} />
+        <Route path="/game" element={<RequireAuth><GameBoard /></RequireAuth>} />
       </Routes>
     </BrowserRouter>
   )

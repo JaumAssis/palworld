@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useLanguage } from './i18n/LanguageContext'
-
-const API_URL = 'http://localhost:3001'
+import { apiFetch } from './api'
 
 function MyCollection() {
   const { t } = useLanguage()
@@ -34,9 +33,9 @@ function MyCollection() {
 
   useEffect(() => {
     Promise.all([
-      fetch(`${API_URL}/api/cards`).then(r => r.json()),
-      fetch(`${API_URL}/api/player/cards`).then(r => r.json()),
-      fetch(`${API_URL}/api/player`).then(r => r.json())
+      apiFetch('/api/cards').then(r => r.json()),
+      apiFetch('/api/player/cards').then(r => r.json()),
+      apiFetch('/api/player').then(r => r.json())
     ]).then(([cards, owned, player]) => {
       setAllCards(cards)
       const map = {}
@@ -49,9 +48,8 @@ function MyCollection() {
 
   const handleCraft = (card) => {
     setCraftMsg('')
-    fetch(`${API_URL}/api/collection/craft`, {
+    apiFetch('/api/collection/craft', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cardNumber: card.card_number })
     })
       .then(async res => {

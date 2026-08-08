@@ -2,11 +2,11 @@ import { useEffect, useState, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { io } from 'socket.io-client'
 import { useLanguage } from './i18n/LanguageContext'
+import { API_URL, apiFetch } from './api'
 
-const API_URL = 'http://localhost:3001'
-
-// Conexão única e persistente durante toda a vida da aba — sem connect/disconnect manual
-const socket = io(API_URL)
+// Conexão única e persistente durante toda a vida da aba — sem connect/disconnect manual.
+// withCredentials manda o cookie de sessão no handshake, pra o backend saber quem está jogando.
+const socket = io(API_URL, { withCredentials: true })
 
 function CardSlot({ label, width = '80px', height = '112px', highlight = false, imageUrl }) {
   return (
@@ -65,7 +65,7 @@ function PalCard({ pal, width = '78px', selected = false, onClick, clickable = f
           color: '#fff', fontSize: '10px', fontWeight: 700, padding: '2px 6px', borderRadius: '6px'
         }}>{pal.powerBonus > 0 ? `+${pal.powerBonus}` : pal.powerBonus}</span>
       )}
-      {onActivate && pal.hasAct && <AbilityBadge onClick={onActivate} />}
+      {onActivate && pal.acts?.length > 0 && <AbilityBadge onClick={onActivate} />}
     </div>
   )
 }
@@ -84,8 +84,9 @@ function StructureGearRow({
   onHoverCard, onHoverEnd, onDropStructure, dragActive
 }) {
   if (structures.length === 0 && gear.length === 0) return null
-  // A arte de Structure/Gear já vem deitada no arquivo original — não giramos,
-  // só invertemos largura/altura pra ocupar o mesmo "tamanho" de área que um Pal, na horizontal.
+  // A arte de Structure já vem deitada no arquivo original (orientation: 'landscape') — não giramos,
+  // só invertemos largura/altura pra ocupar o mesmo "tamanho" de área que um Pal, na horizontal. Gear
+  // é retrato (orientation: 'portrait'), igual Pal/Event — usa as dimensões normais, sem inverter.
   const landscapeWidth = cardHeight
   const landscapeHeight = cardWidth
   return (
@@ -108,17 +109,17 @@ function StructureGearRow({
                 -{s.damageMarked}
               </span>
             )}
-            {onActivateStructure && s.hasAct && <AbilityBadge onClick={() => onActivateStructure(i)} />}
+            {onActivateStructure && s.acts?.length > 0 && <AbilityBadge onClick={() => onActivateStructure(i)} />}
           </div>
         )
       })}
       {gear.map((g, i) => (
-        <div key={'g' + i} style={{ position: 'relative', width: landscapeWidth, height: landscapeHeight }}
+        <div key={'g' + i} style={{ position: 'relative', width: cardWidth, height: cardHeight }}
              onMouseEnter={() => onHoverCard && onHoverCard(g.imageUrl, g.name)}
              onMouseLeave={() => onHoverEnd && onHoverEnd()}>
           <img src={g.imageUrl} alt={g.name} title={g.name}
                style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.5)' }} />
-          {onActivateGear && g.hasAct && <AbilityBadge onClick={() => onActivateGear(i)} />}
+          {onActivateGear && g.acts?.length > 0 && <AbilityBadge onClick={() => onActivateGear(i)} />}
         </div>
       ))}
     </div>
@@ -263,6 +264,7 @@ function GameBoard() {
   const [selectedPalIndex, setSelectedPalIndex] = useState(null)
   const [draggedPalIndex, setDraggedPalIndex] = useState(null)
   const [amountInput, setAmountInput] = useState(1)
+  const [actPicker, setActPicker] = useState(null) // { zone, index, acts } — carta com 2+ ACTs (ex: Primitive Furnace)
   const [zoomCard, setZoomCard] = useState(null)
   const [damageRevealShown, setDamageRevealShown] = useState(null)
   const hoverTimerRef = useRef(null)
@@ -270,8 +272,8 @@ function GameBoard() {
   const damageRevealTimerRef = useRef(null)
 
   useEffect(() => {
-    fetch(`${API_URL}/api/decks`).then(r => r.json()).then(setDecks)
-    fetch(`${API_URL}/api/cards/SOUL-001`).then(r => r.json()).then(c => setSoulImageUrl(c.image_url)).catch(() => {})
+    apiFetch('/api/decks').then(r => r.json()).then(setDecks)
+    apiFetch('/api/cards/SOUL-001').then(r => r.json()).then(c => setSoulImageUrl(c.image_url)).catch(() => {})
 
     socket.on('bot:rpsPrompt', () => setStage('rps'))
 
@@ -374,9 +376,23 @@ function GameBoard() {
   const resolveEffectTarget = (owner, index) => socket.emit('bot:resolveEffectTarget', { owner, index })
   const skipEffectTarget = () => socket.emit('bot:resolveEffectTarget', { skip: true })
 
-  const activateAbility = (zone, index) => {
+  const activateAbility = (zone, index, actIndex = 0) => {
     if (gameState?.pendingEffect) return
-    socket.emit('bot:activateAbility', { zone, index })
+    socket.emit('bot:activateAbility', { zone, index, actIndex })
+  }
+
+  // Cartas com só 1 ACT (a maioria) ativam direto; com 2+ (ex: Primitive Furnace, Breeding Farm),
+  // abre um seletor pra escolher qual das habilidades usar.
+  const handleActivateClick = (zone, index, acts) => {
+    if (!acts || acts.length === 0) return
+    if (acts.length === 1) { activateAbility(zone, index, acts[0].index); return }
+    setActPicker({ zone, index, acts })
+  }
+
+  const chooseActFromPicker = (actIndex) => {
+    if (!actPicker) return
+    activateAbility(actPicker.zone, actPicker.index, actIndex)
+    setActPicker(null)
   }
 
   const resolveBlock = (blockerIndex) => socket.emit('bot:resolveBlock', { blockerIndex })
@@ -583,13 +599,16 @@ function GameBoard() {
         <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', minHeight: '90px', marginTop: '6px' }}>
           {bot.basePals.map((p, i) => {
             const isEffectTarget = isPendingTarget('bot', i)
+            // Assault (ex: Grizzbolt – Rumbling Tank) deixa atacar Pals em pé também, não só descansados.
+            const draggedPal = draggedPalIndex !== null ? player.basePals[draggedPalIndex] : null
+            const canTargetThis = !p.isStanding || !!draggedPal?.hasAssault
             return (
               <div key={i}
-                   onDragOver={e => !p.isStanding && e.preventDefault()}
-                   onDrop={() => !p.isStanding && handleDropOnEnemyPal(i)}
+                   onDragOver={e => canTargetThis && e.preventDefault()}
+                   onDrop={() => canTargetThis && handleDropOnEnemyPal(i)}
                    onClick={() => isEffectTarget && resolveEffectTarget('bot', i)}
                    style={{
-                     outline: isEffectTarget ? '2px dashed #6cf25a' : ((!p.isStanding && draggedPalIndex !== null) ? '2px dashed #ffd54a' : 'none'),
+                     outline: isEffectTarget ? '2px dashed #6cf25a' : ((canTargetThis && draggedPalIndex !== null) ? '2px dashed #ffd54a' : 'none'),
                      borderRadius: '8px', cursor: isEffectTarget ? 'pointer' : 'default'
                    }}>
                 <PalCard pal={p} width="62px" onHoverStart={startHoverZoom} onHoverEnd={cancelHoverZoom} />
@@ -623,14 +642,14 @@ function GameBoard() {
                              setSelectedPalIndex(prev => (prev === i ? null : i))
                            }
                          }}
-                         onActivate={(!pendingEffect && !pendingBattle && isPlayerTurn && currentPhase === 'main') ? () => activateAbility('basePals', i) : undefined}
+                         onActivate={(!pendingEffect && !pendingBattle && isPlayerTurn && currentPhase === 'main') ? () => handleActivateClick('basePals', i, p.acts) : undefined}
                          onHoverStart={startHoverZoom} onHoverEnd={cancelHoverZoom} />
               </div>
             )
           })}
           <StructureGearRow structures={player.baseStructures || []} gear={player.baseGear || []}
-                             onActivateStructure={(!pendingEffect && isPlayerTurn && currentPhase === 'main') ? (i) => activateAbility('baseStructures', i) : undefined}
-                             onActivateGear={(!pendingEffect && isPlayerTurn && currentPhase === 'main') ? (i) => activateAbility('baseGear', i) : undefined}
+                             onActivateStructure={(!pendingEffect && isPlayerTurn && currentPhase === 'main') ? (i) => handleActivateClick('baseStructures', i, player.baseStructures[i].acts) : undefined}
+                             onActivateGear={(!pendingEffect && isPlayerTurn && currentPhase === 'main') ? (i) => handleActivateClick('baseGear', i, player.baseGear[i].acts) : undefined}
                              onHoverCard={startHoverZoom} onHoverEnd={cancelHoverZoom} />
         </div>
 
@@ -696,6 +715,24 @@ function GameBoard() {
       {/* ---------- EFEITO PENDENTE: escolha de carta (topo do deck / cemitério / mão) ---------- */}
       {pendingEffect?.kind === 'cardChoice' && (
         <CardChoiceModal pendingEffect={pendingEffect} onChoose={resolveCardChoice} onSkip={skipCardChoice} t={t} />
+      )}
+
+      {/* ---------- ESCOLHA DE QUAL ACT ATIVAR (carta com 2+ habilidades, ex: Primitive Furnace) ---------- */}
+      {actPicker && (
+        <div style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: '6px',
+          background: 'rgba(0,0,0,0.7)', color: '#fff', borderRadius: '8px', padding: '8px 12px', fontSize: '12px',
+          maxWidth: '360px', margin: '0 auto'
+        }}>
+          <span>{t('gbChooseAbilityPrompt')}</span>
+          {actPicker.acts.map(a => (
+            <button key={a.index} disabled={!a.available} onClick={() => chooseActFromPicker(a.index)}
+                    style={{ padding: '4px 10px', fontSize: '11px', textAlign: 'left', opacity: a.available ? 1 : 0.5 }}>
+              {a.description || `ACT ${a.index + 1}`}
+            </button>
+          ))}
+          <button onClick={() => setActPicker(null)} style={{ padding: '4px 10px', fontSize: '11px', alignSelf: 'flex-end' }}>{t('close')}</button>
+        </div>
       )}
 
       {/* ---------- POPOUT: cartas reveladas por dano de vida, indo pro cemitério ---------- */}

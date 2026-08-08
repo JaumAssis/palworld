@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useLanguage } from './i18n/LanguageContext'
-
-const API_URL = 'http://localhost:3001'
+import { apiFetch } from './api'
 
 function CardPicker({ onSelect, onClose, ownedPals, selectedNumbers, requiredKeywords }) {
   const { t } = useLanguage()
@@ -61,31 +60,30 @@ function Farming({ onClose } = {}) {
   }, [])
 
   function loadPlayer() {
-    fetch(`${API_URL}/api/player`).then(r => r.json()).then(setPlayer)
+    apiFetch('/api/player').then(r => r.json()).then(setPlayer)
   }
 
   function loadOwnedPals() {
     Promise.all([
-      fetch(`${API_URL}/api/cards`).then(r => r.json()),
-      fetch(`${API_URL}/api/player/cards`).then(r => r.json())
+      apiFetch('/api/cards').then(r => r.json()),
+      apiFetch('/api/player/cards').then(r => r.json())
     ]).then(([allCards, owned]) => {
       // só mostra Pals com pelo menos 1 cópia disponível — as ocupadas em outra tarefa não aparecem
       const availableNumbers = new Set(owned.filter(o => o.quantity - o.reserved > 0).map(o => o.card_number))
-      Promise.all(
-        allCards.filter(c => c.card_type === 'Pal' && availableNumbers.has(c.card_number))
-          .map(c => fetch(`${API_URL}/api/cards/${c.card_number}`).then(r => r.json()).then(full => ({
-            ...c, workKeywords: full.extra_data ? (JSON.parse(full.extra_data)?.data?.work_keywords || []) : []
-          })))
-      ).then(setOwnedPals)
+      // `allCards` já vem com `extra_data` (work_keywords inclusos) — nada de buscar carta por carta aqui.
+      const pals = allCards
+        .filter(c => c.card_type === 'Pal' && availableNumbers.has(c.card_number))
+        .map(c => ({ ...c, workKeywords: c.extra_data ? (JSON.parse(c.extra_data)?.data?.work_keywords || []) : [] }))
+      setOwnedPals(pals)
     })
   }
 
   function loadStatus() {
-    fetch(`${API_URL}/api/farming/status`).then(r => r.json()).then(setStatus)
+    apiFetch('/api/farming/status').then(r => r.json()).then(setStatus)
   }
 
   function loadOvenStatus() {
-    fetch(`${API_URL}/api/farming/oven-status`).then(r => r.json()).then(setOvenStatus)
+    apiFetch('/api/farming/oven-status').then(r => r.json()).then(setOvenStatus)
   }
 
   const addPal = (card) => {
@@ -103,9 +101,8 @@ function Farming({ onClose } = {}) {
 
   const startFarming = () => {
     setErrorMsg('')
-    fetch(`${API_URL}/api/farming/start`, {
+    apiFetch('/api/farming/start', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cardNumbers: selected.map(c => c.card_number), repeat: repeatWanted })
     })
       .then(async res => {
@@ -119,7 +116,7 @@ function Farming({ onClose } = {}) {
   }
 
   const claim = () => {
-    fetch(`${API_URL}/api/farming/claim`, { method: 'POST' })
+    apiFetch('/api/farming/claim', { method: 'POST' })
       .then(async res => {
         const data = await res.json()
         if (!res.ok) throw new Error(data.error)
@@ -129,15 +126,14 @@ function Farming({ onClose } = {}) {
   }
 
   const stopRepeat = () => {
-    fetch(`${API_URL}/api/farming/stop-repeat`, { method: 'POST' }).then(loadStatus)
+    apiFetch('/api/farming/stop-repeat', { method: 'POST' }).then(loadStatus)
   }
 
   const bake = (type) => {
     if (!kindlingPal) { alert(t('chooseKindlingFirst')); return }
     setOvenError('')
-    fetch(`${API_URL}/api/farming/bake`, {
+    apiFetch('/api/farming/bake', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type, kindlingCardNumber: kindlingPal.card_number })
     })
       .then(async res => {
@@ -151,7 +147,7 @@ function Farming({ onClose } = {}) {
   }
 
   const claimOven = () => {
-    fetch(`${API_URL}/api/farming/oven-claim`, { method: 'POST' })
+    apiFetch('/api/farming/oven-claim', { method: 'POST' })
       .then(async res => {
         const data = await res.json()
         if (!res.ok) throw new Error(data.error)

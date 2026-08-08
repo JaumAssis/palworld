@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { validateMainDeck, validateSoulDeck, countCopies, MAIN_DECK_SIZE, SOUL_DECK_SIZE, MAX_COPIES_PER_NAME, MAX_LUCKY_PALS, MAX_COLORS } from './deckValidator'
 import { useLanguage } from './i18n/LanguageContext'
-
-const API_URL = 'http://localhost:3001'
+import { apiFetch } from './api'
 
 function countCopiesByNumber(deck, card) {
   return deck.filter(c => c.card_number === card.card_number).length
@@ -123,10 +122,10 @@ function DeckBuilder() {
   }
 
   useEffect(() => {
-    fetch(`${API_URL}/api/cards`)
+    apiFetch('/api/cards')
       .then(res => res.json())
       .then(setAllCards)
-    fetch(`${API_URL}/api/player/cards`)
+    apiFetch('/api/player/cards')
       .then(res => res.json())
       .then(rows => {
         const map = {}
@@ -196,9 +195,8 @@ function DeckBuilder() {
     const deckName = window.prompt(t('deckNamePrompt'))
     if (!deckName) return
 
-    fetch(`${API_URL}/api/decks`, {
+    apiFetch('/api/decks', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: deckName,
         mainDeckCardNumbers: mainDeck.map(c => c.card_number),

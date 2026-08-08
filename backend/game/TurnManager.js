@@ -72,9 +72,15 @@ class TurnManager {
   // Encerra o turno de fato a partir da Main Phase, numa única chamada
   // (antes, advancePhase() só ia de 'main' pra 'end', sem processar o fim do turno)
   endMainPhase() {
-    if (this.gameOver || this.currentPhase !== 'main') return
+    if (this.gameOver || this.currentPhase !== 'main') return { success: false }
+    // "...must attack as much as possible" (Alarm Bell) — não deixa encerrar o turno enquanto
+    // sobrar Pal em pé; o bot já ataca com tudo antes de chamar isto, então nunca é bloqueado por isso.
+    if (this.activePlayer.mustAttackAllUntilEndOfTurn && this.activePlayer.basePals.some(p => p.isStanding)) {
+      return { success: false, reason: 'MUST_ATTACK' }
+    }
     this._endPhaseCleanup()
     this._endTurn()
+    return { success: true }
   }
 
   advancePhase() {
@@ -119,16 +125,24 @@ class TurnManager {
 
     // Buffs "até o fim do turno" valem pra qualquer Pal buffado, não só do jogador ativo
     for (const p of [this.player1, this.player2]) {
+      p.nextGearDiscount = 0
       for (const pal of p.basePals) {
         pal.tempPowerBonus = 0
         pal.tempStrikeBonus = 0
         pal.cannotBlockUntilEndOfTurn = false
+        pal.grantedTriggers = null
+        pal.grantedActs = null
       }
     }
 
-    // Vigilance: fica em pé já no fim do próprio turno (protegido no turno do oponente)
+    // Vigilance: fica em pé já no fim do próprio turno (protegido no turno do oponente) — precisa
+    // checar ANTES de limpar grantedKeywordsUntilEndOfTurn (Vigilance pode ter sido cedida neste turno).
     for (const pal of this.activePlayer.basePals) {
-      if (!pal.isStanding && EffectEngine.hasKeyword(pal.data, 'Vigilance')) pal.stand()
+      if (!pal.isStanding && EffectEngine.hasKeywordOrGranted(pal, 'Vigilance')) pal.stand()
+    }
+
+    for (const p of [this.player1, this.player2]) {
+      for (const pal of p.basePals) pal.grantedKeywordsUntilEndOfTurn = null
     }
 
     const isBot = this.activePlayer === this.player2
@@ -142,6 +156,11 @@ class TurnManager {
     this.activePlayer = this.activePlayer === this.player1 ? this.player2 : this.player1
     this.turnNumber++
     if (this.nightUntilTurn != null && this.turnNumber > this.nightUntilTurn) this.nightUntilTurn = null
+    for (const p of [this.player1, this.player2]) {
+      for (const pal of p.basePals) {
+        if (pal.tauntGrantedUntilTurn != null && this.turnNumber > pal.tauntGrantedUntilTurn) pal.tauntGrantedUntilTurn = null
+      }
+    }
     this._addLog(`--- Turno ${this.turnNumber}: vez de ${this.activePlayer.playerName} ---`)
     this.setPhase('stand')
     this.advanceUntilMain()
@@ -194,12 +213,28 @@ class TurnManager {
   }
 
   // Chamado pelo EffectEngine sempre que um pendingEffect termina de resolver (sem reabrir outro) —
-  // só faz algo se essa resolução era parte da cadeia de gatilhos de um ataque em andamento.
+  // retoma a cadeia de gatilhos de ataque, de "assign" (Serious/Mau Cryst) ou de cláusula (Ranch) em
+  // andamento, se alguma houver.
   _resumeAttackAfterTrigger() {
     const cont = this._pendingAttackContinuation
-    if (!cont) return
-    this._pendingAttackContinuation = null
-    this._runAttackTriggers(cont.triggerNames, cont.index, cont.attackerInstance, cont.attackerState, cont.defenderState, cont.target, cont.isBot)
+    if (cont) {
+      this._pendingAttackContinuation = null
+      this._runAttackTriggers(cont.triggerNames, cont.index, cont.attackerInstance, cont.attackerState, cont.defenderState, cont.target, cont.isBot)
+      return
+    }
+    const assignCont = this._pendingAssignContinuation
+    if (assignCont) {
+      this._pendingAssignContinuation = null
+      const result = EffectEngine.resumeAssignContinuation(this, assignCont)
+      if (!result.paused && !this.pendingEffect) this._resumeAttackAfterTrigger()
+      return
+    }
+    const clauseCont = this._pendingClauseContinuation
+    if (clauseCont) {
+      this._pendingClauseContinuation = null
+      const result = EffectEngine.resumeClauseContinuation(this, clauseCont)
+      if (!result.paused && !this.pendingEffect) this._resumeAttackAfterTrigger()
+    }
   }
 
   _proceedAttack(attackerInstance, attackerState, defenderState, target, isBot) {
@@ -448,7 +483,7 @@ class TurnManager {
       this._sendToGraveyard(defenderInstance, defenderState)
       results.defenderDestroyed = true
 
-      if (EffectEngine.hasKeyword(attackerInstance.data, 'Breakthrough')) {
+      if (EffectEngine.hasKeywordOrGranted(attackerInstance, 'Breakthrough')) {
         const strike = attackerInstance.effectiveStrike(attackerState, defenderState)
         defenderState.life -= strike
         this._addLog(`${attackerInstance.data.name} (Breakthrough) causou ${strike} de dano direto em ${defenderState.playerName}.`)
@@ -541,11 +576,13 @@ class TurnManager {
       if (rested) instance.rest()
       casterState.baseStructures.push(instance)
       this._addLog(`${casterState.playerName} deployou ${cardData.name}.`)
+      EffectEngine.runTrigger(this, 'onDeploy', instance, casterState, opponentState, { isBot })
     } else if (cardData.card_type === 'Gear') {
       instance = new GearInstance(cardData)
       if (rested) instance.rest()
       casterState.baseGear.push(instance)
       this._addLog(`${casterState.playerName} deployou ${cardData.name}.`)
+      EffectEngine.runTrigger(this, 'onDeploy', instance, casterState, opponentState, { isBot })
     } else {
       casterState.hand.push(cardData)
       return { success: false, reason: 'UNSUPPORTED_TYPE' }

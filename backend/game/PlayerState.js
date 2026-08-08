@@ -3,6 +3,16 @@ const EffectEngine = require('./effects/EffectEngine')
 
 const MAX_PALS_IN_BASE = 5
 
+// Lista de habilidades ACT (fixas + concedidas) dessa instância, pro front decidir se mostra o
+// badge de ativar e — quando há mais de 1 — qual delas oferecer (ex: Primitive Furnace, Breeding Farm).
+function buildActsInfo(instance, ownerState) {
+  return EffectEngine.getAllActAbilities(instance).map((ability, i) => ({
+    index: i,
+    description: ability.description || null,
+    available: EffectEngine.canActivateAbility(instance, ownerState, i)
+  }))
+}
+
 class PlayerState {
   constructor(playerName, mainDeck, soulDeck) {
     this.playerName = playerName
@@ -28,6 +38,10 @@ class PlayerState {
 
     this.isFirstPlayer = false
     this.soulDrawUsedThisTurn = false // regra 8.5.2: suspender 3 souls pra comprar só 1x por turno
+    this.nextGearDiscount = 0 // "Reduce the cost of playing your next gear from hand by X until end of turn" (Primitive Furnace)
+    this.assignedThisTurn = [] // Pals descansados por custo "[Assign N Pal(s)]" neste turno (Alarm Bell)
+    this.cannotAssignUntilEndOfTurn = false // "Your Pals cannot be assigned" até o fim do turno (Alarm Bell)
+    this.mustAttackAllUntilEndOfTurn = false // "must attack as much as possible" até o fim do turno (Alarm Bell)
   }
 
   gainMaterial(amount) { this.material += amount }
@@ -80,9 +94,12 @@ class PlayerState {
   standAll() {
     this.soulsStanding += this.soulsRested
     this.soulsRested = 0
-    for (const pal of this.basePals) { pal.stand(); pal.actUsedThisTurn = false }
-    for (const s of this.baseStructures) { s.stand(); s.actUsedThisTurn = false }
-    for (const g of this.baseGear) { g.stand(); g.actUsedThisTurn = false }
+    this.assignedThisTurn = []
+    this.cannotAssignUntilEndOfTurn = false
+    this.mustAttackAllUntilEndOfTurn = false
+    for (const pal of this.basePals) { pal.stand(); pal.actUsedThisTurn.clear() }
+    for (const s of this.baseStructures) { s.stand(); s.actUsedThisTurn.clear() }
+    for (const g of this.baseGear) { g.stand(); g.actUsedThisTurn.clear() }
   }
 
   // Regra 11.5 (Overloaded Pals Resolution): passar de 5 Pals NÃO bloqueia o deploy — o Pal recém
@@ -92,7 +109,7 @@ class PlayerState {
     if (!this.paySoulCost(card.cost)) {
       return { success: false, reason: 'NOT_ENOUGH_SOUL' }
     }
-    this.hand = this.hand.filter(c => c.card_number !== card.card_number)
+    this.hand = this.hand.filter(c => c !== card)
     const instance = new PalInstance(card)
     this.basePals.push(instance)
     return { success: true, instance }
@@ -102,17 +119,21 @@ class PlayerState {
     if (!this.paySoulCost(card.cost)) {
       return { success: false, reason: 'NOT_ENOUGH_SOUL' }
     }
-    this.hand = this.hand.filter(c => c.card_number !== card.card_number)
+    this.hand = this.hand.filter(c => c !== card)
     const instance = new StructureInstance(card)
     this.baseStructures.push(instance)
     return { success: true, instance }
   }
 
   tryDeployGear(card) {
-    if (!this.paySoulCost(card.cost)) {
+    // "Reduce the cost of playing your next gear from hand by X... It does not become ◇0 or less"
+    // (Primitive Furnace) — desconto nunca deixa o custo final abaixo de 1.
+    const discount = Math.min(this.nextGearDiscount || 0, Math.max(0, card.cost - 1))
+    if (!this.paySoulCost(card.cost - discount)) {
       return { success: false, reason: 'NOT_ENOUGH_SOUL' }
     }
-    this.hand = this.hand.filter(c => c.card_number !== card.card_number)
+    this.nextGearDiscount = 0
+    this.hand = this.hand.filter(c => c !== card)
     const instance = new GearInstance(card)
     this.baseGear.push(instance)
     return { success: true, instance }
@@ -147,20 +168,18 @@ class PlayerState {
         isStanding: p.isStanding, damageMarked: p.damageMarked, power: p.effectivePower(this, opponentState),
         powerBonus: p.effectivePower(this, opponentState) - p.data.power,
         imageUrl: p.data.image_url,
-        hasAct: EffectEngine.getActAbilities(p.data).length > 0,
-        actAvailable: EffectEngine.canActivateAbility(p, this)
+        acts: buildActsInfo(p, this),
+        hasAssault: EffectEngine.hasKeywordOrGranted(p, 'Assault')
       })),
       baseStructures: this.baseStructures.map(s => ({
         cardNumber: s.data.card_number, name: s.data.name, damageMarked: s.damageMarked,
         imageUrl: s.data.image_url, isStanding: s.isStanding,
-        hasAct: EffectEngine.getActAbilities(s.data).length > 0,
-        actAvailable: EffectEngine.canActivateAbility(s, this)
+        acts: buildActsInfo(s, this)
       })),
       baseGear: this.baseGear.map(g => ({
         cardNumber: g.data.card_number, name: g.data.name, imageUrl: g.data.image_url,
         isStanding: g.isStanding,
-        hasAct: EffectEngine.getActAbilities(g.data).length > 0,
-        actAvailable: EffectEngine.canActivateAbility(g, this)
+        acts: buildActsInfo(g, this)
       })),
       soulsStanding: this.soulsStanding,
       soulsRested: this.soulsRested,
