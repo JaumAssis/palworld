@@ -6,4 +6,6 @@ import { API_URL } from './api'
 // sozinho 2 chamadas io(mesmaUrl) — se o namespace padrão ("/") já estiver conectado, a 2ª chamada
 // força uma conexão NOVA em vez de reaproveitar (ver lookup() no pacote). Por isso o io(...) só
 // pode ser chamado 1x no app inteiro, aqui — nunca direto dentro de um componente/página.
-export const socket = io(API_URL, { withCredentials: true })
+// API_URL vazio (produção, mesma origem) precisa virar undefined aqui — socket.io-client só
+// conecta na origem atual da página se nenhuma URL for passada; string vazia não tem esse efeito.
+export const socket = io(API_URL || undefined, { withCredentials: true })

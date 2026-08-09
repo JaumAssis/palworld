@@ -22,7 +22,7 @@ if (!process.env.SESSION_SECRET) {
 
 function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
-const CLIENT_ORIGIN = 'http://localhost:5173';
+const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
 
 const app = express();
 // crossOriginResourcePolicy 'same-origin' (padrão do helmet) bloqueia o front (porta 5173)
@@ -101,7 +101,7 @@ function onUserCreated(userId) {
 app.use('/api/auth', createAuthRouter(db, { onUserCreated }));
 
 // Serve as imagens das cartas como arquivos estáticos
-// http://localhost:3001/cardart/BP01-001.png
+// /cardart/BP01-001.png
 app.use('/cardart', express.static(path.join(__dirname, 'public', 'cardart')));
 
 // Cria a tabela de decks salvos (se não existir)
@@ -416,7 +416,7 @@ app.get('/api/cards', (req, res) => {
     colors: JSON.parse(row.colors),
     keywords: JSON.parse(row.keywords),
     is_lucky: !!row.is_lucky,
-    image_url: `http://localhost:3001/${row.image_path}`
+    image_url: `/${row.image_path}`
   }));
 
   res.json(cards);
@@ -432,7 +432,7 @@ app.get('/api/cards/:cardNumber', (req, res) => {
     colors: JSON.parse(row.colors),
     keywords: JSON.parse(row.keywords),
     is_lucky: !!row.is_lucky,
-    image_url: `http://localhost:3001/${row.image_path}`
+    image_url: `/${row.image_path}`
   });
 });
 
@@ -488,7 +488,7 @@ app.get('/api/decks', (req, res) => {
       .filter(c => c && c.is_lucky && c.card_type === 'Pal')
       .sort((a, b) => a.name.localeCompare(b.name))
       .slice(0, 2)
-      .map(c => ({ name: c.name, image_url: `http://localhost:3001/${c.image_path}` }));
+      .map(c => ({ name: c.name, image_url: `/${c.image_path}` }));
 
     return {
       id: r.id,
@@ -523,7 +523,7 @@ app.get('/api/decks/:id', (req, res) => {
       colors: JSON.parse(c.colors),
       keywords: JSON.parse(c.keywords),
       is_lucky: !!c.is_lucky,
-      image_url: `http://localhost:3001/${c.image_path}`
+      image_url: `/${c.image_path}`
     };
   };
 
@@ -827,7 +827,7 @@ app.get('/api/farming/status', requirePlayer, (req, res) => {
 
   const cardsInfo = JSON.parse(slot.pal_card_numbers).map(num => {
     const c = db.prepare('SELECT * FROM cards WHERE card_number = ?').get(num);
-    return { ...c, colors: JSON.parse(c.colors), image_url: `http://localhost:3001/${c.image_path}` };
+    return { ...c, colors: JSON.parse(c.colors), image_url: `/${c.image_path}` };
   });
 
   res.json({
@@ -947,7 +947,7 @@ app.get('/api/farming/oven-status', requirePlayer, (req, res) => {
   res.json({
     active: true,
     type: slot.type,
-    kindlingPal: kindlingCard ? { ...kindlingCard, colors: JSON.parse(kindlingCard.colors), image_url: `http://localhost:3001/${kindlingCard.image_path}` } : null,
+    kindlingPal: kindlingCard ? { ...kindlingCard, colors: JSON.parse(kindlingCard.colors), image_url: `/${kindlingCard.image_path}` } : null,
     startTime: slot.start_time,
     readyTime: slot.ready_time,
     isReady: new Date() >= new Date(slot.ready_time)
@@ -1199,7 +1199,7 @@ app.get('/api/breeding/status', requirePlayer, (req, res) => {
     // só revela o resultado quando já estiver pronto (mantém a surpresa)
     result: isReady ? {
       ...resultCard, colors: JSON.parse(resultCard.colors), keywords: JSON.parse(resultCard.keywords),
-      is_lucky: !!resultCard.is_lucky, image_url: `http://localhost:3001/${resultCard.image_path}`
+      is_lucky: !!resultCard.is_lucky, image_url: `/${resultCard.image_path}`
     } : null
   });
 });
@@ -1234,7 +1234,7 @@ app.post('/api/breeding/claim', requirePlayer, (req, res) => {
   res.json({
     card: {
       ...resultCard, colors: JSON.parse(resultCard.colors), keywords: JSON.parse(resultCard.keywords),
-      is_lucky: !!resultCard.is_lucky, image_url: `http://localhost:3001/${resultCard.image_path}`
+      is_lucky: !!resultCard.is_lucky, image_url: `/${resultCard.image_path}`
     },
     fluidGained
   });
@@ -1399,7 +1399,7 @@ function getCardsByNumbers(numbers) {
       colors: JSON.parse(c.colors),
       keywords: JSON.parse(c.keywords),
       is_lucky: !!c.is_lucky,
-      image_url: `http://localhost:3001/${c.image_path}`,
+      image_url: `/${c.image_path}`,
       effect_text,
       pal_name,
       typepal,
@@ -1532,7 +1532,7 @@ app.post('/api/shop/buy-trial-deck', requirePlayer, (req, res) => {
   res.json({
     cards: setCards.map(c => ({
       ...c, colors: JSON.parse(c.colors), keywords: JSON.parse(c.keywords), is_lucky: !!c.is_lucky,
-      image_url: `http://localhost:3001/${c.image_path}`
+      image_url: `/${c.image_path}`
     })),
     fluidGained,
     goldCoins: newGold,
@@ -1624,7 +1624,7 @@ app.post('/api/shop/open-booster', requirePlayer, (req, res) => {
   res.json({
     cards: revealed.map(c => ({
       ...c, colors: JSON.parse(c.colors), keywords: JSON.parse(c.keywords), is_lucky: !!c.is_lucky,
-      image_url: `http://localhost:3001/${c.image_path}`
+      image_url: `/${c.image_path}`
     })),
     fluidGained,
     goldCoins: newGold,

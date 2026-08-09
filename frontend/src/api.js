@@ -1,4 +1,6 @@
-export const API_URL = 'http://localhost:3001';
+// Vazio em produção (frontend e backend servidos pela mesma origem via Nginx) — vira caminho
+// relativo. Em dev local, cai no fallback (Vite roda em porta separada do backend).
+export const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
 
 // Wrapper fino sobre fetch — sempre manda o cookie de sessão (credentials: 'include'), o que
 // os ~50 fetch() espalhados pelos componentes não faziam antes de existir login. Sem isso o
