@@ -1546,7 +1546,7 @@ app.get('/api/player/cards', requirePlayer, (req, res) => {
 });
 
 // Craftar carta com Fluido de Pal (até 4 cópias)
-const CRAFT_COSTS = { RR: 100, R: 50, U: 30, C: 15 };
+const CRAFT_COSTS = { RR: 100, R: 50, U: 30, C: 15, SR: 150, OSR: 300, SP: 500 };
 
 function getCraftCost(card) {
   if (CRAFT_COSTS[card.rarity]) return CRAFT_COSTS[card.rarity];
@@ -1559,7 +1559,7 @@ function getCraftCost(card) {
     return 100; // demais
   }
 
-  return null; // outras raridades (SR/SP/OSR/SSP) continuam não-craftáveis por enquanto
+  return null; // SSP/TSP/TSR continuam não-craftáveis por enquanto
 }
 
 app.post('/api/collection/craft', requirePlayer, (req, res) => {

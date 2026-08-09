@@ -17,7 +17,7 @@ function MyCollection() {
   const [page, setPage] = useState(1)
   const PAGE_SIZE = 9
 
-  const CRAFT_COSTS = { RR: 100, R: 50, U: 30, C: 15 }
+  const CRAFT_COSTS = { RR: 100, R: 50, U: 30, C: 15, SR: 150, OSR: 300, SP: 500 }
 
   const getCraftCost = (card) => {
     if (CRAFT_COSTS[card.rarity]) return CRAFT_COSTS[card.rarity]
