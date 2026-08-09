@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useLanguage } from './i18n/LanguageContext'
 import { apiFetch } from './api'
+import BlackMarket from './BlackMarket'
 
 function Shop({ onClose } = {}) {
   const { t } = useLanguage()
+  const navigate = useNavigate()
   const [isOpen, setIsOpen] = useState(false)
   const [player, setPlayer] = useState(null)
   const [buying, setBuying] = useState(false)
@@ -12,6 +14,17 @@ function Shop({ onClose } = {}) {
   const [error, setError] = useState('')
   const [buyingTD, setBuyingTD] = useState(null)
   const [view, setView] = useState('boosters')
+  const [showMarket, setShowMarket] = useState(false)
+  const [spinning, setSpinning] = useState(false)
+
+  // Giro de "passagem secreta": troca o conteúdo no meio da animação, quando o painel está de perfil.
+  const toggleMarket = () => {
+    setSpinning(true)
+    setTimeout(() => setShowMarket(v => !v), 400)
+    setTimeout(() => setSpinning(false), 800)
+  }
+
+  const exitShop = () => { if (onClose) onClose(); else navigate('/') }
 
   useEffect(() => {
     apiFetch('/api/player').then(r => r.json()).then(setPlayer)
@@ -77,20 +90,29 @@ function Shop({ onClose } = {}) {
     }}>
       <div style={{
         width: 'min(360px, 92vw)', height: 'min(720px, 92vh)', background: '#000', borderRadius: '36px',
-        padding: '10px', boxShadow: '0 20px 60px rgba(0,0,0,0.6)', position: 'relative', flexShrink: 0
+        padding: '10px', boxShadow: '0 20px 60px rgba(0,0,0,0.6)', position: 'relative', flexShrink: 0,
+        perspective: '1200px'
       }}>
+        <div className={spinning ? 'market-portal-spin' : ''} style={{ width: '100%', height: '100%' }}>
         <div style={{
-          width: '100%', height: '100%', background: '#f2f2f7', borderRadius: '28px',
+          width: '100%', height: '100%', background: showMarket ? '#1a1410' : '#f2f2f7', borderRadius: '28px',
           overflow: 'hidden', position: 'relative',
           transform: isOpen ? 'scale(1)' : 'scale(0.85)',
           opacity: isOpen ? 1 : 0,
           transition: 'transform 0.35s ease, opacity 0.35s ease'
         }}>
+          {showMarket ? (
+            <BlackMarket onExit={exitShop} />
+          ) : (
+          <>
           <div style={{ padding: '14px 16px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h2 style={{ margin: 0, fontSize: '20px' }}>{t('shopTitle')}</h2>
-            {onClose
-              ? <button onClick={onClose} style={{ fontSize: '13px', color: '#007aff', background: 'none', border: 'none', cursor: 'pointer' }}>{t('exit')}</button>
-              : <Link to="/" style={{ fontSize: '13px', color: '#007aff', textDecoration: 'none' }}>{t('exit')}</Link>}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <button className="shop-flag-button" type="button" onClick={toggleMarket}>🏴‍☠️</button>
+              {onClose
+                ? <button onClick={onClose} style={{ fontSize: '13px', color: '#007aff', background: 'none', border: 'none', cursor: 'pointer' }}>{t('exit')}</button>
+                : <Link to="/" style={{ fontSize: '13px', color: '#007aff', textDecoration: 'none' }}>{t('exit')}</Link>}
+            </div>
           </div>
 
           {player && (
@@ -181,6 +203,9 @@ function Shop({ onClose } = {}) {
             </>
           )}
           </div>
+          </>
+          )}
+        </div>
         </div>
       </div>
 

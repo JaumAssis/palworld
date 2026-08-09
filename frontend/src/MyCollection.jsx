@@ -17,7 +17,8 @@ function MyCollection() {
   const [page, setPage] = useState(1)
   const PAGE_SIZE = 9
 
-  const CRAFT_COSTS = { RR: 100, R: 50, U: 30, C: 15, SR: 150, OSR: 300, SP: 500 }
+  // OSR, SP, SSP e TSP ficam de fora de propósito — só saem via Breeding ou booster, não são craftáveis.
+  const CRAFT_COSTS = { RR: 100, R: 50, U: 30, C: 15, SR: 150, TSR: 150 }
 
   const getCraftCost = (card) => {
     if (CRAFT_COSTS[card.rarity]) return CRAFT_COSTS[card.rarity]

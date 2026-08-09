@@ -1032,14 +1032,35 @@ const RARITY_DURATION_HOURS = {
   SSP: 24       // 24 horas
 };
 
+function pickRandom(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+// Busca a variante de um card_number testando cada sufixo na ordem dada (ex: carta normal usa
+// "-SR", a versão de Trial Deck do mesmo Pal usa "-TSR" — nunca as duas ao mesmo tempo).
+function findVariantBySuffixes(cardNumber, suffixes) {
+  for (const suf of suffixes) {
+    const row = db.prepare('SELECT * FROM cards WHERE card_number = ?').get(`${cardNumber}-${suf}`);
+    if (row) return row;
+  }
+  return null;
+}
+
 // Chance de "upgrade" pra uma variante Altered Art mais rara, se ela existir pra esse Pal
-// (aplicado tanto no Breeding quanto nos boosters)
+// (aplicado tanto no Breeding quanto nos boosters — por isso não filtra card_type: no BP01
+// também tem Gear/Structure/Event com variante SR/SP, e nenhum deles pode ser resultado de Breeding)
 function maybeUpgradeToVariant(baseCard) {
   const osrCard = db.prepare('SELECT * FROM cards WHERE card_number = ?').get(`${baseCard.card_number}-OSR`);
   if (osrCard && Math.random() < 0.05) return osrCard; // 5% de chance
 
   const sspCard = db.prepare('SELECT * FROM cards WHERE card_number = ?').get(`${baseCard.card_number}-SSP`);
   if (sspCard && Math.random() < 0.02) return sspCard; // 2% de chance
+
+  const srCard = findVariantBySuffixes(baseCard.card_number, ['SR', 'TSR']);
+  if (srCard && Math.random() < 0.15) return srCard; // 15% de chance
+
+  const spCard = findVariantBySuffixes(baseCard.card_number, ['SP', 'TSP']);
+  if (spCard && Math.random() < 0.04) return spCard; // 4% de chance
 
   return baseCard;
 }
@@ -1075,17 +1096,25 @@ function getActiveBreedingSlot(playerId) {
   return db.prepare('SELECT * FROM breeding_slot WHERE player_id = ?').get(playerId);
 }
 
+// Pode haver mais de uma carta pra um mesmo Pal (ex: Digtoise tem "Seismic Drillback" e "Keen
+// Needleback" como impressões distintas) — junta todas as empatadas no rank mais próximo e
+// sorteia entre elas, em vez de sempre devolver a primeira que o SQLite encontrar.
 function closestByBreedingPower(targetRank) {
   const allPals = db.prepare("SELECT * FROM cards WHERE card_type = 'Pal' AND card_number NOT LIKE '%-%-%'").all();
-  let best = null;
   let bestDiff = Infinity;
+  let candidates = [];
   for (const pal of allPals) {
     const rank = breedingData.breeding_power[pal.pal_name];
     if (rank == null) continue;
     const diff = Math.abs(rank - targetRank);
-    if (diff < bestDiff) { best = pal; bestDiff = diff; }
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      candidates = [pal];
+    } else if (diff === bestDiff) {
+      candidates.push(pal);
+    }
   }
-  return best;
+  return candidates.length ? pickRandom(candidates) : null;
 }
 
 function computeBreedingResult(parent1Card, parent2Card) {
@@ -1097,9 +1126,10 @@ function computeBreedingResult(parent1Card, parent2Card) {
   const realResultName = breedingData.combo_lookup[key];
 
   if (realResultName) {
-    const cardMatch = db.prepare("SELECT * FROM cards WHERE pal_name = ? AND card_type = 'Pal' AND card_number NOT LIKE '%-%-%'").get(realResultName);
-    if (cardMatch) {
-      baseResult = cardMatch;
+    // Mesmo caso do Digtoise: pode ter mais de uma impressão do mesmo Pal, sorteia entre elas.
+    const cardMatches = db.prepare("SELECT * FROM cards WHERE pal_name = ? AND card_type = 'Pal' AND card_number NOT LIKE '%-%-%'").all(realResultName);
+    if (cardMatches.length > 0) {
+      baseResult = pickRandom(cardMatches);
     } else {
       const targetRank = breedingData.all_breeding_power[realResultName];
       baseResult = targetRank != null ? closestByBreedingPower(targetRank) : null;
@@ -1546,7 +1576,8 @@ app.get('/api/player/cards', requirePlayer, (req, res) => {
 });
 
 // Craftar carta com Fluido de Pal (até 4 cópias)
-const CRAFT_COSTS = { RR: 100, R: 50, U: 30, C: 15, SR: 150, OSR: 300, SP: 500 };
+// OSR, SP, SSP e TSP ficam de fora de propósito — só saem via Breeding ou booster, não são craftáveis.
+const CRAFT_COSTS = { RR: 100, R: 50, U: 30, C: 15, SR: 150, TSR: 150 };
 
 function getCraftCost(card) {
   if (CRAFT_COSTS[card.rarity]) return CRAFT_COSTS[card.rarity];
@@ -1559,7 +1590,7 @@ function getCraftCost(card) {
     return 100; // demais
   }
 
-  return null; // SSP/TSP/TSR continuam não-craftáveis por enquanto
+  return null; // demais raridades (ex: TD sem custo cadastrado) não são craftáveis
 }
 
 app.post('/api/collection/craft', requirePlayer, (req, res) => {
@@ -1583,6 +1614,132 @@ app.post('/api/collection/craft', requirePlayer, (req, res) => {
   `).run(req.playerId, cardNumber, current + 1);
 
   res.json({ newQuantity: current + 1, palFluid: player.pal_fluid - cost });
+});
+
+// ---------- MERCADO CLANDESTINO (jogador vende carta pra outro jogador) ----------
+// Por ora só as raridades que não são craftáveis (fora de CRAFT_COSTS) podem ir pro mercado —
+// é a única forma de conseguir esses tiers sem depender só de sorte no Breeding/booster.
+const MARKET_ALLOWED_RARITIES = ['OSR', 'SP', 'SSP', 'TSP'];
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS market_listings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    seller_player_id INTEGER NOT NULL,
+    card_number TEXT NOT NULL,
+    price_gold INTEGER NOT NULL DEFAULT 0,
+    price_fluid INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+
+// Anuncia 1 cópia de uma carta no mercado. Quem anuncia escolhe o preço em moedas de ouro,
+// em Fluido de Pal, ou nos dois ao mesmo tempo (precisa ter pelo menos um dos dois > 0).
+// A cópia fica "reservada" (mesmo esquema já usado por Breeding/Farming/Forno) até a venda
+// ser concluída ou o anúncio cancelado (cancelamento via DELETE abaixo; venda ainda não existe).
+app.post('/api/market/listings', requirePlayer, (req, res) => {
+  const { cardNumber, priceGold, priceFluid } = req.body;
+  const card = db.prepare('SELECT * FROM cards WHERE card_number = ?').get(cardNumber);
+  if (!card) return res.status(400).json({ error: 'Carta não encontrada.' });
+  if (!MARKET_ALLOWED_RARITIES.includes(card.rarity)) {
+    return res.status(400).json({ error: 'Essa raridade ainda não pode ser vendida no mercado.' });
+  }
+
+  const goldNum = priceGold ? Number(priceGold) : 0;
+  const fluidNum = priceFluid ? Number(priceFluid) : 0;
+  const validPrice = (n) => Number.isInteger(n) && n >= 0;
+  if (!validPrice(goldNum) || !validPrice(fluidNum) || (goldNum <= 0 && fluidNum <= 0)) {
+    return res.status(400).json({ error: 'Defina um preço válido em ouro e/ou Fluido de Pal.' });
+  }
+
+  if (getAvailableQuantity(req.playerId, cardNumber) < 1) {
+    return res.status(400).json({ error: 'Você não tem cópias disponíveis dessa carta.' });
+  }
+
+  reserveCards(req.playerId, [cardNumber]);
+  const result = db.prepare(`
+    INSERT INTO market_listings (seller_player_id, card_number, price_gold, price_fluid) VALUES (?, ?, ?, ?)
+  `).run(req.playerId, cardNumber, goldNum, fluidNum);
+
+  res.json({ id: result.lastInsertRowid, message: 'Carta anunciada no mercado.' });
+});
+
+// Lista todos os anúncios ativos (o próprio jogador também vê os que ele mesmo postou)
+app.get('/api/market/listings', requirePlayer, (req, res) => {
+  const rows = db.prepare('SELECT * FROM market_listings ORDER BY created_at DESC').all();
+  const getCard = db.prepare('SELECT * FROM cards WHERE card_number = ?');
+
+  const listings = rows.map(r => {
+    const card = getCard.get(r.card_number);
+    return {
+      id: r.id,
+      priceGold: r.price_gold,
+      priceFluid: r.price_fluid,
+      isMine: r.seller_player_id === req.playerId,
+      card: { card_number: card.card_number, name: card.name, rarity: card.rarity, image_url: `/${card.image_path}` }
+    };
+  });
+
+  res.json(listings);
+});
+
+// Cancela o próprio anúncio e devolve a cópia reservada pra coleção do jogador.
+app.delete('/api/market/listings/:id', requirePlayer, (req, res) => {
+  const listing = db.prepare('SELECT * FROM market_listings WHERE id = ?').get(req.params.id);
+  if (!listing || listing.seller_player_id !== req.playerId) {
+    return res.status(404).json({ error: 'Anúncio não encontrado.' });
+  }
+
+  releaseCards(req.playerId, [listing.card_number]);
+  db.prepare('DELETE FROM market_listings WHERE id = ?').run(req.params.id);
+
+  res.json({ message: 'Anúncio removido.' });
+});
+
+// Transfere ouro/fluido do comprador pro vendedor e a carta pro comprador, tudo em 1 transação
+// pra não deixar o jogo num estado inconsistente se algo falhar no meio do caminho.
+const executeMarketPurchase = db.transaction((listing, buyerId) => {
+  db.prepare('UPDATE players SET gold_coins = gold_coins - ?, pal_fluid = pal_fluid - ? WHERE id = ?')
+    .run(listing.price_gold, listing.price_fluid, buyerId);
+  db.prepare('UPDATE players SET gold_coins = gold_coins + ?, pal_fluid = pal_fluid + ? WHERE id = ?')
+    .run(listing.price_gold, listing.price_fluid, listing.seller_player_id);
+
+  // A cópia estava "reservada" desde o anúncio (ver POST /api/market/listings) — agora sai de
+  // fato da coleção de quem vendeu.
+  db.prepare('UPDATE player_cards SET quantity = quantity - 1, reserved = MAX(0, reserved - 1) WHERE player_id = ? AND card_number = ?')
+    .run(listing.seller_player_id, listing.card_number);
+
+  const current = db.prepare('SELECT quantity FROM player_cards WHERE player_id = ? AND card_number = ?').get(buyerId, listing.card_number)?.quantity || 0;
+  db.prepare(`
+    INSERT INTO player_cards (player_id, card_number, quantity) VALUES (?, ?, ?)
+    ON CONFLICT(player_id, card_number) DO UPDATE SET quantity = excluded.quantity
+  `).run(buyerId, listing.card_number, current + 1);
+
+  db.prepare('DELETE FROM market_listings WHERE id = ?').run(listing.id);
+
+  return current + 1;
+});
+
+app.post('/api/market/listings/:id/buy', requirePlayer, (req, res) => {
+  const listing = db.prepare('SELECT * FROM market_listings WHERE id = ?').get(req.params.id);
+  if (!listing) return res.status(404).json({ error: 'Anúncio não encontrado.' });
+  if (listing.seller_player_id === req.playerId) {
+    return res.status(400).json({ error: 'Você não pode comprar seu próprio anúncio.' });
+  }
+
+  const buyer = db.prepare('SELECT * FROM players WHERE id = ?').get(req.playerId);
+  if (buyer.gold_coins < listing.price_gold || buyer.pal_fluid < listing.price_fluid) {
+    return res.status(400).json({ error: 'Recursos insuficientes pra essa compra.' });
+  }
+
+  const current = db.prepare('SELECT quantity FROM player_cards WHERE player_id = ? AND card_number = ?').get(req.playerId, listing.card_number)?.quantity || 0;
+  if (current >= 4) {
+    return res.status(400).json({ error: 'Você já tem o máximo de 4 cópias dessa carta.' });
+  }
+
+  const newQuantity = executeMarketPurchase(listing, req.playerId);
+  const updatedBuyer = db.prepare('SELECT gold_coins, pal_fluid FROM players WHERE id = ?').get(req.playerId);
+
+  res.json({ message: 'Carta comprada com sucesso.', newQuantity, goldCoins: updatedBuyer.gold_coins, palFluid: updatedBuyer.pal_fluid });
 });
 
 // Abre 1 booster pack: sorteia 5 cartas do set BP01, respeitando raridade.
