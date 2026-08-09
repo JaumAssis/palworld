@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { Link, useParams } from 'react-router-dom'
 import { useLanguage } from './i18n/LanguageContext'
 import { apiFetch } from './api'
 import { socket } from './socket'
@@ -9,30 +9,48 @@ import {
   WOOD_H2, WOOD_P, WOOD_PAGE_BACKGROUND, BOARD_WIDTH, BOARD_HEIGHT
 } from './GameBoardUI'
 
-function GameBoard() {
+// Esse componente cobre o fluxo INTEIRO de uma partida online, do "Encontrar Partida" (fila +
+// escolha de deck) até o fim do jogo — mesmo modelo do GameBoard.jsx (partida contra o Bot), só que
+// os eventos são match:* (sessão compartilhada entre 2 jogadores reais) em vez de bot:*. A UI do
+// tabuleiro em si (cartas, popups, etc.) vem de GameBoardUI pra não duplicar aquele código.
+
+function FindMatchDeckSelect() {
   const { t } = useLanguage()
   const CHOICE_LABELS = { rock: t('rockLabel'), paper: t('paperLabel'), scissors: t('scissorsLabel') }
-  const [stage, setStage] = useState('selectDeck')
+  const { matchType } = useParams() // 'normal' ou 'arena'
+  const isArena = matchType === 'arena'
+
+  // ---------- fila / seleção de deck ----------
   const [decks, setDecks] = useState([])
+  const [selectedDeckId, setSelectedDeckId] = useState(null)
+  const [errorMsg, setErrorMsg] = useState('')
+  const [opponentName, setOpponentName] = useState('')
+
+  // ---------- setup da partida (Jokenpô / ordem / mulligan) ----------
+  const [stage, setStage] = useState('selecting')
   const [rpsResult, setRpsResult] = useState(null)
+  const [rpsSubmitted, setRpsSubmitted] = useState(false)
   const [mulliganHand, setMulliganHand] = useState([])
+  const [opponentLeftMessage, setOpponentLeftMessage] = useState('')
+  const [opponentLeftPointsChange, setOpponentLeftPointsChange] = useState(null)
+
+  // ---------- estado de jogo (mesmas variáveis locais do GameBoard.jsx) ----------
   const [gameState, setGameState] = useState(null)
   const [soulImageUrl, setSoulImageUrl] = useState(null)
   const [selectedPalIndex, setSelectedPalIndex] = useState(null)
   const [draggedPalIndex, setDraggedPalIndex] = useState(null)
   const [amountInput, setAmountInput] = useState(1)
-  const [actPicker, setActPicker] = useState(null) // { zone, index, acts } — carta com 2+ ACTs (ex: Primitive Furnace)
-  const [graveyardView, setGraveyardView] = useState(null) // { ownerName, cards } — popup de "ver cemitério"
+  const [actPicker, setActPicker] = useState(null)
+  const [graveyardView, setGraveyardView] = useState(null)
   const [zoomCard, setZoomCard] = useState(null)
   const [damageRevealShown, setDamageRevealShown] = useState(null)
   const [boardScale, setBoardScale] = useState(1)
   const hoverTimerRef = useRef(null)
   const seenDamageRevealIdRef = useRef(null)
   const damageRevealTimerRef = useRef(null)
+  const stageRef = useRef(stage)
+  useEffect(() => { stageRef.current = stage }, [stage])
 
-  // Recalcula a escala do tabuleiro pra caber na janela — nunca amplia além do tamanho de referência
-  // (BOARD_WIDTH x BOARD_HEIGHT), só reduz em telas menores. Mantém a MESMA composição/proporção
-  // sempre; o que muda com a resolução é só o quanto de fundo (ambient.webp) sobra nas bordas.
   useEffect(() => {
     const updateScale = () => {
       setBoardScale(Math.min(window.innerWidth / BOARD_WIDTH, window.innerHeight / BOARD_HEIGHT, 1))
@@ -46,24 +64,29 @@ function GameBoard() {
     apiFetch('/api/decks').then(r => r.json()).then(setDecks)
     apiFetch('/api/cards/SOUL-001').then(r => r.json()).then(c => setSoulImageUrl(c.image_url)).catch(() => {})
 
-    socket.on('bot:rpsPrompt', () => setStage('rps'))
+    socket.on('match:queued', () => setStage('searching'))
 
-    socket.on('bot:rpsResult', (data) => {
+    socket.on('match:found', ({ opponentName: name }) => {
+      setOpponentName(name)
+      setStage('found')
+    })
+
+    socket.on('match:rpsPrompt', () => { setRpsResult(null); setRpsSubmitted(false); setStage('rps') })
+
+    socket.on('match:rpsResult', (data) => {
       setRpsResult(data)
+      setRpsSubmitted(false)
       if (data.result !== 'draw') {
-        setTimeout(() => setStage(data.result === 'win' ? 'chooseOrder' : 'waitingBotOrder'), 1200)
-        if (data.result === 'lose') {
-          setTimeout(() => socket.emit('bot:chooseOrder', { goFirst: false }), 1300)
-        }
+        setTimeout(() => setStage(data.result === 'win' ? 'chooseOrder' : 'waitingOrder'), 1200)
       }
     })
 
-    socket.on('bot:mulliganPrompt', ({ hand }) => {
+    socket.on('match:mulliganPrompt', ({ hand }) => {
       setMulliganHand(hand)
       setStage('mulligan')
     })
 
-    socket.on('bot:state', (state) => {
+    socket.on('match:state', (state) => {
       setGameState(state)
       setStage(state.gameOver ? 'gameOver' : 'playing')
       if (state.pendingEffect?.kind === 'amount') setAmountInput(state.pendingEffect.min || 1)
@@ -75,51 +98,74 @@ function GameBoard() {
       }
     })
 
-    socket.on('bot:error', (err) => {
-      alert(err.message)
+    socket.on('match:error', ({ message }) => {
+      setErrorMsg(message)
+      if (stageRef.current === 'selecting' || stageRef.current === 'searching') setStage('selecting')
+      else alert(message)
+    })
+
+    socket.on('match:opponentLeft', ({ message, arenaPointsChange: pts }) => {
+      setOpponentLeftMessage(message)
+      setOpponentLeftPointsChange(pts)
+      setStage('opponentLeft')
     })
 
     return () => {
       clearTimeout(damageRevealTimerRef.current)
-      socket.off('bot:rpsPrompt')
-      socket.off('bot:rpsResult')
-      socket.off('bot:mulliganPrompt')
-      socket.off('bot:state')
-      socket.off('bot:error')
+      socket.off('match:queued')
+      socket.off('match:found')
+      socket.off('match:rpsPrompt')
+      socket.off('match:rpsResult')
+      socket.off('match:mulliganPrompt')
+      socket.off('match:state')
+      socket.off('match:error')
+      socket.off('match:opponentLeft')
+      // Só cancela a fila se ainda estiver procurando — depois que a partida existe, saindo daqui
+      // (ex.: botão voltar) não desfaz a sessão, igual já acontece na partida contra o Bot.
+      if (stageRef.current === 'searching') socket.emit('match:cancelFindMatch')
     }
   }, [])
 
-  // O zoom de hover usa um timer de 2s independente do resto da UI — se um popup de escolha de
-  // carta abrir enquanto o mouse ainda está "parado" sobre a carta que iniciou o zoom, o timer
-  // dispara depois do popup já aberto. Cancela nesse momento pra não sobrar zoom de outra carta ali.
   useEffect(() => {
     if (gameState?.pendingEffect?.kind === 'cardChoice') cancelHoverZoom()
   }, [gameState?.pendingEffect?.kind])
 
-  const startMatch = (deckId) => {
-    socket.emit('bot:start', { deckId })
+  // ---------- ações: fila / deck ----------
+  const visibleDecks = isArena ? decks.filter(d => d.mode === 'rank') : decks
+
+  const findMatch = () => {
+    if (!selectedDeckId) return
+    setErrorMsg('')
+    socket.emit('match:findMatch', { deckId: selectedDeckId, matchType: isArena ? 'arena' : 'normal' })
   }
 
+  const cancelSearch = () => {
+    socket.emit('match:cancelFindMatch')
+    setStage('selecting')
+  }
+
+  // ---------- ações: setup (Jokenpô / ordem / mulligan) ----------
   const sendRPS = (choice) => {
     setRpsResult(null)
-    socket.emit('bot:rpsChoice', { choice })
+    setRpsSubmitted(true)
+    socket.emit('match:rpsChoice', { choice })
   }
 
-  const chooseOrder = (goFirst) => {
-    socket.emit('bot:chooseOrder', { goFirst })
-  }
+  const chooseOrder = (goFirst) => socket.emit('match:chooseOrder', { goFirst })
 
   const decideMulligan = (keep) => {
-    socket.emit('bot:mulliganDecision', { keep })
+    socket.emit('match:mulliganDecision', { keep })
+    setStage('waitingMulligan')
   }
 
-  const advancePhase = () => socket.emit('bot:advancePhase')
+  // ---------- ações: jogo (mesmas do GameBoard.jsx, via match:*) ----------
+  const advancePhase = () => socket.emit('match:advancePhase')
 
-  const deployPal = (cardNumber) => socket.emit('bot:deployPal', { cardNumber })
-  const deployStructure = (cardNumber) => socket.emit('bot:deployStructure', { cardNumber })
-  const deployGear = (cardNumber) => socket.emit('bot:deployGear', { cardNumber })
-  const deployEvent = (cardNumber) => socket.emit('bot:deployEvent', { cardNumber })
-  const drawWithSouls = () => socket.emit('bot:drawWithSouls')
+  const deployPal = (cardNumber) => socket.emit('match:deployPal', { cardNumber })
+  const deployStructure = (cardNumber) => socket.emit('match:deployStructure', { cardNumber })
+  const deployGear = (cardNumber) => socket.emit('match:deployGear', { cardNumber })
+  const deployEvent = (cardNumber) => socket.emit('match:deployEvent', { cardNumber })
+  const drawWithSouls = () => socket.emit('match:drawWithSouls')
 
   const handleHandCardClick = (card) => {
     if (card.card_type === 'Pal') deployPal(card.card_number)
@@ -130,30 +176,31 @@ function GameBoard() {
 
   const handleDropOnEnemyPal = (targetIndex) => {
     if (draggedPalIndex === null || gameState?.pendingEffect) return
-    socket.emit('bot:attackPal', { attackerIndex: draggedPalIndex, targetIndex })
+    socket.emit('match:attackPal', { attackerIndex: draggedPalIndex, targetIndex })
     setDraggedPalIndex(null)
     setSelectedPalIndex(null)
   }
 
   const attackWithPal = (palIndex) => {
     if (gameState?.pendingEffect) return
-    socket.emit('bot:attack', { palIndex })
+    socket.emit('match:attack', { palIndex })
     setSelectedPalIndex(null)
   }
 
+  // owner chega/sai relativo a quem está vendo ('player'=eu / 'bot'=oponente) — o servidor já
+  // traduz isso pra cada lado, então essa lógica é idêntica à da partida contra o Bot.
   const isPendingTarget = (owner, index) =>
+    !!gameState?.pendingEffect?.isYours &&
     !!gameState?.pendingEffect?.validTargets?.some(t => t.owner === owner && t.index === index)
 
-  const resolveEffectTarget = (owner, index) => socket.emit('bot:resolveEffectTarget', { owner, index })
-  const skipEffectTarget = () => socket.emit('bot:resolveEffectTarget', { skip: true })
+  const resolveEffectTarget = (owner, index) => socket.emit('match:resolveEffectTarget', { owner, index })
+  const skipEffectTarget = () => socket.emit('match:resolveEffectTarget', { skip: true })
 
   const activateAbility = (zone, index, actIndex = 0) => {
     if (gameState?.pendingEffect) return
-    socket.emit('bot:activateAbility', { zone, index, actIndex })
+    socket.emit('match:activateAbility', { zone, index, actIndex })
   }
 
-  // Cartas com só 1 ACT (a maioria) ativam direto; com 2+ (ex: Primitive Furnace, Breeding Farm),
-  // abre um seletor pra escolher qual das habilidades usar.
   const handleActivateClick = (zone, index, acts) => {
     if (!acts || acts.length === 0) return
     if (acts.length === 1) { activateAbility(zone, index, acts[0].index); return }
@@ -166,22 +213,22 @@ function GameBoard() {
     setActPicker(null)
   }
 
-  const resolveBlock = (blockerIndex) => socket.emit('bot:resolveBlock', { blockerIndex })
-  const resolveNoBlock = () => socket.emit('bot:resolveBlock', { none: true })
-  const playQuickCard = (cardNumber, kind) => socket.emit('bot:resolveQuickStep', { cardNumber, kind })
-  const passQuickStep = () => socket.emit('bot:resolveQuickStep', { pass: true })
-  const resolveInterruptCost = (method) => socket.emit('bot:resolveInterruptCost', { method })
-  const resolveInterruptDiscard = (cardNumber) => socket.emit('bot:resolveInterruptDiscard', { cardNumber })
+  const resolveBlock = (blockerIndex) => socket.emit('match:resolveBlock', { blockerIndex })
+  const resolveNoBlock = () => socket.emit('match:resolveBlock', { none: true })
+  const playQuickCard = (cardNumber, kind) => socket.emit('match:resolveQuickStep', { cardNumber, kind })
+  const passQuickStep = () => socket.emit('match:resolveQuickStep', { pass: true })
+  const resolveInterruptCost = (method) => socket.emit('match:resolveInterruptCost', { method })
+  const resolveInterruptDiscard = (cardNumber) => socket.emit('match:resolveInterruptDiscard', { cardNumber })
 
-  const resolveAmount = (amount) => socket.emit('bot:resolveAmount', { amount })
-  const resolveModalChoice = (optionIndex) => socket.emit('bot:resolveModalChoice', { optionIndex })
+  const resolveAmount = (amount) => socket.emit('match:resolveAmount', { amount })
+  const resolveModalChoice = (optionIndex) => socket.emit('match:resolveModalChoice', { optionIndex })
 
-  const resolveCardChoice = (index) => socket.emit('bot:resolveCardChoice', { index })
-  const skipCardChoice = () => socket.emit('bot:resolveCardChoice', { skip: true })
+  const resolveCardChoice = (index) => socket.emit('match:resolveCardChoice', { index })
+  const skipCardChoice = () => socket.emit('match:resolveCardChoice', { skip: true })
 
   const attackStructure = (targetIndex) => {
     if (draggedPalIndex === null || gameState?.pendingEffect || gameState?.pendingBattle) return
-    socket.emit('bot:attackStructure', { attackerIndex: draggedPalIndex, targetIndex })
+    socket.emit('match:attackStructure', { attackerIndex: draggedPalIndex, targetIndex })
     setDraggedPalIndex(null)
     setSelectedPalIndex(null)
   }
@@ -195,42 +242,91 @@ function GameBoard() {
     setZoomCard(null)
   }
 
-  if (stage === 'selectDeck') {
+  // ================= SELEÇÃO DE DECK =================
+  if (stage === 'selecting') {
     return (
       <div style={{ minHeight: '100vh', boxSizing: 'border-box', padding: '2rem', textAlign: 'center', background: WOOD_PAGE_BACKGROUND }}>
-        <Link to="/"><button className="sign-button" style={{ marginBottom: '20px' }}>{t('backToMenu')}</button></Link>
-        <h2 style={WOOD_H2}>{t('gbChooseDeck')}</h2>
+        <Link to="/findmatch"><button className="sign-button" style={{ marginBottom: '20px' }}>{t('findMatchBack')}</button></Link>
+        <h2 style={WOOD_H2}>{isArena ? t('findMatchChooseDeckArenaTitle') : t('findMatchChooseDeckNormalTitle')}</h2>
+
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', justifyContent: 'center', marginTop: '20px' }}>
-          {decks.map(d => (
-            <button key={d.id} className="sign-button" onClick={() => startMatch(d.id)} style={{ fontSize: '16px' }}>
+          {visibleDecks.map(d => (
+            <button
+              key={d.id}
+              className="sign-button"
+              onClick={() => setSelectedDeckId(d.id)}
+              style={{
+                fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px',
+                outline: selectedDeckId === d.id ? '3px solid #ffd76a' : 'none'
+              }}
+            >
               {d.name}
+              <span style={{
+                fontSize: '11px', padding: '2px 8px', borderRadius: '10px', color: '#fff3d6',
+                background: d.mode === 'rank' ? '#a5541b' : '#3f6b3f'
+              }}>{d.mode === 'rank' ? '🏆 Rank' : '🎲 Normal'}</span>
             </button>
           ))}
         </div>
-        {decks.length === 0 && <p style={WOOD_P}>{t('gbNoDecks')}</p>}
+
+        {visibleDecks.length === 0 && (
+          <p style={WOOD_P}>{isArena ? t('findMatchNoRankDecks') : t('gbNoDecks')}</p>
+        )}
+
+        {errorMsg && <p style={{ ...WOOD_P, color: '#ff8a8a' }}>{errorMsg}</p>}
+
+        {visibleDecks.length > 0 && (
+          <div style={{ marginTop: '30px' }}>
+            <button
+              className="sign-button"
+              disabled={!selectedDeckId}
+              onClick={findMatch}
+              style={{ fontSize: '18px', padding: '14px 32px', opacity: selectedDeckId ? 1 : 0.5 }}
+            >
+              {t('findMatchSearchButton')}
+            </button>
+          </div>
+        )}
       </div>
     )
   }
 
-  if (stage === 'rps' || stage === 'waitingBotOrder') {
+  // ================= PROCURANDO OPONENTE =================
+  if (stage === 'searching' || stage === 'found') {
+    return (
+      <div style={{
+        minHeight: '100vh', boxSizing: 'border-box', padding: '2rem', textAlign: 'center', background: WOOD_PAGE_BACKGROUND,
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px'
+      }}>
+        <h2 style={WOOD_H2}>{stage === 'found' ? t('findMatchFound', { name: opponentName }) : t('findMatchSearching')}</h2>
+        {stage === 'searching' && (
+          <button className="sign-button" onClick={cancelSearch}>{t('findMatchCancelSearch')}</button>
+        )}
+      </div>
+    )
+  }
+
+  // ================= JOKENPÔ =================
+  if (stage === 'rps' || stage === 'waitingOrder') {
     const rpsAccent = rpsResult ? (rpsResult.result === 'win' ? 'win' : rpsResult.result === 'lose' ? 'lose' : 'neutral') : 'neutral'
     return (
       <Overlay accent={rpsAccent}>
         <h2 style={THEMED_H2}>{t('gbRpsTitle')}</h2>
         <p style={THEMED_P}>{t('gbRpsIntro')}</p>
-        {!rpsResult && (
+        {!rpsResult && !rpsSubmitted && (
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '18px' }}>
             {Object.entries(CHOICE_LABELS).map(([key, label]) => (
               <button key={key} className="sign-button" onClick={() => sendRPS(key)} style={{ fontSize: '18px' }}>{label}</button>
             ))}
           </div>
         )}
+        {rpsSubmitted && !rpsResult && <p style={{ ...THEMED_P, marginTop: '16px' }}>{t('findMatchWaitingOpponent')}</p>}
         {rpsResult && (
           <div style={{ marginTop: '16px' }}>
-            <p style={THEMED_P}>{t('gbRpsVs', { player: CHOICE_LABELS[rpsResult.playerChoice], bot: CHOICE_LABELS[rpsResult.botChoice] })}</p>
+            <p style={THEMED_P}>{t('findMatchRpsVs', { you: CHOICE_LABELS[rpsResult.yourChoice], opponent: CHOICE_LABELS[rpsResult.opponentChoice] })}</p>
             {rpsResult.result === 'draw' && <p style={THEMED_RESULT_NEUTRAL}>{t('gbRpsDraw')}</p>}
             {rpsResult.result === 'win' && <p style={THEMED_RESULT_WIN}>🏆 {t('gbRpsWin')}</p>}
-            {rpsResult.result === 'lose' && <p style={THEMED_RESULT_LOSE}>{t('gbRpsLose')}</p>}
+            {rpsResult.result === 'lose' && <p style={THEMED_RESULT_LOSE}>{t('findMatchRpsLose')}</p>}
           </div>
         )}
         {rpsResult?.result === 'draw' && (
@@ -240,10 +336,12 @@ function GameBoard() {
             ))}
           </div>
         )}
+        {stage === 'waitingOrder' && <p style={{ ...THEMED_P, marginTop: '14px' }}>{t('findMatchWaitingOpponent')}</p>}
       </Overlay>
     )
   }
 
+  // ================= ESCOLHER ORDEM (só quem ganhou o Jokenpô) =================
   if (stage === 'chooseOrder') {
     return (
       <Overlay accent="win">
@@ -257,7 +355,8 @@ function GameBoard() {
     )
   }
 
-  if (stage === 'mulligan') {
+  // ================= MULLIGAN =================
+  if (stage === 'mulligan' || stage === 'waitingMulligan') {
     return (
       <Overlay>
         <h2 style={THEMED_H2}>{t('gbMulliganTitle')}</h2>
@@ -266,20 +365,44 @@ function GameBoard() {
             <img key={i} src={c.image_url} alt={c.name} style={{ width: '70px', borderRadius: '6px', boxShadow: '0 2px 6px rgba(0,0,0,0.4)' }} />
           ))}
         </div>
-        <p style={THEMED_P}>{t('gbMulliganQuestion')}</p>
-        <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '14px' }}>
-          <button className="sign-button" onClick={() => decideMulligan(true)}>{t('gbKeepHand')}</button>
-          <button className="sign-button" onClick={() => decideMulligan(false)}>{t('gbMulligan')}</button>
-        </div>
+        {stage === 'mulligan' ? (
+          <>
+            <p style={THEMED_P}>{t('gbMulliganQuestion')}</p>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '14px' }}>
+              <button className="sign-button" onClick={() => decideMulligan(true)}>{t('gbKeepHand')}</button>
+              <button className="sign-button" onClick={() => decideMulligan(false)}>{t('gbMulligan')}</button>
+            </div>
+          </>
+        ) : (
+          <p style={THEMED_P}>{t('findMatchWaitingOpponent')}</p>
+        )}
       </Overlay>
     )
   }
 
+  // ================= OPONENTE DESCONECTOU =================
+  if (stage === 'opponentLeft') {
+    return (
+      <Overlay accent="win">
+        <h2 style={THEMED_RESULT_WIN}>{t('gbYouWin')}</h2>
+        {opponentLeftPointsChange != null && (
+          <p style={{ ...THEMED_P, fontWeight: 700 }}>{t('arenaPointsChangeLabel', { n: opponentLeftPointsChange })}</p>
+        )}
+        <p style={THEMED_P}>{opponentLeftMessage}</p>
+        <Link to="/"><button className="sign-button" style={{ marginTop: '18px' }}>{t('backToMenu')}</button></Link>
+      </Overlay>
+    )
+  }
+
+  // ================= FIM DE JOGO =================
   if (stage === 'gameOver') {
-    const won = gameState.winner === 'Você'
+    const won = !!gameState?.youWon
     return (
       <Overlay accent={won ? 'win' : 'lose'}>
         <h2 style={won ? THEMED_RESULT_WIN : THEMED_RESULT_LOSE}>{won ? t('gbYouWin') : t('gbYouLose')}</h2>
+        {gameState?.arenaPointsChange != null && (
+          <p style={{ ...THEMED_P, fontWeight: 700 }}>{t('arenaPointsChangeLabel', { n: gameState.arenaPointsChange })}</p>
+        )}
         <Link to="/"><button className="sign-button" style={{ marginTop: '18px' }}>{t('backToMenu')}</button></Link>
       </Overlay>
     )
@@ -287,7 +410,8 @@ function GameBoard() {
 
   if (!gameState) return <p style={{ padding: '2rem' }}>{t('gbLoadingMatch')}</p>
 
-  const { player, bot, hand, currentPhase, turnNumber, isPlayerTurn, pendingEffect, pendingBattle, log } = gameState
+  // ================= TABULEIRO =================
+  const { player, opponent, hand, currentPhase, turnNumber, isYourTurn, pendingEffect, pendingBattle, log } = gameState
   const isValidBlocker = (i) => pendingBattle?.waitingFor === 'block' && pendingBattle.validBlockers.includes(i)
   const quickOptionFor = (cardNumber) =>
     pendingBattle?.waitingFor === 'quick' ? pendingBattle.quickOptions.find(o => o.cardNumber === cardNumber) : null
@@ -322,12 +446,6 @@ function GameBoard() {
       background: "url('/ambient.webp') center / cover no-repeat fixed",
       display: 'flex', alignItems: 'center', justifyContent: 'center', boxSizing: 'border-box'
     }}>
-      {/* Camada de "noite" — no nível de FORA do canvas, cobrindo a tela inteira (inclusive a moldura
-          de fundo que sobra ao redor do tabuleiro em telas maiores que a referência), não só o
-          quadrado do tabuleiro. Mesma imagem do toggle do menu principal, com crossfade suave; só a
-          opacidade anima, quem controla é o próprio jogo (cartas com efeito de night). `isolation:
-          isolate` no container acima garante que esse z-index negativo não escape pra trás do fundo
-          da própria página. */}
       <div style={{
         position: 'absolute', inset: 0, zIndex: -1, pointerEvents: 'none',
         background: "url('/night.png') center / cover no-repeat fixed",
@@ -335,10 +453,6 @@ function GameBoard() {
         transition: 'opacity 1.2s ease'
       }} />
 
-      {/* "Canvas" de tamanho FIXO (BOARD_WIDTH x BOARD_HEIGHT) escalado via CSS transform pra caber
-          na janela — a composição/proporção de tudo lá dentro (linha do turno, souls, vida...) é
-          sempre a mesma, então a "limpeza" visual não depende mais da resolução: só encolhe/aumenta
-          como uma unidade só, em vez de cada linha flex esparramar sozinha conforme a largura. */}
       <div style={{
         width: BOARD_WIDTH + 'px', height: BOARD_HEIGHT + 'px', flexShrink: 0,
         transform: `scale(${boardScale})`, transformOrigin: 'center center',
@@ -348,30 +462,30 @@ function GameBoard() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Link to="/"><button style={{ fontSize: '12px' }}>{t('gbExitMatch')}</button></Link>
         <div style={{ color: '#fff', fontWeight: 600, fontSize: '13px', textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>
-          {t('gbTurn', { n: turnNumber, whoseTurn: isPlayerTurn ? t('gbYourTurn') : t('gbBotTurn') })}
+          {t('gbTurn', { n: turnNumber, whoseTurn: isYourTurn ? t('gbYourTurn') : t('findMatchOpponentTurn') })}
         </div>
       </div>
 
-      {/* ---------- BOT ---------- */}
+      {/* ---------- OPONENTE ---------- */}
       <div style={{ background: 'rgba(10,15,25,0.45)', backdropFilter: 'blur(4px)', borderRadius: '12px', padding: '8px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
-          <strong style={{ color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.6)', fontSize: '13px' }}>🤖 {bot.playerName}</strong>
+          <strong style={{ color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.6)', fontSize: '13px' }}>🧑 {opponent.playerName}</strong>
           <div style={{ display: 'flex', gap: '10px' }}>
-            <CardSlot label={t('gbDeckCount', { n: bot.deckCount })} width="56px" height="76px" imageUrl="/card_fundo.png" />
-            <CardSlot label={t('gbGraveyard', { n: bot.graveyardCount })} width="56px" height="76px"
-                      onClick={() => setGraveyardView({ ownerName: bot.playerName, cards: bot.graveyard || [] })} />
+            <CardSlot label={t('gbDeckCount', { n: opponent.deckCount })} width="56px" height="76px" imageUrl="/card_fundo.png" />
+            <CardSlot label={t('gbGraveyard', { n: opponent.graveyardCount })} width="56px" height="76px"
+                      onClick={() => setGraveyardView({ ownerName: opponent.playerName, cards: opponent.graveyard || [] })} />
           </div>
-          <SoulRow standing={bot.soulsStanding} rested={bot.soulsRested} />
-          <SoulCount standing={bot.soulsStanding} rested={bot.soulsRested} />
+          <SoulRow standing={opponent.soulsStanding} rested={opponent.soulsRested} />
+          <SoulCount standing={opponent.soulsStanding} rested={opponent.soulsRested} />
           <span style={{ color: '#fff', fontSize: '11px', textShadow: '0 1px 3px rgba(0,0,0,0.6)' }}>
-            {t('gbMaterial', { n: bot.material ?? 0 })} · {t('gbIngredient', { n: bot.ingredient ?? 0 })}
+            {t('gbMaterial', { n: opponent.material ?? 0 })} · {t('gbIngredient', { n: opponent.ingredient ?? 0 })}
           </span>
           <span style={{ color: '#fff', fontSize: '12px', textShadow: '0 1px 3px rgba(0,0,0,0.6)' }}>
-            {t('gbLifeHand', { life: bot.life, hand: bot.handCount })}
+            {t('gbLifeHand', { life: opponent.life, hand: opponent.handCount })}
           </span>
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', minHeight: '90px', marginTop: '6px' }}>
-          {bot.basePals.map((p, i) => {
+          {opponent.basePals.map((p, i) => {
             const isEffectTarget = isPendingTarget('bot', i)
             // Assault (ex: Grizzbolt – Rumbling Tank) deixa atacar Pals em pé também, não só descansados.
             const draggedPal = draggedPalIndex !== null ? player.basePals[draggedPalIndex] : null
@@ -389,13 +503,13 @@ function GameBoard() {
               </div>
             )
           })}
-          <StructureGearRow structures={bot.baseStructures || []} gear={bot.baseGear || []} cardWidth="62px" cardHeight="86px"
+          <StructureGearRow structures={opponent.baseStructures || []} gear={opponent.baseGear || []} cardWidth="62px" cardHeight="86px"
                              onHoverCard={startHoverZoom} onHoverEnd={cancelHoverZoom}
                              onDropStructure={attackStructure} dragActive={draggedPalIndex !== null} />
         </div>
       </div>
 
-      {/* ---------- JOGADOR ---------- */}
+      {/* ---------- VOCÊ ---------- */}
       <div style={{ background: 'rgba(10,15,25,0.45)', backdropFilter: 'blur(4px)', borderRadius: '12px', padding: '8px', flex: 1, display: 'flex', flexDirection: 'column' }}>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flex: 1, minHeight: '90px' }}>
           {player.basePals.map((p, i) => {
@@ -403,36 +517,36 @@ function GameBoard() {
             const isBlockTarget = isValidBlocker(i)
             return (
               <div key={i}
-                   draggable={!pendingEffect && !pendingBattle && p.isStanding && isPlayerTurn && currentPhase === 'main'}
+                   draggable={!pendingEffect && !pendingBattle && p.isStanding && isYourTurn && currentPhase === 'main'}
                    onDragStart={() => setDraggedPalIndex(i)}
                    onDragEnd={() => setDraggedPalIndex(null)}
                    style={{ outline: (isEffectTarget || isBlockTarget) ? '2px dashed #6cf25a' : 'none', borderRadius: '8px' }}>
                 <PalCard pal={p} width="70px" selected={selectedPalIndex === i}
-                         clickable={isEffectTarget || isBlockTarget || (p.isStanding && isPlayerTurn && currentPhase === 'main')}
+                         clickable={isEffectTarget || isBlockTarget || (p.isStanding && isYourTurn && currentPhase === 'main')}
                          onClick={() => {
                            if (isEffectTarget) { resolveEffectTarget('player', i); return }
                            if (isBlockTarget) { resolveBlock(i); return }
-                           if (p.isStanding && isPlayerTurn && currentPhase === 'main') {
+                           if (p.isStanding && isYourTurn && currentPhase === 'main') {
                              setSelectedPalIndex(prev => (prev === i ? null : i))
                            }
                          }}
-                         onActivate={(!pendingEffect && !pendingBattle && isPlayerTurn && currentPhase === 'main') ? () => handleActivateClick('basePals', i, p.acts) : undefined}
+                         onActivate={(!pendingEffect && !pendingBattle && isYourTurn && currentPhase === 'main') ? () => handleActivateClick('basePals', i, p.acts) : undefined}
                          onHoverStart={startHoverZoom} onHoverEnd={cancelHoverZoom} />
               </div>
             )
           })}
           <StructureGearRow structures={player.baseStructures || []} gear={player.baseGear || []}
-                             onActivateStructure={(!pendingEffect && isPlayerTurn && currentPhase === 'main') ? (i) => handleActivateClick('baseStructures', i, player.baseStructures[i].acts) : undefined}
-                             onActivateGear={(!pendingEffect && isPlayerTurn && currentPhase === 'main') ? (i) => handleActivateClick('baseGear', i, player.baseGear[i].acts) : undefined}
+                             onActivateStructure={(!pendingEffect && isYourTurn && currentPhase === 'main') ? (i) => handleActivateClick('baseStructures', i, player.baseStructures[i].acts) : undefined}
+                             onActivateGear={(!pendingEffect && isYourTurn && currentPhase === 'main') ? (i) => handleActivateClick('baseGear', i, player.baseGear[i].acts) : undefined}
                              onHoverCard={startHoverZoom} onHoverEnd={cancelHoverZoom} />
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginTop: '6px' }}>
-          <strong style={{ color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.6)', fontSize: '13px' }}>🧑 {player.playerName === 'Você' ? t('youLabel') : player.playerName}</strong>
+          <strong style={{ color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.6)', fontSize: '13px' }}>🧑 {t('youLabel')}</strong>
           <div style={{ display: 'flex', gap: '10px' }}>
             <CardSlot label={t('gbDeckCount', { n: player.deckCount })} width="56px" height="76px" imageUrl="/card_fundo.png" />
             <CardSlot label={t('gbGraveyard', { n: player.graveyardCount })} width="56px" height="76px"
-                      onClick={() => setGraveyardView({ ownerName: player.playerName === 'Você' ? t('youLabel') : player.playerName, cards: player.graveyard || [] })} />
+                      onClick={() => setGraveyardView({ ownerName: t('youLabel'), cards: player.graveyard || [] })} />
           </div>
           <span style={{ color: '#fff', fontSize: '12px', textShadow: '0 1px 3px rgba(0,0,0,0.6)' }}>
             {t('gbMaterial', { n: player.material ?? 0 })} · {t('gbIngredient', { n: player.ingredient ?? 0 })}
@@ -450,9 +564,15 @@ function GameBoard() {
           background: 'rgba(0,0,0,0.6)', color: '#fff', borderRadius: '8px', padding: '6px 12px',
           fontSize: '12px', textAlign: 'center'
         }}>
-          <span>{t('gbEffectChooseTarget')} <strong>{pendingEffect.sourceCardName}</strong> — {pendingEffect.description}</span>
-          {pendingEffect.optional && (
-            <button onClick={skipEffectTarget} style={{ padding: '4px 10px', fontSize: '11px' }}>{t('gbEffectSkip')}</button>
+          {pendingEffect.isYours ? (
+            <>
+              <span>{t('gbEffectChooseTarget')} <strong>{pendingEffect.sourceCardName}</strong> — {pendingEffect.description}</span>
+              {pendingEffect.optional && (
+                <button onClick={skipEffectTarget} style={{ padding: '4px 10px', fontSize: '11px' }}>{t('gbEffectSkip')}</button>
+              )}
+            </>
+          ) : (
+            <span>{t('findMatchWaitingOpponent')}</span>
           )}
         </div>
       )}
@@ -463,11 +583,17 @@ function GameBoard() {
           display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px',
           background: 'rgba(0,0,0,0.6)', color: '#fff', borderRadius: '8px', padding: '6px 12px', fontSize: '12px'
         }}>
-          <span>{t('gbAmountPrompt', { name: pendingEffect.sourceCardName })}</span>
-          <input type="range" min={pendingEffect.min} max={pendingEffect.max} value={amountInput}
-                 onChange={e => setAmountInput(parseInt(e.target.value, 10))} />
-          <strong>{amountInput}</strong>
-          <button onClick={() => resolveAmount(amountInput)} style={{ padding: '4px 10px', fontSize: '11px' }}>{t('gbConfirm')}</button>
+          {pendingEffect.isYours ? (
+            <>
+              <span>{t('gbAmountPrompt', { name: pendingEffect.sourceCardName })}</span>
+              <input type="range" min={pendingEffect.min} max={pendingEffect.max} value={amountInput}
+                     onChange={e => setAmountInput(parseInt(e.target.value, 10))} />
+              <strong>{amountInput}</strong>
+              <button onClick={() => resolveAmount(amountInput)} style={{ padding: '4px 10px', fontSize: '11px' }}>{t('gbConfirm')}</button>
+            </>
+          ) : (
+            <span>{t('findMatchWaitingOpponent')}</span>
+          )}
         </div>
       )}
 
@@ -477,18 +603,33 @@ function GameBoard() {
           display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px',
           background: 'rgba(0,0,0,0.7)', color: '#fff', borderRadius: '8px', padding: '8px 12px', fontSize: '12px'
         }}>
-          <span>{t('gbModalPrompt')} <strong>{pendingEffect.sourceCardName}</strong></span>
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
-            {pendingEffect.options.map((desc, i) => (
-              <button key={i} onClick={() => resolveModalChoice(i)} style={{ padding: '4px 10px', fontSize: '11px' }}>{desc}</button>
-            ))}
-          </div>
+          {pendingEffect.isYours ? (
+            <>
+              <span>{t('gbModalPrompt')} <strong>{pendingEffect.sourceCardName}</strong></span>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                {pendingEffect.options.map((desc, i) => (
+                  <button key={i} onClick={() => resolveModalChoice(i)} style={{ padding: '4px 10px', fontSize: '11px' }}>{desc}</button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <span>{t('findMatchWaitingOpponent')}</span>
+          )}
         </div>
       )}
 
       {/* ---------- EFEITO PENDENTE: escolha de carta (topo do deck / cemitério / mão) ---------- */}
       {pendingEffect?.kind === 'cardChoice' && (
-        <CardChoiceModal pendingEffect={pendingEffect} onChoose={resolveCardChoice} onSkip={skipCardChoice} t={t} />
+        pendingEffect.isYours ? (
+          <CardChoiceModal pendingEffect={pendingEffect} onChoose={resolveCardChoice} onSkip={skipCardChoice} t={t} />
+        ) : (
+          <div style={{
+            display: 'flex', justifyContent: 'center', background: 'rgba(0,0,0,0.6)', color: '#fff',
+            borderRadius: '8px', padding: '6px 12px', fontSize: '12px'
+          }}>
+            <span>{t('findMatchWaitingOpponentCardChoice')}</span>
+          </div>
+        )
       )}
 
       {/* ---------- ESCOLHA DE QUAL ACT ATIVAR (carta com 2+ habilidades, ex: Primitive Furnace) ---------- */}
@@ -525,8 +666,14 @@ function GameBoard() {
           display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px',
           background: 'rgba(0,0,0,0.6)', color: '#fff', borderRadius: '8px', padding: '6px 12px', fontSize: '12px'
         }}>
-          <span>{t('gbBlockPrompt', { name: pendingBattle.attackerName })}</span>
-          <button onClick={resolveNoBlock} style={{ padding: '4px 10px', fontSize: '11px' }}>{t('gbNoBlock')}</button>
+          {pendingBattle.isDefender ? (
+            <>
+              <span>{t('gbBlockPrompt', { name: pendingBattle.attackerName })}</span>
+              <button onClick={resolveNoBlock} style={{ padding: '4px 10px', fontSize: '11px' }}>{t('gbNoBlock')}</button>
+            </>
+          ) : (
+            <span>{t('findMatchWaitingOpponent')}</span>
+          )}
         </div>
       )}
 
@@ -536,8 +683,14 @@ function GameBoard() {
           display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px',
           background: 'rgba(0,0,0,0.6)', color: '#fff', borderRadius: '8px', padding: '6px 12px', fontSize: '12px'
         }}>
-          <span>{t('gbQuickStepPrompt')}</span>
-          <button onClick={passQuickStep} style={{ padding: '4px 10px', fontSize: '11px' }}>{t('gbPass')}</button>
+          {pendingBattle.isDefender ? (
+            <>
+              <span>{t('gbQuickStepPrompt')}</span>
+              <button onClick={passQuickStep} style={{ padding: '4px 10px', fontSize: '11px' }}>{t('gbPass')}</button>
+            </>
+          ) : (
+            <span>{t('findMatchWaitingOpponent')}</span>
+          )}
         </div>
       )}
 
@@ -547,13 +700,19 @@ function GameBoard() {
           display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px', flexWrap: 'wrap',
           background: 'rgba(0,0,0,0.6)', color: '#fff', borderRadius: '8px', padding: '6px 12px', fontSize: '12px'
         }}>
-          <span>{t('gbInterruptCostPrompt', { name: pendingBattle.interruptCard?.name })}</span>
-          <button onClick={() => resolveInterruptCost('soul')} style={{ padding: '4px 10px', fontSize: '11px' }}>
-            {t('gbInterruptCostSoul')}
-          </button>
-          <button onClick={() => resolveInterruptCost('discard')} style={{ padding: '4px 10px', fontSize: '11px' }}>
-            {t('gbInterruptCostDiscard')}
-          </button>
+          {pendingBattle.isDefender ? (
+            <>
+              <span>{t('gbInterruptCostPrompt', { name: pendingBattle.interruptCard?.name })}</span>
+              <button onClick={() => resolveInterruptCost('soul')} style={{ padding: '4px 10px', fontSize: '11px' }}>
+                {t('gbInterruptCostSoul')}
+              </button>
+              <button onClick={() => resolveInterruptCost('discard')} style={{ padding: '4px 10px', fontSize: '11px' }}>
+                {t('gbInterruptCostDiscard')}
+              </button>
+            </>
+          ) : (
+            <span>{t('findMatchWaitingOpponent')}</span>
+          )}
         </div>
       )}
 
@@ -563,14 +722,14 @@ function GameBoard() {
           display: 'flex', justifyContent: 'center', alignItems: 'center',
           background: 'rgba(0,0,0,0.6)', color: '#fff', borderRadius: '8px', padding: '6px 12px', fontSize: '12px'
         }}>
-          <span>{t('gbInterruptDiscardPrompt')}</span>
+          <span>{pendingBattle.isDefender ? t('gbInterruptDiscardPrompt') : t('findMatchWaitingOpponent')}</span>
         </div>
       )}
 
       {/* ---------- BOTÕES DE AÇÃO (fora do vidro) ---------- */}
       <div style={{ display: 'flex', justifyContent: 'center', gap: '10px' }}>
         <button onClick={drawWithSouls}
-                disabled={!!pendingEffect || !!pendingBattle || !isPlayerTurn || currentPhase !== 'main' || player.soulsStanding < 3 || player.soulDrawUsedThisTurn}
+                disabled={!!pendingEffect || !!pendingBattle || !isYourTurn || currentPhase !== 'main' || player.soulsStanding < 3 || player.soulDrawUsedThisTurn}
                 title={player.soulDrawUsedThisTurn ? t('gbDrawWithSoulsUsed') : undefined}
                 style={{ padding: '6px 14px', fontSize: '12px' }}>
           {t('gbDrawWithSouls')}
@@ -580,7 +739,7 @@ function GameBoard() {
             {t('gbAttackWithPal')}
           </button>
         ) : (
-          <button onClick={advancePhase} disabled={!!pendingEffect || !!pendingBattle || !isPlayerTurn} style={{ padding: '6px 20px', fontSize: '13px' }}>
+          <button onClick={advancePhase} disabled={!!pendingEffect || !!pendingBattle || !isYourTurn} style={{ padding: '6px 20px', fontSize: '13px' }}>
             {t('gbEndTurn')}
           </button>
         )}
@@ -589,18 +748,16 @@ function GameBoard() {
       {/* ---------- MÃO ---------- */}
       <div style={{ display: 'flex', justifyContent: 'center', gap: '6px', flexWrap: 'nowrap', overflow: 'hidden' }}>
         {hand.map((card, handIndex) => {
-          // Só Structure tem a arte deitada no arquivo original (orientation: 'landscape') — Gear é
-          // retrato, igual Pal/Event (mesmo motivo do fix em StructureGearRow, mas aqui é a mão).
           const isLandscapeArt = card.card_type === 'Structure'
           const quickOption = quickOptionFor(card.card_number)
-          const isInterruptDiscardChoice = pendingBattle?.waitingFor === 'interruptDiscardChoice'
+          const isInterruptDiscardChoice = pendingBattle?.waitingFor === 'interruptDiscardChoice' && pendingBattle.isDefender
           return (
             <div key={handIndex}
                  onClick={() => {
                    if (isInterruptDiscardChoice) { resolveInterruptDiscard(card.card_number); return }
                    if (quickOption) { playQuickCard(card.card_number, quickOption.kind); return }
                    if (pendingEffect || pendingBattle) { alert(t('gbBlockedByPending')); return }
-                   if (!isPlayerTurn) { alert(t('gbBlockedNotYourTurn')); return }
+                   if (!isYourTurn) { alert(t('gbBlockedNotYourTurn')); return }
                    if (currentPhase !== 'main') { alert(t('gbBlockedWrongPhase')); return }
                    handleHandCardClick(card)
                  }}
@@ -640,10 +797,6 @@ function GameBoard() {
         </div>
       )}
 
-      {/* Zoom ao passar o mouse por 2s numa carta — zIndex abaixo dos popups (1200) de propósito:
-          se um efeito abrir uma escolha enquanto o zoom de outra carta ainda está de pé (o mouse não
-          "saiu" de cima do elemento original, já que o popup só cobre por cima sem mover o cursor),
-          o zoom não pode ficar por cima bloqueando a visão/cliques nas cartas do popup. */}
       {zoomCard && (
         <div style={{
           position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
@@ -657,4 +810,4 @@ function GameBoard() {
   )
 }
 
-export default GameBoard
+export default FindMatchDeckSelect

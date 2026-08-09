@@ -97,7 +97,7 @@ function MyCollection() {
       background: 'radial-gradient(circle at 50% 40%, rgba(255,255,255,0.05), transparent 60%), #2b1a10'
     }}>
     <div style={{ padding: '1.5rem', maxWidth: '620px', margin: '0 auto' }}>
-      <Link to="/"><button style={{ marginBottom: '12px' }}>{t('backToMenu')}</button></Link>
+      <Link to="/"><button className="sign-button" style={{ marginBottom: '12px' }}>{t('backToMenu')}</button></Link>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '14px' }}>
         <h1 style={{
           margin: 0, lineHeight: 1.2, fontFamily: "'Rye', Georgia, serif", fontSize: '30px',

@@ -6,6 +6,7 @@ const session = require('express-session');
 const http = require('http');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const { Server } = require('socket.io');
 const Database = require('better-sqlite3');
 const { PlayerState, shuffle } = require('./game/PlayerState');
@@ -172,6 +173,236 @@ const io = new Server(server, {
 // o playerId confiável (vindo do cookie), em vez de confiar em algo que o cliente mandasse.
 io.engine.use(sessionMiddleware);
 
+// ---------- Matchmaking online: fila de "Encontrar Partida" (Normal / Arena) ----------
+// Fila em memória, válida enquanto o processo Node estiver de pé — se um dia isso escalar para
+// múltiplas instâncias do servidor, precisa virar uma fila compartilhada (ex: Redis) em vez de array local.
+const matchQueues = { normal: [], arena: [] };
+// playerId -> matchType da fila em que está. Evita que o mesmo jogador entre em 2 filas ao mesmo
+// tempo e permite tirar da fila rápido (cancelamento/disconnect) sem varrer os arrays.
+const queuedPlayers = new Map();
+// roomId -> { matchType, players: [{ socket, playerId, deckId }, ...] } — sessões já pareadas,
+// aguardando a etapa seguinte (Jokenpô + criação do TurnManager compartilhado).
+const onlineSessions = new Map();
+
+// Mesma regra de dono/preset usada em GET /api/decks/:id; Arena só aceita decks Rank (montados só
+// com cópias que o jogador realmente possui — ver comentário perto da criação da coluna `mode`).
+function validateDeckForMatch(playerId, deckId, matchType) {
+  const row = db.prepare('SELECT * FROM decks WHERE id = ?').get(deckId);
+  if (!row) return { ok: false, message: 'Deck não encontrado.' };
+  if (row.player_id != null && row.player_id !== playerId) return { ok: false, message: 'Deck não encontrado.' };
+  if (matchType === 'arena' && (row.mode || 'normal') !== 'rank') {
+    return { ok: false, message: 'Só decks Rank valem pra Arena.' };
+  }
+  return { ok: true };
+}
+
+function removeFromQueue(playerId) {
+  const matchType = queuedPlayers.get(playerId);
+  if (!matchType) return;
+  const queue = matchQueues[matchType];
+  const idx = queue.findIndex(entry => entry.playerId === playerId);
+  if (idx !== -1) queue.splice(idx, 1);
+  queuedPlayers.delete(playerId);
+}
+
+function getUsernameForPlayer(playerId) {
+  const row = db.prepare('SELECT u.username FROM users u JOIN players p ON p.user_id = u.id WHERE p.id = ?').get(playerId);
+  return row ? row.username : 'Jogador';
+}
+
+function otherSide(side) { return side === 'A' ? 'B' : 'A'; }
+
+// socket.id -> roomId, pra achar a sessão de dentro dos handlers match:* sem precisar de estado
+// por-conexão (a sessão é compartilhada pelos 2 sockets pareados, não pertence a um só).
+const socketRoomMap = new Map();
+
+function getSessionBySocket(socket) {
+  const roomId = socketRoomMap.get(socket.id);
+  return roomId ? onlineSessions.get(roomId) : null;
+}
+
+function getSideBySocket(session, socket) {
+  return session.sides.A.socket === socket ? 'A' : 'B';
+}
+
+// Achado comum a todo handler match:* de jogo: sessão + turnManager já criado + quem é "eu"/"o
+// oponente" pro socket que chamou. Retorna null se não houver partida em andamento pra esse socket.
+function matchContext(socket) {
+  const session = getSessionBySocket(socket);
+  if (!session || !session.turnManager) return null;
+  const side = getSideBySocket(session, socket);
+  return {
+    session,
+    tm: session.turnManager,
+    self: session.states[side],
+    opponent: session.states[otherSide(side)],
+    side,
+    playerId: session.sides[side].playerId
+  };
+}
+
+// Conta vitória pra missão diária de cada jogador real (equivalente ao checkWinMission do modo Bot,
+// só que os 2 lados são humanos de verdade e cada um tem sua própria progressão de missão).
+function checkOnlineWinMissions(session) {
+  const tm = session.turnManager;
+  if (!tm.gameOver) return;
+  session.winCounted = session.winCounted || {};
+  for (const side of ['A', 'B']) {
+    if (tm.winner === session.states[side] && !session.winCounted[side]) {
+      incrementMission(session.sides[side].playerId, 'win_games', null, 1);
+      session.winCounted[side] = true;
+    }
+  }
+  finishArenaRankPoints(session);
+}
+
+// Aplica pontos de rank 1x só por partida Arena — tanto no fim natural (aqui) quanto no W.O. por
+// desconexão (ver socket.on('disconnect')). Partida Normal nunca afeta rank.
+function finishArenaRankPoints(session) {
+  if (session.matchType !== 'arena' || session.rankPointsApplied) return;
+  const tm = session.turnManager;
+  if (!tm || !tm.gameOver) return;
+  const winnerSide = tm.winner === session.states.A ? 'A' : 'B';
+  const loserSide = otherSide(winnerSide);
+  const { gained, lost } = applyArenaRankPoints(session.sides[winnerSide].playerId, session.sides[loserSide].playerId);
+  // Guardado por lado pra emitMatchState mandar pra cada socket o delta que É DELE (+gained pro
+  // ganhador, -lost pro perdedor) — mostrado embaixo de "Você venceu!"/"Você perdeu!" no front.
+  session.arenaPointsChange = { [winnerSide]: gained, [loserSide]: -lost };
+  session.rankPointsApplied = true;
+}
+
+// Emite o estado da partida pros 2 sockets da sessão, cada um com sua própria perspectiva —
+// equivalente ao emitState() do modo Bot, mas chamado 1x por lado em vez de 1x só (o "dono" da
+// partida vs Bot é sempre o mesmo socket; aqui os 2 lados são reais e cada um só vê a própria mão).
+function emitMatchState(session) {
+  const tm = session.turnManager;
+  if (!tm) return;
+  checkOnlineWinMissions(session);
+
+  // Night (5.3) é um estado contínuo — só loga a transição 1x por sessão (não por lado).
+  const currentlyNight = tm.isNight;
+  if (session._lastKnownNight === undefined) session._lastKnownNight = currentlyNight;
+  if (currentlyNight !== session._lastKnownNight) {
+    tm._addLog(currentlyNight ? 'Anoiteceu.' : 'Amanheceu.');
+    session._lastKnownNight = currentlyNight;
+  }
+
+  const pending = tm.pendingEffect;
+  const battle = tm.pendingBattle;
+
+  for (const side of ['A', 'B']) {
+    const self = session.states[side];
+    const opponent = session.states[otherSide(side)];
+    const selfIsPlayer1 = self === tm.player1;
+    // absoluteTarget (EffectEngine) rotula os alvos como 'player'=player1/'bot'=player2, sempre —
+    // pra quem é player2 (side B), inverte, senão a UI mostraria os PRÓPRIOS Pals marcados como 'bot'.
+    const mapOwner = (owner) => (selfIsPlayer1 ? owner : (owner === 'player' ? 'bot' : 'player'));
+    const isDefender = !!battle && battle.defenderState === self;
+
+    session.sides[side].socket.emit('match:state', {
+      turnNumber: tm.turnNumber,
+      currentPhase: tm.currentPhase,
+      activePlayer: tm.activePlayer.playerName,
+      isYourTurn: tm.activePlayer === self,
+      player: self.toPublicState(opponent),
+      opponent: opponent.toPublicState(self),
+      hand: self.hand, // mão completa só pro dono
+      isNight: tm.isNight,
+      gameOver: tm.gameOver,
+      winner: tm.winner ? tm.winner.playerName : null,
+      youWon: tm.winner ? tm.winner === self : null,
+      // Só existe em partida Arena, só depois do jogo acabar — quanto ESSE lado ganhou (positivo) ou
+      // perdeu (negativo) de pontos de rank nessa partida (ver finishArenaRankPoints).
+      arenaPointsChange: session.arenaPointsChange ? session.arenaPointsChange[side] : null,
+      log: tm.log.slice(-10),
+      pendingEffect: pending ? {
+        kind: pending.kind,
+        sourceCardName: pending.sourceCardName,
+        description: pending.description,
+        optional: pending.optional,
+        isYours: pending.casterState === self,
+        validTargets: pending.validTargets ? pending.validTargets.map(t => ({ owner: mapOwner(t.owner), index: t.index })) : null,
+        min: pending.min,
+        max: pending.max,
+        options: pending.options ? pending.options.map(o => o.description) : null,
+        cards: pending.cards ? pending.cards.map(entry => ({
+          cardNumber: entry.card.card_number, name: entry.card.name, imageUrl: entry.card.image_url, selectable: entry.selectable
+        })) : null
+      } : null,
+      pendingBattle: battle ? {
+        waitingFor: battle.waitingFor,
+        attackerName: battle.attackerInstance.data.name,
+        isDefender,
+        // Quem ataca não decide bloqueio/quick step do outro lado — só o defensor vê as opções.
+        validBlockers: isDefender ? (battle.validBlockers || []).map(p => self.basePals.indexOf(p)) : [],
+        quickOptions: isDefender ? (battle.quickOptions || []).map(o => ({
+          cardNumber: o.card.card_number, name: o.card.name, imageUrl: o.card.image_url, kind: o.kind
+        })) : [],
+        interruptCard: battle.interruptCard ? {
+          cardNumber: battle.interruptCard.card_number, name: battle.interruptCard.name, imageUrl: battle.interruptCard.image_url
+        } : null
+      } : null,
+      lastDamageReveal: tm.lastDamageReveal
+    });
+  }
+}
+
+// Monta os 2 PlayerState (a partir dos decks escolhidos na fila) e entra na sessão pareada — o
+// TurnManager só é criado depois do Jokenpô (ver match:chooseOrder), igual ao fluxo do modo Bot.
+function startOnlineMatch(matchType, a, b) {
+  const roomId = `match_${crypto.randomUUID()}`;
+  a.socket.join(roomId);
+  b.socket.join(roomId);
+
+  const session = {
+    matchType,
+    roomId,
+    sides: { A: a, B: b },
+    states: { A: null, B: null },
+    turnManager: null,
+    rpsChoices: {},
+    mulliganDecided: {}
+  };
+
+  for (const side of ['A', 'B']) {
+    const entry = session.sides[side];
+    const deckRow = db.prepare('SELECT * FROM decks WHERE id = ?').get(entry.deckId);
+    const mainCards = shuffle(getCardsByNumbers(JSON.parse(deckRow.main_deck)));
+    const soulCards = shuffle(getCardsByNumbers(JSON.parse(deckRow.soul_deck)));
+    session.states[side] = new PlayerState(getUsernameForPlayer(entry.playerId), mainCards, soulCards);
+    socketRoomMap.set(entry.socket.id, roomId);
+  }
+
+  onlineSessions.set(roomId, session);
+
+  for (const side of ['A', 'B']) {
+    session.sides[side].socket.emit('match:found', {
+      matchType,
+      opponentName: session.states[otherSide(side)].playerName
+    });
+    session.sides[side].socket.emit('match:rpsPrompt', { message: 'Jokenpô! Escolha pedra, papel ou tesoura.' });
+  }
+  console.log(`Partida online pareada (${matchType}): room ${roomId}`);
+}
+
+// Pareia os 2 primeiros jogadores de playerId diferentes na fila (evita parear alguém com ele
+// mesmo, ex.: 2 abas logadas na mesma conta) e repete recursivamente enquanto sobrar gente pra parear.
+function tryPairQueue(matchType) {
+  const queue = matchQueues[matchType];
+  for (let i = 0; i < queue.length; i++) {
+    for (let j = i + 1; j < queue.length; j++) {
+      if (queue[i].playerId === queue[j].playerId) continue;
+      const [b] = queue.splice(j, 1);
+      const [a] = queue.splice(i, 1);
+      queuedPlayers.delete(a.playerId);
+      queuedPlayers.delete(b.playerId);
+      startOnlineMatch(matchType, a, b);
+      tryPairQueue(matchType);
+      return;
+    }
+  }
+}
+
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Backend Palworld TCG rodando!' });
 });
@@ -306,6 +537,17 @@ app.get('/api/decks/:id', (req, res) => {
   });
 });
 
+// Apaga 1 deck salvo. Só o dono pode apagar; decks preset (player_id NULL) nunca são apagáveis por aqui.
+app.delete('/api/decks/:id', requirePlayer, (req, res) => {
+  const row = db.prepare('SELECT id, player_id FROM decks WHERE id = ?').get(req.params.id);
+  if (!row || row.player_id !== req.playerId) {
+    return res.status(404).json({ error: 'Deck não encontrado.' });
+  }
+
+  db.prepare('DELETE FROM decks WHERE id = ?').run(req.params.id);
+  res.json({ message: 'Deck apagado com sucesso.' });
+});
+
 // ---------- ECONOMIA: moedas, coleção do jogador, loja de boosters ----------
 
 db.exec(`
@@ -390,6 +632,85 @@ try { db.exec('ALTER TABLE players ADD COLUMN special_cake_count INTEGER NOT NUL
 try { db.exec('ALTER TABLE players ADD COLUMN wheat INTEGER NOT NULL DEFAULT 0'); } catch (e) {}
 try { db.exec('ALTER TABLE players ADD COLUMN lettuce INTEGER NOT NULL DEFAULT 0'); } catch (e) {}
 try { db.exec('ALTER TABLE players ADD COLUMN tomato INTEGER NOT NULL DEFAULT 0'); } catch (e) {}
+// Preferência de tema (dia/noite) do usuário — persiste no perfil pra sobreviver a troca de tela/login em outro dispositivo.
+try { db.exec("ALTER TABLE players ADD COLUMN theme TEXT NOT NULL DEFAULT 'day'"); } catch (e) {}
+// Pontuação do modo Arena (rank) — nunca fica negativa (ver applyArenaRankPoints).
+try { db.exec('ALTER TABLE players ADD COLUMN rank_points INTEGER NOT NULL DEFAULT 0'); } catch (e) {}
+
+// ---------- ARENA: ranks (Bronze → Lenda) ----------
+// Limiar (pontos mínimos) pra entrar em cada rank. Pensado pra ~70 vitórias seguidas (sem nenhuma
+// derrota) levarem de Bronze até Lenda — na prática, com derrotas misturadas, um jogador com ~60%
+// de vitórias leva uns 120-150 jogos pra chegar em Lenda, e uns 15-20 pra chegar em Ouro. Os saltos
+// entre ranks crescem (100 → 150 → 200 → 250 → 300 → 400) pra ranks mais altos exigirem mais grind.
+const RANK_TIERS = [
+  { key: 'bronze', threshold: 0 },
+  { key: 'silver', threshold: 100 },
+  { key: 'gold', threshold: 250 },
+  { key: 'platinum', threshold: 450 },
+  { key: 'diamond', threshold: 700 },
+  { key: 'master', threshold: 1000 },
+  { key: 'legend', threshold: 1400 }
+];
+// Vitória rende entre 18~24 pontos e derrota custa entre 7~11 — a média (21 / 9) já garante que
+// vitória rende mais do que derrota custa, então um jogador com winrate perto de 50% ainda progride
+// devagar em vez de ficar estagnado. O valor exato dentro dessas faixas pondera a diferença de
+// pontos entre os 2 jogadores no momento da partida (estilo Elo): vencer alguém com MAIS pontos que
+// você (upset) rende o máximo da faixa e custa o máximo pra quem perdeu; vencer alguém com MENOS
+// pontos (resultado esperado) rende só o mínimo da faixa. Isso pesa mais quem estava "no papel" de
+// favorito ou não, em vez de dar sempre a mesma pontuação pra qualquer vitória/derrota.
+const ARENA_WIN_POINTS_MIN = 18;
+const ARENA_WIN_POINTS_MAX = 24;
+const ARENA_LOSS_POINTS_MIN = 7;
+const ARENA_LOSS_POINTS_MAX = 11;
+// Diferença de pontos (perdedor - ganhador) que já vale o balanço MÁXIMO da faixa pra cada lado —
+// 200 pontos é uma distância "grande" na nossa escala de rank (thresholds vão de 0 a 1400).
+const ARENA_POINTS_DIFF_SPAN = 200;
+
+// scale vai de -1 (ganhador já tinha muito mais pontos que o perdedor — resultado bem esperado) a
+// +1 (ganhador tinha muito menos pontos — upset) e pondera linearmente dentro das faixas acima.
+function computeArenaPointsDelta(winnerPoints, loserPoints) {
+  const diff = loserPoints - winnerPoints;
+  const scale = Math.max(-1, Math.min(1, diff / ARENA_POINTS_DIFF_SPAN));
+  const winMid = (ARENA_WIN_POINTS_MIN + ARENA_WIN_POINTS_MAX) / 2;
+  const winHalfSpread = (ARENA_WIN_POINTS_MAX - ARENA_WIN_POINTS_MIN) / 2;
+  const lossMid = (ARENA_LOSS_POINTS_MIN + ARENA_LOSS_POINTS_MAX) / 2;
+  const lossHalfSpread = (ARENA_LOSS_POINTS_MAX - ARENA_LOSS_POINTS_MIN) / 2;
+  return {
+    gained: Math.round(winMid + winHalfSpread * scale),
+    lost: Math.round(lossMid + lossHalfSpread * scale)
+  };
+}
+
+function getRankInfo(points) {
+  let tierIndex = 0;
+  for (let i = 0; i < RANK_TIERS.length; i++) {
+    if (points >= RANK_TIERS[i].threshold) tierIndex = i;
+  }
+  const next = RANK_TIERS[tierIndex + 1] || null;
+  return {
+    points,
+    tierKey: RANK_TIERS[tierIndex].key,
+    nextTierKey: next ? next.key : null,
+    pointsToNext: next ? next.threshold - points : null,
+    isMaxRank: !next
+  };
+}
+
+// Aplica o resultado de 1 partida Arena — ganhador soma, perdedor perde (nunca abaixo de 0), com o
+// valor exato ponderado pela diferença de pontos ATUAL entre os 2 (ver computeArenaPointsDelta).
+// Chamado 1x só por partida (ver session.rankPointsApplied nos pontos de chamada, tanto fim natural
+// quanto W.O.). Retorna o delta aplicado, útil pra exibir "+22 pontos" etc. no futuro.
+function applyArenaRankPoints(winnerPlayerId, loserPlayerId) {
+  const getPoints = db.prepare('SELECT rank_points FROM players WHERE id = ?');
+  const winnerPoints = getPoints.get(winnerPlayerId)?.rank_points ?? 0;
+  const loserPoints = getPoints.get(loserPlayerId)?.rank_points ?? 0;
+  const { gained, lost } = computeArenaPointsDelta(winnerPoints, loserPoints);
+
+  db.prepare('UPDATE players SET rank_points = rank_points + ? WHERE id = ?').run(gained, winnerPlayerId);
+  db.prepare('UPDATE players SET rank_points = MAX(0, rank_points - ?) WHERE id = ?').run(lost, loserPlayerId);
+
+  return { gained, lost };
+}
 
 // ---------- FARMING ----------
 // Requisitos de work_keywords: "Farming" cobre plantar+regar, "Collecting" cobre colheita.
@@ -681,7 +1002,15 @@ function weightedRandomCard(pool) {
 }
 
 app.get('/api/player', requirePlayer, (req, res) => {
-  res.json(db.prepare('SELECT * FROM players WHERE id = ?').get(req.playerId));
+  const row = db.prepare('SELECT * FROM players WHERE id = ?').get(req.playerId);
+  res.json({ ...row, rank: getRankInfo(row.rank_points) });
+});
+
+app.patch('/api/player/theme', requirePlayer, (req, res) => {
+  const { theme } = req.body;
+  if (theme !== 'day' && theme !== 'night') return res.status(400).json({ error: 'invalid_theme' });
+  db.prepare('UPDATE players SET theme = ? WHERE id = ?').run(theme, req.playerId);
+  res.json({ theme });
 });
 
 // ---------- BREEDING ----------
@@ -1039,6 +1368,46 @@ function todayString() {
   return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
+const getCardExtraDataStmt = db.prepare('SELECT extra_data FROM cards WHERE name = ? AND extra_data IS NOT NULL LIMIT 1');
+
+// Monta os dados completos de jogo (effect_text, pal_name, typepal, work_keywords, etc.) a partir
+// de uma lista de card_number — usado tanto pra montar a partida contra o Bot quanto uma online.
+function getCardsByNumbers(numbers) {
+  const stmt = db.prepare('SELECT * FROM cards WHERE card_number = ?');
+  return numbers.map(num => {
+    const c = stmt.get(num);
+    let effect_text = null;
+    let pal_name = null;
+    let typepal = [];
+    let work_keywords = [];
+    // Variantes de arte/raridade (ex: "BP01-049-OSR", "BP01-049-SSP") são reimpressões da MESMA carta
+    // — mesmo custo/poder/cor, só a arte muda — mas no banco elas não têm extra_data próprio (onde
+    // fica effect_text/work_keywords/etc). Em vez de cadastrar essas regras de novo pra cada variante,
+    // herda do card_number "base" que tem o mesmo nome e já está com extra_data preenchido.
+    const extraDataSource = c.extra_data || getCardExtraDataStmt.get(c.name)?.extra_data;
+    if (extraDataSource) {
+      try {
+        const parsed = JSON.parse(extraDataSource)?.data;
+        effect_text = parsed?.effect_text || null;
+        pal_name = parsed?.pal_name || null;
+        typepal = parsed?.typepal || [];
+        work_keywords = parsed?.work_keywords || [];
+      } catch (e) {}
+    }
+    return {
+      ...c,
+      colors: JSON.parse(c.colors),
+      keywords: JSON.parse(c.keywords),
+      is_lucky: !!c.is_lucky,
+      image_url: `http://localhost:3001/${c.image_path}`,
+      effect_text,
+      pal_name,
+      typepal,
+      work_keywords
+    };
+  });
+}
+
 // Lê o(s) tipo(s) elemental(is) de um Pal a partir do extra_data (campo "typepal" que você cadastrou)
 function getCardPalTypes(cardNumber) {
   const row = db.prepare('SELECT extra_data FROM cards WHERE card_number = ?').get(cardNumber);
@@ -1273,38 +1642,410 @@ io.on('connection', (socket) => {
 
   console.log(`Cliente conectado: ${socket.id} (player ${playerId})`);
 
-  let match = null; // { turnManager, playerIsP1, botIsP1 }
+  // ---------- Matchmaking online: entrar/sair da fila de "Encontrar Partida" ----------
+  socket.on('match:findMatch', ({ deckId, matchType }) => {
+    const type = matchType === 'arena' ? 'arena' : 'normal';
+    if (queuedPlayers.has(playerId)) return; // já está numa fila (ex.: clique duplo)
 
-  function getCardsByNumbers(numbers) {
-    const stmt = db.prepare('SELECT * FROM cards WHERE card_number = ?');
-    return numbers.map(num => {
-      const c = stmt.get(num);
-      let effect_text = null;
-      let pal_name = null;
-      let typepal = [];
-      let work_keywords = [];
-      if (c.extra_data) {
-        try {
-          const parsed = JSON.parse(c.extra_data)?.data;
-          effect_text = parsed?.effect_text || null;
-          pal_name = parsed?.pal_name || null;
-          typepal = parsed?.typepal || [];
-          work_keywords = parsed?.work_keywords || [];
-        } catch (e) {}
+    const validation = validateDeckForMatch(playerId, deckId, type);
+    if (!validation.ok) {
+      socket.emit('match:error', { message: validation.message });
+      return;
+    }
+
+    matchQueues[type].push({ socket, playerId, deckId });
+    queuedPlayers.set(playerId, type);
+    socket.emit('match:queued', { matchType: type });
+    tryPairQueue(type);
+  });
+
+  socket.on('match:cancelFindMatch', () => {
+    removeFromQueue(playerId);
+  });
+
+  // ---------- Partida online: Jokenpô + mulligan (setup, antes do TurnManager existir) ----------
+
+  // 1. Cada lado manda sua escolha; só resolve quando os 2 já escolheram (sem bot pra decidir sozinho).
+  socket.on('match:rpsChoice', ({ choice }) => {
+    const session = getSessionBySocket(socket);
+    if (!session || session.turnManager || !['rock', 'paper', 'scissors'].includes(choice)) return;
+    const side = getSideBySocket(session, socket);
+    session.rpsChoices[side] = choice;
+
+    const other = otherSide(side);
+    if (session.rpsChoices[other] === undefined) {
+      socket.emit('match:rpsWaiting', {});
+      return;
+    }
+
+    const result = resolveRPS(session.rpsChoices.A, session.rpsChoices.B);
+    if (result === 'draw') {
+      for (const s of ['A', 'B']) {
+        session.sides[s].socket.emit('match:rpsResult', {
+          yourChoice: session.rpsChoices[s], opponentChoice: session.rpsChoices[otherSide(s)], result: 'draw'
+        });
       }
-      return {
-        ...c,
-        colors: JSON.parse(c.colors),
-        keywords: JSON.parse(c.keywords),
-        is_lucky: !!c.is_lucky,
-        image_url: `http://localhost:3001/${c.image_path}`,
-        effect_text,
-        pal_name,
-        typepal,
-        work_keywords
-      };
-    });
-  }
+      session.rpsChoices = {};
+      return;
+    }
+
+    session.rpsWinnerSide = result === 'p1' ? 'A' : 'B';
+    for (const s of ['A', 'B']) {
+      session.sides[s].socket.emit('match:rpsResult', {
+        yourChoice: session.rpsChoices[s],
+        opponentChoice: session.rpsChoices[otherSide(s)],
+        result: session.rpsWinnerSide === s ? 'win' : 'lose'
+      });
+    }
+  });
+
+  // 2. Só quem ganhou o Jokenpô decide a ordem — cria o TurnManager (player2IsBot: false, os 2 lados
+  //    são humanos de verdade) e manda o prompt de mulligan pros 2.
+  socket.on('match:chooseOrder', ({ goFirst }) => {
+    const session = getSessionBySocket(socket);
+    if (!session || session.turnManager || !session.rpsWinnerSide) return;
+    const side = getSideBySocket(session, socket);
+    if (side !== session.rpsWinnerSide) return;
+
+    const aGoesFirst = side === 'A' ? !!goFirst : !goFirst;
+    session.turnManager = new TurnManager(session.states.A, session.states.B, aGoesFirst, false);
+
+    for (const s of ['A', 'B']) {
+      session.sides[s].socket.emit('match:mulliganPrompt', {
+        hand: session.states[s].hand,
+        message: 'Deseja fazer mulligan da sua mão inicial?'
+      });
+    }
+  });
+
+  // 3. Mulligan dos 2 lados (cada um decide o próprio) — só inicia o 1º turno quando ambos decidirem.
+  socket.on('match:mulliganDecision', ({ keep }) => {
+    const session = getSessionBySocket(socket);
+    if (!session || !session.turnManager || session.turnManager.currentPhase) return;
+    const side = getSideBySocket(session, socket);
+    if (session.mulliganDecided[side]) return;
+    session.mulliganDecided[side] = true;
+    if (!keep) session.states[side].mulligan();
+
+    if (!session.mulliganDecided[otherSide(side)]) {
+      socket.emit('match:waitingOpponentMulligan', {});
+      return;
+    }
+
+    session.turnManager.beginFirstTurn();
+    emitMatchState(session);
+  });
+
+  // ---------- Partida online: ações de jogo (mesma lógica do modo Bot, sem o lado "bot" fixo) ----------
+
+  const MATCH_DEPLOY_FAIL_MESSAGES = {
+    NOT_ENOUGH_SOUL: 'Você não tem Souls em pé suficientes para pagar o custo dessa carta.'
+  };
+
+  socket.on('match:advancePhase', () => {
+    const ctx = matchContext(socket);
+    if (!ctx) return;
+    const { session, tm, self } = ctx;
+    if (tm.gameOver || tm.pendingEffect || tm.pendingBattle) return;
+    if (tm.activePlayer !== self || tm.currentPhase !== 'main') return;
+
+    const result = tm.endMainPhase();
+    if (!result.success) {
+      if (result.reason === 'MUST_ATTACK') {
+        socket.emit('match:error', { message: 'Alarm Bell: você precisa atacar com todos os Pals em pé antes de encerrar o turno.' });
+      }
+      return;
+    }
+    emitMatchState(session);
+  });
+
+  socket.on('match:deployPal', ({ cardNumber }) => {
+    const ctx = matchContext(socket);
+    if (!ctx) return;
+    const { session, tm, self, opponent, playerId: sidePlayerId } = ctx;
+    if (tm.gameOver) return;
+    if (tm.pendingEffect || tm.pendingBattle) {
+      socket.emit('match:error', { message: 'Resolva o efeito ou a batalha pendente antes de jogar outra carta.' });
+      return;
+    }
+    // Sem essa checagem, o lado que não está na vez conseguia deployar cartas por fora do turno
+    // dele (o handler só olhava a MÃO de quem chamou, sem checar de quem é a vez) — mesma checagem
+    // já usada em advancePhase/attack/activateAbility.
+    if (tm.activePlayer !== self || tm.currentPhase !== 'main') return;
+    const card = self.hand.find(c => c.card_number === cardNumber);
+    if (!card) return;
+    const result = self.tryDeployPal(card);
+    if (result.success) {
+      incrementMission(sidePlayerId, 'play_pal', null, 1);
+      incrementMission(sidePlayerId, 'play_any', null, 1);
+      const palTypes = getCardPalTypes(card.card_number);
+      for (const type of palTypes) {
+        incrementMission(sidePlayerId, 'play_pal_type', type, 1);
+      }
+      EffectEngine.runTrigger(tm, 'onDeploy', result.instance, self, opponent, { isBot: false });
+      EffectEngine.notifyAllyDeploy(tm, self, opponent, result.instance, { isBot: false });
+      tm.checkOverloadedPals(self, opponent, result.instance, false);
+    } else {
+      socket.emit('match:error', { message: MATCH_DEPLOY_FAIL_MESSAGES[result.reason] || 'Não foi possível deployar essa carta agora.' });
+    }
+    emitMatchState(session);
+  });
+
+  socket.on('match:deployStructure', ({ cardNumber }) => {
+    const ctx = matchContext(socket);
+    if (!ctx) return;
+    const { session, tm, self, opponent, playerId: sidePlayerId } = ctx;
+    if (tm.gameOver) return;
+    if (tm.pendingEffect || tm.pendingBattle) {
+      socket.emit('match:error', { message: 'Resolva o efeito ou a batalha pendente antes de jogar outra carta.' });
+      return;
+    }
+    if (tm.activePlayer !== self || tm.currentPhase !== 'main') return;
+    const card = self.hand.find(c => c.card_number === cardNumber);
+    if (!card) return;
+    const result = self.tryDeployStructure(card);
+    if (result.success) {
+      incrementMission(sidePlayerId, 'play_structure', null, 1);
+      incrementMission(sidePlayerId, 'play_any', null, 1);
+      EffectEngine.runTrigger(tm, 'onDeploy', result.instance, self, opponent, { isBot: false });
+    } else {
+      socket.emit('match:error', { message: MATCH_DEPLOY_FAIL_MESSAGES[result.reason] || 'Não foi possível deployar essa carta agora.' });
+    }
+    emitMatchState(session);
+  });
+
+  socket.on('match:deployGear', ({ cardNumber }) => {
+    const ctx = matchContext(socket);
+    if (!ctx) return;
+    const { session, tm, self, opponent, playerId: sidePlayerId } = ctx;
+    if (tm.gameOver) return;
+    if (tm.pendingEffect || tm.pendingBattle) {
+      socket.emit('match:error', { message: 'Resolva o efeito ou a batalha pendente antes de jogar outra carta.' });
+      return;
+    }
+    if (tm.activePlayer !== self || tm.currentPhase !== 'main') return;
+    const card = self.hand.find(c => c.card_number === cardNumber);
+    if (!card) return;
+    const result = self.tryDeployGear(card);
+    if (result.success) {
+      incrementMission(sidePlayerId, 'play_gear', null, 1);
+      incrementMission(sidePlayerId, 'play_any', null, 1);
+      const gearInstance = { data: card, tempPowerBonus: 0, tempStrikeBonus: 0 };
+      EffectEngine.runTrigger(tm, 'onDeploy', gearInstance, self, opponent, { isBot: false });
+    } else {
+      socket.emit('match:error', { message: MATCH_DEPLOY_FAIL_MESSAGES[result.reason] || 'Não foi possível deployar essa carta agora.' });
+    }
+    emitMatchState(session);
+  });
+
+  socket.on('match:deployEvent', ({ cardNumber }) => {
+    const ctx = matchContext(socket);
+    if (!ctx) return;
+    const { session, tm, self, opponent, playerId: sidePlayerId } = ctx;
+    if (tm.gameOver) return;
+    if (tm.pendingEffect || tm.pendingBattle) {
+      socket.emit('match:error', { message: 'Resolva o efeito ou a batalha pendente antes de jogar outra carta.' });
+      return;
+    }
+    if (tm.activePlayer !== self || tm.currentPhase !== 'main') return;
+    const card = self.hand.find(c => c.card_number === cardNumber);
+    if (!card) return;
+    if (!self.paySoulCost(card.cost)) {
+      socket.emit('match:error', { message: MATCH_DEPLOY_FAIL_MESSAGES.NOT_ENOUGH_SOUL });
+      return;
+    }
+    self.hand = self.hand.filter(c => c !== card);
+    self.graveyard.push(card);
+    self.cardsPlayedThisGame = (self.cardsPlayedThisGame || 0) + 1;
+    incrementMission(sidePlayerId, 'play_event', null, 1);
+    incrementMission(sidePlayerId, 'play_any', null, 1);
+    const eventInstance = { data: card, tempPowerBonus: 0, tempStrikeBonus: 0 };
+    const startedModal = EffectEngine.startModalChoice(tm, eventInstance, self, opponent);
+    if (!startedModal) {
+      EffectEngine.runTrigger(tm, 'onPlay', eventInstance, self, opponent, { isBot: false });
+    }
+    emitMatchState(session);
+  });
+
+  socket.on('match:drawWithSouls', () => {
+    const ctx = matchContext(socket);
+    if (!ctx) return;
+    const { session, tm, self, playerId: sidePlayerId } = ctx;
+    if (tm.gameOver || tm.pendingEffect || tm.pendingBattle) return;
+    if (tm.activePlayer !== self || tm.currentPhase !== 'main') return;
+    const result = self.drawWithSoulCost(3);
+    if (result.success) {
+      incrementMission(sidePlayerId, 'soul_draw', null, 1);
+    } else if (result.reason === 'ALREADY_USED') {
+      socket.emit('match:error', { message: 'Você já suspendeu Souls pra comprar carta neste turno (só é permitido 1x por turno).' });
+    }
+    emitMatchState(session);
+  });
+
+  socket.on('match:activateAbility', ({ zone, index, actIndex }) => {
+    const ctx = matchContext(socket);
+    if (!ctx) return;
+    const { session, tm, self, opponent } = ctx;
+    if (tm.gameOver || tm.pendingEffect || tm.pendingBattle) return;
+    if (tm.activePlayer !== self || tm.currentPhase !== 'main') return;
+    if (!['basePals', 'baseStructures', 'baseGear'].includes(zone)) return;
+    const instance = self[zone][index];
+    if (!instance) return;
+    const result = EffectEngine.activateAbility(tm, instance, self, opponent, actIndex || 0, { isBot: false });
+    if (!result.success) {
+      socket.emit('match:error', { message: 'Não foi possível ativar essa habilidade agora.' });
+      return;
+    }
+    emitMatchState(session);
+  });
+
+  socket.on('match:resolveEffectTarget', ({ owner, index, skip }) => {
+    const ctx = matchContext(socket);
+    if (!ctx) return;
+    const { session, tm, self } = ctx;
+    if (tm.gameOver || !tm.pendingEffect || tm.pendingEffect.casterState !== self) return;
+    // owner chega relativo a quem está vendo ('player'=eu/'bot'=oponente) — converte pro absoluto
+    // (player1/player2) que o EffectEngine espera, antes de mandar pro continuePendingEffect.
+    const selfIsPlayer1 = self === tm.player1;
+    const absoluteOwner = selfIsPlayer1 ? owner : (owner === 'player' ? 'bot' : 'player');
+    if (!skip) {
+      const valid = (tm.pendingEffect.validTargets || []).some(t => t.owner === absoluteOwner && t.index === index);
+      if (!valid) return;
+    } else if (!tm.pendingEffect.optional) {
+      return;
+    }
+    EffectEngine.continuePendingEffect(tm, { owner: absoluteOwner, index, skip });
+    emitMatchState(session);
+  });
+
+  socket.on('match:resolveCardChoice', ({ index, skip }) => {
+    const ctx = matchContext(socket);
+    if (!ctx) return;
+    const { session, tm, self } = ctx;
+    if (tm.gameOver || !tm.pendingEffect || tm.pendingEffect.casterState !== self) return;
+    if (tm.pendingEffect.kind !== 'cardChoice') return;
+    if (!skip) {
+      if (!tm.pendingEffect.cards[index]?.selectable) return;
+    } else if (!tm.pendingEffect.optional) {
+      return;
+    }
+    EffectEngine.resolveCardChoice(tm, { index, skip });
+    emitMatchState(session);
+  });
+
+  socket.on('match:resolveAmount', ({ amount }) => {
+    const ctx = matchContext(socket);
+    if (!ctx) return;
+    const { session, tm, self } = ctx;
+    if (tm.gameOver) return;
+    if (!tm.pendingEffect || tm.pendingEffect.kind !== 'amount' || tm.pendingEffect.casterState !== self) return;
+    EffectEngine.continuePendingEffect(tm, { amount });
+    emitMatchState(session);
+  });
+
+  socket.on('match:resolveModalChoice', ({ optionIndex }) => {
+    const ctx = matchContext(socket);
+    if (!ctx) return;
+    const { session, tm, self } = ctx;
+    if (tm.gameOver) return;
+    if (!tm.pendingEffect || tm.pendingEffect.kind !== 'modal' || tm.pendingEffect.casterState !== self) return;
+    EffectEngine.resolveModalChoice(tm, optionIndex);
+    emitMatchState(session);
+  });
+
+  socket.on('match:attack', ({ palIndex }) => {
+    const ctx = matchContext(socket);
+    if (!ctx) return;
+    const { session, tm, self, playerId: sidePlayerId } = ctx;
+    if (tm.gameOver || tm.pendingEffect || tm.pendingBattle) return;
+    if (tm.activePlayer !== self) return;
+    const pal = self.basePals[palIndex];
+    if (!pal) return;
+    const result = tm.declareAttack(pal, { type: 'player' });
+    if (result.reason === 'TAUNT_FORCED') {
+      socket.emit('match:error', { message: 'Seu oponente tem uma carta com Taunt que precisa ser atacada primeiro.' });
+      return;
+    }
+    if (result.damageDealt > 0) incrementMission(sidePlayerId, 'deal_damage', null, result.damageDealt);
+    emitMatchState(session);
+  });
+
+  socket.on('match:attackPal', ({ attackerIndex, targetIndex }) => {
+    const ctx = matchContext(socket);
+    if (!ctx) return;
+    const { session, tm, self, opponent } = ctx;
+    if (tm.gameOver || tm.pendingEffect || tm.pendingBattle) return;
+    if (tm.activePlayer !== self) return;
+    const attacker = self.basePals[attackerIndex];
+    const target = opponent.basePals[targetIndex];
+    if (!attacker || !target) return;
+    const result = tm.declareAttack(attacker, { type: 'pal', instance: target });
+    if (result.reason === 'TAUNT_FORCED' || result.reason === 'TARGET_NOT_VALID') {
+      socket.emit('match:error', { message: 'Esse Pal não pode ser atacado agora.' });
+      return;
+    }
+    emitMatchState(session);
+  });
+
+  socket.on('match:attackStructure', ({ attackerIndex, targetIndex }) => {
+    const ctx = matchContext(socket);
+    if (!ctx) return;
+    const { session, tm, self, opponent } = ctx;
+    if (tm.gameOver || tm.pendingEffect || tm.pendingBattle) return;
+    if (tm.activePlayer !== self) return;
+    const attacker = self.basePals[attackerIndex];
+    const target = opponent.baseStructures[targetIndex];
+    if (!attacker || !target) return;
+    const result = tm.declareAttack(attacker, { type: 'structure', instance: target });
+    if (result.reason === 'TAUNT_FORCED' || result.reason === 'TARGET_NOT_VALID') {
+      socket.emit('match:error', { message: 'Essa Structure não pode ser atacada agora.' });
+      return;
+    }
+    emitMatchState(session);
+  });
+
+  socket.on('match:resolveBlock', ({ blockerIndex, none }) => {
+    const ctx = matchContext(socket);
+    if (!ctx) return;
+    const { session, tm, self } = ctx;
+    if (tm.gameOver) return;
+    if (!tm.pendingBattle || tm.pendingBattle.waitingFor !== 'block' || tm.pendingBattle.defenderState !== self) return;
+    tm.resolveBlock({ blockerIndex, none });
+    emitMatchState(session);
+  });
+
+  socket.on('match:resolveQuickStep', ({ cardNumber, kind, pass }) => {
+    const ctx = matchContext(socket);
+    if (!ctx) return;
+    const { session, tm, self } = ctx;
+    if (tm.gameOver) return;
+    if (!tm.pendingBattle || tm.pendingBattle.waitingFor !== 'quick' || tm.pendingBattle.defenderState !== self) return;
+    tm.resolveQuickStep({ cardNumber, kind, pass });
+    emitMatchState(session);
+  });
+
+  socket.on('match:resolveInterruptCost', ({ method }) => {
+    const ctx = matchContext(socket);
+    if (!ctx) return;
+    const { session, tm, self } = ctx;
+    if (tm.gameOver) return;
+    if (!tm.pendingBattle || tm.pendingBattle.waitingFor !== 'interruptCost' || tm.pendingBattle.defenderState !== self) return;
+    if (method !== 'soul' && method !== 'discard') return;
+    tm.resolveInterruptCost({ method });
+    emitMatchState(session);
+  });
+
+  socket.on('match:resolveInterruptDiscard', ({ cardNumber }) => {
+    const ctx = matchContext(socket);
+    if (!ctx) return;
+    const { session, tm, self } = ctx;
+    if (tm.gameOver) return;
+    if (!tm.pendingBattle || tm.pendingBattle.waitingFor !== 'interruptDiscardChoice' || tm.pendingBattle.defenderState !== self) return;
+    tm.resolveInterruptDiscard({ cardNumber });
+    emitMatchState(session);
+  });
+
+  let match = null; // { turnManager, playerIsP1, botIsP1 }
 
   let winCounted = false;
 
@@ -1620,6 +2361,7 @@ io.on('connection', (socket) => {
     }
     match.playerState.hand = match.playerState.hand.filter(c => c !== card);
     match.playerState.graveyard.push(card);
+    match.playerState.cardsPlayedThisGame = (match.playerState.cardsPlayedThisGame || 0) + 1;
     incrementMission(playerId, 'play_event', null, 1);
     incrementMission(playerId, 'play_any', null, 1);
     const eventInstance = { data: card, tempPowerBonus: 0, tempStrikeBonus: 0 };
@@ -1669,6 +2411,8 @@ io.on('connection', (socket) => {
     }
     EffectEngine.continuePendingEffect(match.turnManager, { owner, index, skip });
     emitState();
+    maybeRunBotTurn(); // resolver essa escolha pode ter sido o que faltava pra "AUTO At the end of your
+    // turn" (ex: Shadowbeak) terminar e só ENTÃO passar a vez — se foi isso, o bot precisa começar a agir.
   });
 
   // 6f1b. Jogador escolhe uma carta revelada/olhada (topo do deck, cemitério ou mão) ou pula
@@ -1682,6 +2426,7 @@ io.on('connection', (socket) => {
     }
     EffectEngine.resolveCardChoice(match.turnManager, { index, skip });
     emitState();
+    maybeRunBotTurn(); // mesmo motivo do resolveEffectTarget acima.
   });
 
   // 6f2. Jogador escolhe a quantidade de X ao pagar um custo variável (Consume X Material, etc.)
@@ -1690,6 +2435,7 @@ io.on('connection', (socket) => {
     if (!match.turnManager.pendingEffect || match.turnManager.pendingEffect.kind !== 'amount') return;
     EffectEngine.continuePendingEffect(match.turnManager, { amount });
     emitState();
+    maybeRunBotTurn(); // mesmo motivo do resolveEffectTarget acima.
   });
 
   // 6f3. Jogador escolhe uma das opções de um efeito modal ("Choose 1 of the following")
@@ -1698,6 +2444,7 @@ io.on('connection', (socket) => {
     if (!match.turnManager.pendingEffect || match.turnManager.pendingEffect.kind !== 'modal') return;
     EffectEngine.resolveModalChoice(match.turnManager, optionIndex);
     emitState();
+    maybeRunBotTurn(); // mesmo motivo do resolveEffectTarget acima.
   });
 
   // 7. Jogador ataca o oponente diretamente com um Pal (índice na base)
@@ -1777,6 +2524,33 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
+    removeFromQueue(playerId);
+
+    // Partida online em andamento (Jokenpô, mulligan ou jogo): quem ficou avisa que o oponente saiu
+    // e a sessão é encerrada — sem reconexão por enquanto, W.O. imediato.
+    const session = getSessionBySocket(socket);
+    if (session) {
+      const side = getSideBySocket(session, socket);
+      const remainingSide = otherSide(side);
+
+      // W.O. em Arena também vale pro rank — só se o jogo já tinha começado de fato (Jokenpô/mulligan
+      // abandonado não conta ponto pra ninguém, não chegou a ser uma partida jogada).
+      let arenaPointsChange = null;
+      if (session.matchType === 'arena' && session.turnManager && !session.rankPointsApplied) {
+        const { gained } = applyArenaRankPoints(session.sides[remainingSide].playerId, session.sides[side].playerId);
+        arenaPointsChange = gained;
+        session.rankPointsApplied = true;
+      }
+
+      session.sides[remainingSide].socket.emit('match:opponentLeft', {
+        message: 'Seu oponente desconectou. Você venceu por W.O.',
+        arenaPointsChange
+      });
+      socketRoomMap.delete(session.sides.A.socket.id);
+      socketRoomMap.delete(session.sides.B.socket.id);
+      onlineSessions.delete(session.roomId);
+    }
+
     console.log(`Cliente desconectado: ${socket.id}`);
   });
 

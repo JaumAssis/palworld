@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useLanguage } from './i18n/LanguageContext'
-import { apiFetch } from './api'
+import { apiFetch, apiJson } from './api'
 
 const COLOR_STYLES = {
   Red: { bg: '#fde2e1', text: '#c62828' },
@@ -27,6 +27,8 @@ function DeckList() {
   const { t, lang } = useLanguage()
   const [decks, setDecks] = useState([])
   const [loading, setLoading] = useState(true)
+  const [deckToDelete, setDeckToDelete] = useState(null)
+  const [deleteError, setDeleteError] = useState('')
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -34,6 +36,16 @@ function DeckList() {
       .then(res => res.json())
       .then(data => { setDecks(data); setLoading(false) })
   }, [])
+
+  const confirmDelete = async () => {
+    try {
+      await apiJson(`/api/decks/${deckToDelete.id}`, { method: 'DELETE' })
+      setDecks(prev => prev.filter(d => d.id !== deckToDelete.id))
+      setDeckToDelete(null)
+    } catch {
+      setDeleteError(t('deleteDeckError'))
+    }
+  }
 
   if (loading) return <p style={{ padding: '2rem' }}>{t('decksLoading')}</p>
 
@@ -43,7 +55,9 @@ function DeckList() {
       background: 'radial-gradient(circle at 50% 40%, rgba(255,255,255,0.05), transparent 60%), #2b1a10'
     }}>
     <div style={{ padding: '2rem', maxWidth: '1000px', margin: '0 auto' }}>
-      <Link to="/"><button style={{ marginBottom: '20px' }}>{t('backToMenu')}</button></Link>
+      <Link to="/" style={{ position: 'fixed', top: '20px', left: '20px' }}>
+        <button className="sign-button">{t('backToMenu')}</button>
+      </Link>
       <h1 style={{
         marginBottom: '20px', fontFamily: "'Rye', Georgia, serif", fontSize: '30px',
         color: '#f3e2b3', WebkitTextStroke: '1px #2b160a',
@@ -127,17 +141,49 @@ function DeckList() {
                   background: deck.mode === 'rank' ? '#a5541b' : '#3f6b3f'
                 }}>{deck.mode === 'rank' ? '🏆 Rank' : '🎲 Normal'}</span>
               </div>
-              <div style={{ padding: '14px' }}>
+              <div style={{ padding: '14px', position: 'relative' }}>
                 <h3 style={{ margin: '0 0 4px', fontSize: '16px' }}>{deck.name}</h3>
                 <p style={{ margin: 0, fontSize: '12px', color: '#999' }}>
                   {t('createdAt', { date: new Date(deck.created_at).toLocaleDateString(lang === 'pt' ? 'pt-BR' : 'en-US') })}
                 </p>
+                <span
+                  onClick={e => { e.stopPropagation(); setDeleteError(''); setDeckToDelete(deck) }}
+                  title={t('deleteDeckConfirm', { name: deck.name })}
+                  style={{
+                    position: 'absolute', bottom: '10px', right: '10px', fontSize: '18px',
+                    cursor: 'pointer', lineHeight: 1
+                  }}
+                >🗑️</span>
               </div>
             </div>
           )
         })}
       </div>
     </div>
+
+      {deckToDelete && (
+        <div onClick={() => setDeckToDelete(null)} style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: '#2b1a10', border: '3px solid #c99a4e', borderRadius: '14px',
+            padding: '24px', maxWidth: '360px', textAlign: 'center',
+            boxShadow: '0 12px 36px rgba(0,0,0,0.6)'
+          }}>
+            <p style={{ color: '#f3e2b3', fontSize: '16px', marginBottom: deleteError ? '8px' : '20px' }}>
+              {t('deleteDeckConfirm', { name: deckToDelete.name })}
+            </p>
+            {deleteError && (
+              <p style={{ color: '#e57373', fontSize: '13px', marginBottom: '16px' }}>{deleteError}</p>
+            )}
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+              <button onClick={confirmDelete} style={{ padding: '8px 20px' }}>{t('deleteDeckYes')}</button>
+              <button onClick={() => setDeckToDelete(null)} style={{ padding: '8px 20px' }}>{t('deleteDeckNo')}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

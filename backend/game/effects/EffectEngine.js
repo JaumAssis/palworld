@@ -28,6 +28,14 @@ function hasKeywordOrGranted(instance, name) {
     !!(instance.grantedKeywordsUntilEndOfTurn && instance.grantedKeywordsUntilEndOfTurn.has(name))
 }
 
+// pal_name real da carta OU nome declarado temporariamente até o fim do turno (Antique Dresser —
+// "Declare 1 card name. Choose all of your cards, and they get that declared card name in addition
+// until end of turn.") — ver 'declareNameForTeam'/'applyDeclaredNameForTeam' em applyAction.
+function hasName(instance, name) {
+  return instance.data.pal_name === name ||
+    !!(instance.grantedNamesUntilEndOfTurn && instance.grantedNamesUntilEndOfTurn.has(name))
+}
+
 function getKeywordValue(cardData, name) {
   const kw = getParsedEffects(cardData).keywords.find(k => k.name.toLowerCase() === name.toLowerCase())
   return kw ? kw.value : null
@@ -41,9 +49,20 @@ function isNightFor(state) {
   return !!(state.turnManagerRef && state.turnManagerRef.isNight)
 }
 
+// Nomes DISTINTOS entre as cartas informadas cujo nome contém `substring` (ex: 《Antique》, 《My First》)
+// — usado tanto pela fórmula de X (Antique Curtain) quanto pela precondição de threshold (The Adventure
+// Begins), por isso vive fora de qualquer um dos dois.
+function countDistinctNamesContaining(instances, substring) {
+  const names = new Set(instances.filter(c => (c.data.name || '').includes(substring)).map(c => c.data.name))
+  return names.size
+}
+
 // Dicionário fechado de condições checáveis (ver EffectParser PRECONDITION_PATTERNS) — qualquer
 // precondição não listada aqui simplesmente não é reconhecida em tempo de parse, então nunca chega aqui.
-function checkPrecondition(id, sourceInstance, casterState, opponentState) {
+// `precondition` pode ser uma string (id fixo) OU um objeto {id, ...params} (ex: distinctPalNameSubstring
+// — ver parseDistinctNameThresholdClause), quando a condição precisa carregar parâmetros do texto.
+function checkPrecondition(precondition, sourceInstance, casterState, opponentState) {
+  const id = typeof precondition === 'string' ? precondition : precondition.id
   switch (id) {
     case 'hasRestingNocturnal':
       return casterState.basePals.some(p => !p.isStanding && hasKeyword(p.data, 'Nocturnal'))
@@ -51,6 +70,13 @@ function checkPrecondition(id, sourceInstance, casterState, opponentState) {
       return !(sourceInstance.exiledCards && sourceInstance.exiledCards.length)
     case 'isNight':
       return isNightFor(casterState)
+    // "If you have not played any other cards during this game, ..." (The Adventure Begins) — ela
+    // mesma já conta como 1 jogada (incrementado antes do onPlay resolver, ver PlayerState/server.js).
+    case 'noOtherCardsPlayedThisGame':
+      return (casterState.cardsPlayedThisGame || 0) <= 1
+    // "If you have N or more Pals with 《X》 in their different card names, ..." (The Adventure Begins)
+    case 'distinctPalNameSubstring':
+      return countDistinctNamesContaining(casterState.basePals, precondition.substring) >= precondition.min
     default:
       return true
   }
@@ -66,6 +92,19 @@ function hasContOfType(state, contType) {
   return fieldCardsOf(state).some(c => getParsedEffects(c.data).cont.some(f => f.type === contType))
 }
 
+// "CONT When your red card would deal Damage other than battle damage to a Pal, deal +200 Damage
+// instead (Strengthens this card's ability too)." (Suzaku – Hellfire Wings) — soma de todas as
+// concessões desse tipo no campo de `state` (inclui a própria fonte, por isso o "too" do texto).
+function getRedNonBattleDamageBonus(state) {
+  let bonus = 0
+  for (const c of fieldCardsOf(state)) {
+    for (const f of getParsedEffects(c.data).cont) {
+      if (f.type === 'redNonBattleDamageBonus') bonus += f.amount
+    }
+  }
+  return bonus
+}
+
 // ---------- Power/Strike efetivos (base + buff temporário + fórmulas CONT) ----------
 
 function computeContinuousBonuses(instance, ownerState, opponentState) {
@@ -77,7 +116,7 @@ function computeContinuousBonuses(instance, ownerState, opponentState) {
   for (const f of ownFormulas) {
     if (f.type === 'perStructure') power += f.amount * ownerState.baseStructures.length
     if (f.type === 'nameCountBuff') {
-      const count = ownerState.basePals.filter(p => p.data.pal_name === f.palName).length
+      const count = ownerState.basePals.filter(p => hasName(p, f.palName)).length
       power += f.amount * count
     }
     if (f.type === 'soulThreshold' && ownerState.totalSouls >= f.souls) {
@@ -85,7 +124,7 @@ function computeContinuousBonuses(instance, ownerState, opponentState) {
       strike += f.strike
     }
     if (f.type === 'colorBuff' && !f.excludeSelf && cardColors(instance.data).includes(f.color)) power += f.amount
-    if (f.type === 'nameBuff' && instance.data.pal_name === f.palName) power += f.amount
+    if (f.type === 'nameBuff' && hasName(instance, f.palName)) power += f.amount
   }
 
   if (night && (hasKeyword(instance.data, 'Nocturnal') || hasContOfType(ownerState, 'grantNocturnalToTeam'))) power += 300
@@ -96,7 +135,7 @@ function computeContinuousBonuses(instance, ownerState, opponentState) {
     if (other === instance) continue
     for (const f of getParsedEffects(other.data).cont) {
       if (f.type === 'colorBuff' && cardColors(instance.data).includes(f.color)) power += f.amount
-      if (f.type === 'nameBuff' && instance.data.pal_name === f.palName) power += f.amount
+      if (f.type === 'nameBuff' && hasName(instance, f.palName)) power += f.amount
     }
   }
 
@@ -201,6 +240,7 @@ function playQuickCard(turnManager, card, defenderState, attackerState) {
   defenderState.hand = defenderState.hand.filter(c => c !== card)
   defenderState.paySoulCost(card.cost || 0)
   defenderState.graveyard.push(card)
+  defenderState.cardsPlayedThisGame = (defenderState.cardsPlayedThisGame || 0) + 1
   turnManager._addLog(`${defenderState.playerName} jogou ${card.name} (Quick).`)
 
   const wrapper = { data: card, tempPowerBonus: 0, tempStrikeBonus: 0 }
@@ -219,7 +259,7 @@ function matchesFilter(instance, filter = {}) {
   if (filter.costMin != null && instance.data.cost < filter.costMin) return false
   if (filter.powerMax != null && instance.data.power > filter.powerMax) return false
   if (filter.color && !cardColors(instance.data).includes(filter.color)) return false
-  if (filter.palName && instance.data.pal_name !== filter.palName) return false
+  if (filter.palName && !hasName(instance, filter.palName)) return false
   return true
 }
 
@@ -281,15 +321,22 @@ function matchesCardFilter(card, filter = {}) {
   if (filter.palName && card.pal_name !== filter.palName) return false
   if (filter.typepalDragon && !(card.typepal || []).map(t => String(t).toLowerCase()).includes('dragon')) return false
   if (filter.color && !cardColors(card).includes(filter.color)) return false
+  // "Choose up to 2 Pals without 〈Interrupt〉 from your graveyard, ..." (Black Marketeer) — Interrupt
+  // não é uma KEYWORD_NAMES normal (Assault/Taunt/...), é o flag `hasInterrupt` à parte (ver classifyLine).
+  if (filter.excludeKeyword) {
+    const has = /^interrupt$/i.test(filter.excludeKeyword) ? getParsedEffects(card).hasInterrupt : hasKeyword(card, filter.excludeKeyword)
+    if (has) return false
+  }
   return true
 }
 
 // Resolve costMaxFormula/costExactFormula (ex: "cost of the assigned/butchered Pal") em número antes
 // de filtrar — só existe quando a fórmula bate com algo reconhecido (ver EffectParser extractXFormula).
-function resolveCardFilterDynamic(filter = {}, casterState, context) {
+function resolveCardFilterDynamic(filter = {}, casterState, context, sourceInstance, opponentState) {
   const resolved = { ...filter }
-  if (filter.costMaxFormula) resolved.costMax = resolveFormulaValue(filter.costMaxFormula, casterState, context)
-  if (filter.costExactFormula) resolved.costExact = resolveFormulaValue(filter.costExactFormula, casterState, context)
+  if (filter.costMaxFormula) resolved.costMax = resolveFormulaValue(filter.costMaxFormula, casterState, context, sourceInstance, opponentState)
+  if (filter.costMinFormula) resolved.costMin = resolveFormulaValue(filter.costMinFormula, casterState, context, sourceInstance, opponentState)
+  if (filter.costExactFormula) resolved.costExact = resolveFormulaValue(filter.costExactFormula, casterState, context, sourceInstance, opponentState)
   return resolved
 }
 
@@ -302,6 +349,9 @@ function resolveFormulaValue(formula, casterState, context, sourceInstance, oppo
     case 'countGears': return casterState.baseGear.length
     case 'countSouls': return casterState.totalSouls
     case 'fixed': return formula.value
+    // "X is equal to the number of different card names among your structures with 《Antique》 in
+    // their card names" (Antique Curtain)
+    case 'distinctStructureNameSubstring': return countDistinctNamesContaining(casterState.baseStructures, formula.substring)
     case 'costOfContextPal':
       if (!context || !context.contextPal) return null
       return Math.max(0, (context.contextPal.data.cost || 0) + (formula.modifier || 0))
@@ -341,15 +391,20 @@ function applyAction(turnManager, action, sourceInstance, casterState, opponentS
   const amount = action.amount === 'X' ? resolveXAmount(action.amountFormula, casterState, context, sourceInstance, opponentState) : action.amount
 
   switch (action.type) {
-    case 'damage':
+    case 'damage': {
+      // Suzaku – Hellfire Wings: dano NÃO-de-batalha (este 'damage' nunca é dano de batalha, que
+      // passa por resolveBattle, não por applyAction) vindo de carta vermelha SUA ganha +200.
+      const redBonus = cardColors(sourceInstance.data).includes('red') ? getRedNonBattleDamageBonus(casterState) : 0
+      const finalAmount = amount + redBonus
       for (const t of targets) {
-        t.damageMarked += amount
+        t.damageMarked += finalAmount
         const ownerState = ownerStateOf(t, casterState, opponentState)
         const otherState = ownerState === casterState ? opponentState : casterState
-        turnManager._addLog(`${sourceInstance.data.name} causou ${amount} de dano em ${t.data.name}.`)
+        turnManager._addLog(`${sourceInstance.data.name} causou ${finalAmount} de dano em ${t.data.name}.`)
         turnManager.checkAndRemoveIfDestroyed(t, ownerState, otherState)
       }
       return targets.length > 0
+    }
     case 'buffPower':
       for (const t of targets) t.tempPowerBonus += amount
       return targets.length > 0
@@ -376,7 +431,7 @@ function applyAction(turnManager, action, sourceInstance, casterState, opponentS
         const owner = ownerStateOf(t, casterState, opponentState)
         const butcheredData = t.data
         turnManager._sendToGraveyard(t, owner)
-        notifyAllyButcher(turnManager, owner, owner === casterState ? opponentState : casterState, owner !== turnManager.player1, butcheredData)
+        notifyAllyButcher(turnManager, owner, owner === casterState ? opponentState : casterState, turnManager.player2IsBot && owner !== turnManager.player1, butcheredData)
       }
       return targets.length > 0
     case 'opponentDestroyWeakest': {
@@ -461,7 +516,7 @@ function applyAction(turnManager, action, sourceInstance, casterState, opponentS
     case 'grantSkillIfMainName': {
       let granted = false
       for (const t of targets) {
-        if (t.data.pal_name !== action.palName) continue
+        if (!hasName(t, action.palName)) continue
         t.grantedTriggers = t.grantedTriggers || {}
         t.grantedTriggers[action.triggerType] = t.grantedTriggers[action.triggerType] || []
         t.grantedTriggers[action.triggerType].push(action.grantedActions)
@@ -475,7 +530,7 @@ function applyAction(turnManager, action, sourceInstance, casterState, opponentS
     case 'replaceBuffAndGrantActIfMainName': {
       let matched = false
       for (const t of targets) {
-        if (t.data.pal_name !== action.palName) continue
+        if (!hasName(t, action.palName)) continue
         matched = true
         t.tempPowerBonus += (action.replacementAmount - action.defaultAmount)
         t.grantedActs = t.grantedActs || []
@@ -490,7 +545,7 @@ function applyAction(turnManager, action, sourceInstance, casterState, opponentS
     case 'runIfMainName': {
       let matched = false
       for (const t of targets) {
-        if (t.data.pal_name !== action.palName) continue
+        if (!hasName(t, action.palName)) continue
         matched = true
         for (const sub of action.thenActions) {
           applyAction(turnManager, sub, sourceInstance, casterState, opponentState, null, context)
@@ -511,11 +566,25 @@ function applyAction(turnManager, action, sourceInstance, casterState, opponentS
         t.grantedKeywordsUntilEndOfTurn.add(action.keyword)
       }
       return targets.length > 0
+    // Relaxaurus – Hungry Gunner: "While this card is in the base, that card does not stand" — trava
+    // persistente (não expira no fim do turno); libera em _releaseStandLocksFrom quando a Relaxaurus
+    // (sourceInstance) sai de campo.
+    case 'lockStandingWhileOnField':
+      for (const t of targets) {
+        t.standLockedBy = t.standLockedBy || new Set()
+        t.standLockedBy.add(sourceInstance)
+      }
+      return targets.length > 0
+    // Jormuntide – Surging Sea Serpent / Crystal Breath: "does not stand during your opponent's next
+    // stand phase" — trava de UM turno só (ver PlayerState.standAll, que consome e limpa a flag).
+    case 'skipNextStandPhase':
+      for (const t of targets) t.skipNextOwnStandPhase = true
+      return targets.length > 0
     // Ranch / Digtoise's Headband: escolha do jogador entre 2 recursos — bot usa heurística fixa
     // (Material), jogador humano resolve via o mesmo popup 'modal' já usado por "Choose 1 of the
     // following".
     case 'chooseResourceEither': {
-      if (casterState !== turnManager.player1) {
+      if (turnManager.player2IsBot && casterState !== turnManager.player1) {
         casterState.gainMaterial(action.materialAmount)
         turnManager._addLog(`${casterState.playerName} ganhou ${action.materialAmount} Material.`)
         return true
@@ -531,6 +600,41 @@ function applyAction(turnManager, action, sourceInstance, casterState, opponentS
         instance: sourceInstance, casterState, opponentState
       }
       return true
+    }
+    // Antique Dresser: "Declare 1 card name. Choose all of your cards, and they get that declared
+    // card name in addition until end of turn." — o nome declarado só é útil se corresponder a algo
+    // já em campo (senão nenhum outro efeito vai comparar contra ele), então a lista de opções é
+    // formada pelos main names distintos das próprias cartas em campo do jogador.
+    case 'declareNameForTeam': {
+      const ownNames = [...new Set(fieldCardsOf(casterState).map(c => c.data.pal_name).filter(Boolean))]
+      if (!ownNames.length) return false
+      if (turnManager.player2IsBot && casterState !== turnManager.player1) {
+        for (const c of fieldCardsOf(casterState)) {
+          c.grantedNamesUntilEndOfTurn = c.grantedNamesUntilEndOfTurn || new Set()
+          c.grantedNamesUntilEndOfTurn.add(ownNames[0])
+        }
+        return true
+      }
+      turnManager.pendingEffect = {
+        kind: 'modal',
+        sourceCardName: sourceInstance.data.name,
+        description: sourceInstance.data.effect_text,
+        options: ownNames.map(n => ({ description: n, actions: [{ type: 'applyDeclaredNameForTeam', declaredName: n }] })),
+        instance: sourceInstance, casterState, opponentState
+      }
+      return true
+    }
+    case 'applyDeclaredNameForTeam':
+      for (const c of fieldCardsOf(casterState)) {
+        c.grantedNamesUntilEndOfTurn = c.grantedNamesUntilEndOfTurn || new Set()
+        c.grantedNamesUntilEndOfTurn.add(action.declaredName)
+      }
+      turnManager._addLog(`${casterState.playerName} declarou o nome "${action.declaredName}" para todas as suas cartas até o fim do turno.`)
+      return true
+    // Retomada da escolha de custo alternativo de um ACT (Jormuntide Ignis) — ver activateAbility.
+    case 'resumeActCostChoice': {
+      const result = proceedActivation(turnManager, action.ability, action.group, {}, sourceInstance, casterState, opponentState, false, action.actIndex)
+      return !!(result && result.success)
     }
     default:
       return false
@@ -585,7 +689,7 @@ function resolveClauseActions(turnManager, clauseActions, instance, casterState,
     }
     const discardSpec = clauseActions[handDiscardIdx]
     const chooserState = discardSpec.type === 'opponentDiscardChoice' ? opponentState : casterState
-    const chooserIsBot = chooserState === turnManager.player2
+    const chooserIsBot = turnManager.player2IsBot && chooserState === turnManager.player2
     // "You may discard 1 card from hand. If you discarded this way, ..." (Lovander) — optional:true
     // deixa pular a escolha (mandatory:false), e `then` só roda se uma carta foi de fato descartada.
     const discardAction = {
@@ -603,7 +707,7 @@ function resolveClauseActions(turnManager, clauseActions, instance, casterState,
       applyAction(turnManager, clauseActions[i], instance, casterState, opponentState, null, context)
     }
     if (!opponentState.basePals.length) return { paused: false }
-    if (opponentState === turnManager.player2) {
+    if (turnManager.player2IsBot && opponentState === turnManager.player2) {
       // heurística própria pro bot (sacrifica o mais fraco) — NÃO reaproveita pickBotTarget, que
       // pra ações "destroy" prefere alvo do lado 'opponent' e erraria escolhendo o mais forte aqui.
       const weakest = pickWeakest(opponentState.basePals)
@@ -655,7 +759,15 @@ function resumeClauseContinuation(turnManager, cont) {
 
 function resolveChooseAction(turnManager, clauseActions, chooseAction, instance, casterState, opponentState, isBot, context) {
   const spec = chooseAction.target
-  const candidates = computeValidTargets(spec, instance, casterState, opponentState)
+  // "Choose 1 cost X or less Pal, and exile it." (Viewing Cage) — o filtro de custo do ALVO (não da
+  // busca em zona, que já tinha resolveCardFilterDynamic) pode depender de fórmula (custo do Pal
+  // assinalado como custo, etc.) — resolve num filtro NOVO, sem mutar `spec` (compartilhado por todas
+  // as siblingActions da cláusula, inclusive em reativações futuras da mesma habilidade).
+  const needsFilterResolve = spec.filter && (spec.filter.costMaxFormula || spec.filter.costMinFormula)
+  const resolvedSpec = needsFilterResolve
+    ? { ...spec, filter: resolveCardFilterDynamic(spec.filter, casterState, context, instance, opponentState) }
+    : spec
+  const candidates = computeValidTargets(resolvedSpec, instance, casterState, opponentState)
   // "Choose up to 1 Pal, and deal 800 Damage. Choose all of your Pals, and they get Strike +1..."
   // (Weapon Workbench) — a 2a ação não depende do alvo escolhido (target.mode !== 'choose': all/self/
   // contextPal/sem alvo), então roda de qualquer forma, não só quando compartilha a MESMA referência
@@ -748,18 +860,21 @@ function startCardChoice(turnManager, action, instance, casterState, opponentSta
     matching = revealed.filter(c => matchesCardFilter(c, resolvedFilter))
   } else if (action.source === 'graveyard') {
     matching = casterState.graveyard.filter(c => matchesCardFilter(c, resolvedFilter))
+    revealed = matching // busca direta na zona (não é "revelação" de topo) — mesma lista serve pra ambos
   } else if (action.source === 'hand') {
     matching = casterState.hand.filter(c => matchesCardFilter(c, resolvedFilter))
+    revealed = matching
   } else {
     return { paused: false }
   }
 
-  // "choose up to 2 X from among them and deploy them" (Reptyro Cryst) — mais de 1 escolha da MESMA
-  // revelação, só existe (por ora) pra fonte 'deckTop'. maxPicks ausente/1 mantém o fluxo original.
+  // "choose up to 2 X from among them and deploy them" (Reptyro Cryst) / "Choose up to 2 Pals without
+  // 〈Interrupt〉 from your graveyard, and return them to hand" (Black Marketeer) — mais de 1 escolha
+  // da mesma revelação/busca, pra qualquer fonte (deckTop, graveyard ou hand).
   const maxPicks = action.maxPicks || 1
 
   if (isBot) {
-    if (maxPicks > 1 && action.source === 'deckTop') {
+    if (maxPicks > 1) {
       finishMultiCardChoice(turnManager, resolvedAction, instance, casterState, opponentState, context, revealed, matching.slice(0, maxPicks))
       return { paused: false }
     }
@@ -792,6 +907,11 @@ function startCardChoice(turnManager, action, instance, casterState, opponentSta
     description: instance.data.effect_text,
     optional: !action.mandatory || !matching.length,
     action: resolvedAction, instance, casterState, opponentState, context, revealed,
+    // Conjunto ORIGINAL revelado (nunca encolhe) — usado só pro tamanho do splice/remainder no fim de
+    // um multi-pick (ver finishMultiCardChoice); `revealed` acima pode ir encolhendo a cada rodada só
+    // pra exibição (ver resolveCardChoice), e reusar ele lá causava dessincronia com o deck real
+    // (Reptyro Cryst: "choose up to 2" perdia/duplicava cartas do deck após a 2a escolha).
+    originalRevealed: revealed,
     cards,
     pickedCards: [],
     picksLeft: maxPicks
@@ -851,19 +971,27 @@ function resolveCardChoice(turnManager, choice) {
       optional: true, // já satisfez o mínimo (se era obrigatório) — as escolhas seguintes são sempre opcionais
       action: pending.action, instance: pending.instance, casterState: pending.casterState,
       opponentState: pending.opponentState, context: pending.context, revealed: remainingRevealed,
+      originalRevealed: pending.originalRevealed, // nunca encolhe — ver comentário em startCardChoice
       cards, pickedCards, picksLeft
     }
     return
   }
 
-  finishMultiCardChoice(turnManager, pending.action, pending.instance, pending.casterState, pending.opponentState, pending.context, pending.revealed, pickedCards)
+  finishMultiCardChoice(turnManager, pending.action, pending.instance, pending.casterState, pending.opponentState, pending.context, pending.originalRevealed, pickedCards)
   if (!turnManager.pendingEffect) turnManager._resumeAttackAfterTrigger()
 }
 
-// Variante de finishCardChoice pra 0-N cartas escolhidas da MESMA revelação (deckTop apenas, por ora).
+// Variante de finishCardChoice pra 0-N cartas escolhidas da MESMA revelação/busca (deckTop, graveyard
+// ou hand — graveyard/hand não têm "remainder": a carta não escolhida simplesmente continua na zona).
 function finishMultiCardChoice(turnManager, action, instance, casterState, opponentState, context, revealed, chosenCards) {
-  casterState.deck.splice(0, revealed.length)
-  const remainder = revealed.filter(c => !chosenCards.includes(c))
+  if (action.source === 'deckTop') {
+    casterState.deck.splice(0, revealed.length)
+  } else if (action.source === 'graveyard') {
+    casterState.graveyard = casterState.graveyard.filter(c => !chosenCards.includes(c))
+  } else if (action.source === 'hand') {
+    casterState.hand = casterState.hand.filter(c => !chosenCards.includes(c))
+  }
+  const remainder = action.source === 'deckTop' ? revealed.filter(c => !chosenCards.includes(c)) : []
   for (const card of chosenCards) applyCardDestination(turnManager, action, casterState, opponentState, instance, card)
   if (remainder.length) {
     if (action.remainder === 'shuffle') casterState.deck = shuffleArray([...remainder, ...casterState.deck])
@@ -1341,15 +1469,54 @@ function resolveDiscardCostChoice(turnManager, pending, choice) {
   if (!turnManager.pendingEffect) turnManager._resumeAttackAfterTrigger()
 }
 
+function describeCostItem(item) {
+  switch (item.type) {
+    case 'soulCost': return `Pagar ${item.amount} Soul${item.amount > 1 ? 's' : ''}`
+    case 'restSelf': return 'Descansar esta carta'
+    case 'consumeMaterial': return `Gastar ${item.amount} Material`
+    case 'consumeIngredient': return `Gastar ${item.amount} Ingredient`
+    case 'consumeMaterialX': return 'Gastar Material'
+    case 'consumeIngredientX': return 'Gastar Ingredient'
+    case 'assignPal': return `Assinalar ${item.amount || 1} Pal(s)`
+    case 'butcherPal': return 'Abater 1 Pal'
+    case 'discardHand': return `Descartar ${item.amount} carta${item.amount > 1 ? 's' : ''} da mão`
+    case 'discardHandX': return 'Descartar cartas da mão'
+    case 'discardHandType': return `Descartar ${item.amount} ${item.cardType}(s) da mão`
+    case 'millTopCards': return `Colocar as ${item.amount} cartas do topo do deck no cemitério`
+    default: return item.type
+  }
+}
+
+function describeCostGroup(group) {
+  return group.map(describeCostItem).join(' + ')
+}
+
+// "ACT 1/Turn [③] OR [Discard 2 cards from hand] Stand this card." (Jormuntide Ignis) — quando MAIS
+// de um custo alternativo é pagável ao mesmo tempo, quem escolhe é o JOGADOR (o bot usa a 1a opção
+// pagável), não o motor sozinho — antes o `.find` sempre travava na 1a opção da lista sem perguntar.
 function activateAbility(turnManager, instance, casterState, opponentState, actIndex = 0, { isBot } = {}) {
   const ability = getAllActAbilities(instance)[actIndex]
   if (!ability) return { success: false, reason: 'NO_ABILITY' }
   if (ability.oncePerTurn && instance.actUsedThisTurn.has(actIndex)) return { success: false, reason: 'ALREADY_USED' }
 
-  const group = ability.costGroups.find(g => canPayCostGroup(g, instance, casterState))
-  if (!group) return { success: false, reason: 'CANNOT_PAY' }
+  const payableGroups = ability.costGroups.filter(g => canPayCostGroup(g, instance, casterState))
+  if (!payableGroups.length) return { success: false, reason: 'CANNOT_PAY' }
 
-  return proceedActivation(turnManager, ability, group, {}, instance, casterState, opponentState, isBot, actIndex)
+  if (payableGroups.length > 1 && !isBot) {
+    turnManager.pendingEffect = {
+      kind: 'modal',
+      sourceCardName: instance.data.name,
+      description: instance.data.effect_text,
+      options: payableGroups.map(group => ({
+        description: describeCostGroup(group),
+        actions: [{ type: 'resumeActCostChoice', ability, group, actIndex }]
+      })),
+      instance, casterState, opponentState
+    }
+    return { success: true, paused: true }
+  }
+
+  return proceedActivation(turnManager, ability, payableGroups[0], {}, instance, casterState, opponentState, isBot, actIndex)
 }
 
 // ---------- Retomada de efeito/custo/quantidade pendente ----------

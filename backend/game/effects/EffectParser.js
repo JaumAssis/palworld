@@ -6,15 +6,15 @@ const KEYWORD_NAMES = ['Assault', 'Taunt', 'Stealth', 'Vigilance', 'Breakthrough
 
 const TARGET_PATTERNS = [
   {
-    // Motor só sabe resolver escolha de 1 alvo por vez — "up to 2+" fixo fica fora de escopo (sem match).
-    // "up to X" vira repetição (escolhe 1, repete X vezes) — ver `repeatsX` em parseClauseBody.
+    // Motor só resolve escolha de 1 alvo por vez — "up to X" OU "up to N" fixo (N>1) viram a MESMA
+    // repetição (escolhe 1, repete N/X vezes — ver `repeatsX`/`repeatsFixed` em parseClauseBody).
     // ", and " OU só "," (sem "and") — "Choose 1 Pal, it gets Power..." não usa "and" antes de "it gets"
     re: /Choose up to (\d+|X) (?:◇(\d+) or (less|greater) )?(of your opponent's |of your |your )?Pals?( in the stand state)?(?:,\s*and\s+|,\s*|\s+and\s+)/i,
     build: m => {
       const raw = parseAmount(m[1])
-      if (typeof raw === 'number' && raw > 1) return null
       const target = { mode: 'choose', upTo: true, count: 1, side: sideFromPrefix(m[4]), filter: buildFilter(m[2], m[3], m[5]) }
       if (raw === 'X') target.repeatsX = true
+      else if (raw > 1) { target.repeatsX = true; target.repeatsFixed = raw }
       return target
     }
   },
@@ -25,6 +25,18 @@ const TARGET_PATTERNS = [
       if (typeof raw === 'number' && raw > 1) return null
       const target = { mode: 'choose', upTo: false, count: 1, side: sideFromPrefix(m[4]), filter: buildFilter(m[2], m[3]) }
       if (raw === 'X') target.repeatsX = true
+      return target
+    }
+  },
+  {
+    // "Choose 1 cost X or less Pal, and exile it. X is equal to the cost of the assigned Pal +2."
+    // (Viewing Cage) — mesma ideia do "◇N or less" acima, só que com o custo escrito por extenso e
+    // resolvido por fórmula (X), não um número fixo — ver `filter.costMaxFormula` em resolveChooseAction.
+    re: /Choose (1|up to 1) cost X or (less|greater) (of your opponent's |of your |your )?Pals?(?:,\s*and\s+|,\s*|\s+and\s+)/i,
+    build: m => {
+      const target = { mode: 'choose', upTo: /up to/i.test(m[1]), count: 1, side: sideFromPrefix(m[3]), filter: {} }
+      if (/less/i.test(m[2])) target.filter.costMax = 'X'
+      else target.filter.costMin = 'X'
       return target
     }
   },
@@ -94,6 +106,14 @@ const CONT_FORMULA_PATTERNS = [
   {
     re: /^If it is night, your Pal's AUTO activates twice\.?$/i,
     build: () => ({ type: 'doubleAutoAtNight', scope: 'self' })
+  },
+  {
+    // "CONT When your red card would deal Damage other than battle damage to a Pal, deal +200 Damage
+    // instead (Strengthens this card's ability too)." (Suzaku – Hellfire Wings) — bônus no dano de
+    // ações "damage" (nunca dano de batalha, que nem passa por 'applyAction') vindas de carta vermelha
+    // sua; "Strengthens this card's ability too" já cai de graça (Suzaku entra na própria soma via fieldCardsOf).
+    re: /^When your red card would deal Damage other than battle damage to a Pal, deal \+(\d+) Damage instead\s*\.?$/i,
+    build: m => ({ type: 'redNonBattleDamageBonus', scope: 'self', amount: +m[1] })
   }
 ]
 
@@ -247,6 +267,11 @@ function parseXFormula(text) {
   if (/number of your gears|your number of gears/i.test(text)) return { type: 'countGears' }
   if (/number of your souls|your number of souls/i.test(text)) return { type: 'countSouls' }
   if (/this card's power/i.test(text)) return { type: 'selfPower' }
+  // "X is equal to the number of different card names among your structures with 《Antique》 in their
+  // card names" (Antique Curtain) — nomes DISTINTOS (não a quantidade de cópias) entre suas structures
+  // cujo nome contém o substring.
+  let m2 = /number of different card names among your structures with 《([^》]+)》 in their card names/i.exec(text)
+  if (m2) return { type: 'distinctStructureNameSubstring', substring: m2[1] }
   let m
   if ((m = /cost of the assigned Pal\s*([+-]\s*\d+)?/i.exec(text))) {
     return { type: 'costOfContextPal', modifier: m[1] ? parseInt(m[1].replace(/\s/g, ''), 10) : 0 }
@@ -262,7 +287,10 @@ function parseXFormula(text) {
 const PRECONDITION_PATTERNS = [
   { re: /^if you have a 〈Nocturnal〉 Pal in the rest state,\s*/i, id: 'hasRestingNocturnal' },
   { re: /^if there are no Pals exiled by this card in the exile zone,\s*/i, id: 'noExiledByThis' },
-  { re: /^if it is night,\s*/i, id: 'isNight' }
+  { re: /^if it is night,\s*/i, id: 'isNight' },
+  // "If you have not played any other cards during this game, draw 2 cards." (The Adventure Begins) —
+  // ver PlayerState.cardsPlayedThisGame, incrementado nos 4 pontos de entrada de "jogar carta da mão".
+  { re: /^if you have not played any other cards? during this game,\s*/i, id: 'noOtherCardsPlayedThisGame' }
 ]
 
 // Extrai uma precondição do dicionário fechado ANTES de stripAsides — algumas (ex: `hasRestingNocturnal`)
@@ -398,6 +426,70 @@ function parseGrantKeywordBuffClause(rawBody) {
   return null
 }
 
+// "Choose up to 1 ◇6 or less Pal, and rest it. While this card is in the base, that card does not
+// stand." (Relaxaurus – Hungry Gunner) — trava persistente: o Pal escolhido não levanta enquanto ESTA
+// carta (a fonte) continuar em campo, não só até o próximo stand phase. Libera quando a fonte sai
+// (ver _releaseStandLocksFrom em TurnManager, chamado de _sendToGraveyard/_returnToHand).
+function parseRestAndLockStandingClause(rawBody) {
+  const m = /^(.*?)\.\s*While this card is in the base, that card does not stand\.?$/i.exec(rawBody.trim())
+  if (!m) return null
+  const baseActions = parseClauseBody(stripAsides(m[1]) + '.')
+  const restAction = baseActions.find(a => a.type === 'rest' && a.target && a.target.mode === 'choose')
+  if (!restAction) return null
+  baseActions.push({ type: 'lockStandingWhileOnField', target: restAction.target })
+  return baseActions
+}
+
+// "..., and rest it. That card does not stand during your opponent's next stand phase." (Jormuntide –
+// Surging Sea Serpent) / "Choose 1 Pal, and it gets Strike -3 until end of turn. That card does not
+// stand during your opponent's next stand phase." (Crystal Breath) / "Choose up to 2 ◇6 or less Pals,
+// and rest them. Those cards do not stand during your opponent's next stand phase." (Hot Spring, alvo
+// múltiplo — singular/plural) — trava de UM turno só (ao contrário da Relaxaurus, que trava enquanto
+// ela ficar em campo): pula só a PRÓXIMA vez que o dono do Pal escolhido tiver um stand phase, depois
+// libera sozinho — não precisa de "rest" no texto base (Crystal Breath nem tem), só precisa existir
+// ALGUM alvo "choose" na cláusula pra amarrar a trava.
+function parseSkipNextStandClause(rawBody) {
+  const m = /^(.*?)\.\s*(?:That card does not|Those cards do not) stand during your opponent's next stand phase\.?$/i.exec(rawBody.trim())
+  if (!m) return null
+  const baseActions = parseClauseBody(stripAsides(m[1]) + '.')
+  const chooseAction = baseActions.find(a => a.target && a.target.mode === 'choose')
+  if (!chooseAction) return null
+  baseActions.push({ type: 'skipNextStandPhase', target: chooseAction.target })
+  return baseActions
+}
+
+// "If you have 3 or more Pals with 《My First》 in their different card names, choose all of your
+// Pals, and they get Power +1000/Strike +5 until end of turn." (The Adventure Begins) — threshold de
+// NOMES DISTINTOS contendo um substring (não uma contagem simples de cartas, e não uma fórmula de X);
+// por isso vira uma precondição paramétrica própria (objeto, não string id), em vez de entrar no
+// dicionário fechado PRECONDITION_PATTERNS (que só carrega um id fixo sem parâmetros).
+function parseDistinctNameThresholdClause(rawBody) {
+  const m = /^If you have (\d+) or more Pals with 《([^》]+)》 in their different card names,\s*(.*)$/i.exec(rawBody.trim())
+  if (!m) return null
+  const actions = parseClauseBody(stripAsides(m[3]))
+  if (!actions.length) return null
+  const precondition = { id: 'distinctPalNameSubstring', min: +m[1], substring: m[2] }
+  for (const a of actions) a.precondition = precondition
+  return actions
+}
+
+// "Choose up to 2 Pals without 〈Interrupt〉 from your graveyard, and return them to hand. It becomes
+// night until the end of the opponent's next turn." (Black Marketeer) — o filtro "without 〈X〉" usa
+// marcação 〈〉 pra carregar a keyword excluída, então precisa ler o corpo CRU (stripAsides apagaria);
+// "it becomes night" não depende da escolha, por isso entra ANTES do cardSelect no array retornado
+// (cardSelect sempre precisa ser a ÚLTIMA ação resolvida numa cláusula — ver resolveClauseActions).
+function parseGraveyardExcludeKeywordClause(rawBody) {
+  const m = /^Choose (up to \d+|\d+) Pals? without 〈([^〉]+)〉 from your graveyard,?\s*and return (?:it|them) to hand\.\s*(.*)$/i.exec(rawBody.trim())
+  if (!m) return null
+  const maxPicks = parseInt(/\d+/.exec(m[1])[0], 10)
+  const cardSelectAction = {
+    type: 'cardSelect', source: 'graveyard', mandatory: !/up to/i.test(m[1]), maxPicks,
+    filter: { cardTypes: ['Pal'], excludeKeyword: m[2] }, destination: 'hand', remainder: null, zeroBonus: null
+  }
+  const restActions = m[3] ? parseClauseBody(stripAsides(m[3])) : []
+  return [...restActions, cardSelectAction]
+}
+
 // "Stand all Pals assigned this turn. Until end of turn, your Pals cannot be assigned, and must
 // attack as much as possible (Includes Pals deployed after activating this ability)." (Alarm Bell) —
 // 3 efeitos de estado do JOGADOR (não de um alvo escolhido): reerguer quem foi assinalado neste
@@ -412,7 +504,24 @@ function parseStandAssignedForceAttackClause(rawBody) {
   ]
 }
 
+// "Declare 1 card name. Choose all of your cards, and they get that declared card name in addition
+// until end of turn." (Antique Dresser) — abre um modal com os nomes principais já presentes no seu
+// campo pro jogador escolher; a aplicação em si (grantedNamesUntilEndOfTurn) roda no engine.
+function parseDeclareNameClause(rawBody) {
+  if (!/^Declare 1 card name\.\s*Choose all of your cards,?\s*and they get that declared card name in addition until end of turn\.?$/i.test(rawBody.trim())) return null
+  return [{ type: 'declareNameForTeam' }]
+}
+
 function parseClauseBodyTopLevel(rawBody) {
+  const declareName = parseDeclareNameClause(rawBody)
+  if (declareName) return declareName
+
+  const graveyardExcludeKeyword = parseGraveyardExcludeKeywordClause(rawBody)
+  if (graveyardExcludeKeyword) return graveyardExcludeKeyword
+
+  const distinctNameThreshold = parseDistinctNameThresholdClause(rawBody)
+  if (distinctNameThreshold) return distinctNameThreshold
+
   const replaceBuffAndGrantAct = parseReplaceBuffAndGrantActIfMainNameClause(rawBody)
   if (replaceBuffAndGrantAct) return replaceBuffAndGrantAct
 
@@ -427,6 +536,12 @@ function parseClauseBodyTopLevel(rawBody) {
 
   const grantKeywordBuff = parseGrantKeywordBuffClause(rawBody)
   if (grantKeywordBuff) return grantKeywordBuff
+
+  const restAndLockStanding = parseRestAndLockStandingClause(rawBody)
+  if (restAndLockStanding) return restAndLockStanding
+
+  const skipNextStand = parseSkipNextStandClause(rawBody)
+  if (skipNextStand) return skipNextStand
 
   const standAssignedForceAttack = parseStandAssignedForceAttackClause(rawBody)
   if (standAssignedForceAttack) return standAssignedForceAttack
@@ -607,13 +722,26 @@ function parseClauseBody(body) {
 
   const usesXAmount = actions.some(a => a.amount === 'X')
   const usesXRepeat = actions.some(a => a.target && a.target.repeatsX)
-  if (usesXAmount || usesXRepeat) {
-    const formula = extractXFormula(cleaned) // null = X escolhido pelo jogador ao pagar o custo, não uma fórmula
+  // "Choose 1 cost X or less Pal, and exile it." (Viewing Cage) — X no FILTRO do alvo (não na
+  // quantidade escolhida nem na repetição), resolvido em resolveChooseAction via costMaxFormula/costMinFormula.
+  const usesXFilterCost = actions.some(a => a.target && a.target.filter && (a.target.filter.costMax === 'X' || a.target.filter.costMin === 'X'))
+  if (usesXAmount || usesXRepeat || usesXFilterCost) {
+    // "Choose up to 2 ◇6 or less Pals, ..." (Hot Spring) — número FIXO (não X), mesma repetição
+    // "escolhe 1, repete N vezes" já usada pra "up to X", só que a fórmula já é conhecida de cara.
+    const fixedRepeat = actions.map(a => a.target && a.target.repeatsFixed).find(v => v != null)
+    const formula = fixedRepeat != null ? { type: 'fixed', value: fixedRepeat } : extractXFormula(cleaned) // null = X escolhido pelo jogador ao pagar o custo, não uma fórmula
     if (usesXAmount) for (const a of actions) if (a.amount === 'X') a.amountFormula = formula
     if (usesXRepeat) {
       actions.repeats = true
       actions.repeatFormula = formula
-      for (const a of actions) if (a.target) delete a.target.repeatsX
+      for (const a of actions) if (a.target) { delete a.target.repeatsX; delete a.target.repeatsFixed }
+    }
+    if (usesXFilterCost && formula) {
+      for (const a of actions) {
+        if (!a.target || !a.target.filter) continue
+        if (a.target.filter.costMax === 'X') { a.target.filter.costMaxFormula = formula; delete a.target.filter.costMax }
+        if (a.target.filter.costMin === 'X') { a.target.filter.costMinFormula = formula; delete a.target.filter.costMin }
+      }
     }
   }
   return actions
@@ -717,7 +845,8 @@ function parseActLine(body) {
 // cair em unhandled do que fingir que funciona.
 function hasUnresolvedX(actions) {
   if (actions.repeats && !actions.repeatFormula) return true
-  return actions.some(a => a.amount === 'X' && !a.amountFormula)
+  if (actions.some(a => a.amount === 'X' && !a.amountFormula)) return true
+  return actions.some(a => a.target && a.target.filter && (a.target.filter.costMax === 'X' || a.target.filter.costMin === 'X'))
 }
 
 function pushClause(bucket, body, unhandled) {

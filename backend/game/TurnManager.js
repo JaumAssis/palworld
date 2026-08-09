@@ -7,9 +7,14 @@ const SOULS_PER_TURN = 2
 const OPENING_HAND_SIZE = 5
 
 class TurnManager {
-  constructor(player1, player2, p1GoesFirst) {
+  // player2IsBot: true = partida contra o Bot (comportamento original — player2 é sempre a IA);
+  // false = partida online entre 2 jogadores reais, onde player2 precisa ser tratado como humano
+  // em todo lugar que hoje deriva "isBot" só pela identidade (senão o motor "resolveria sozinho"
+  // escolhas do 2º jogador real em vez de pedir a decisão dele).
+  constructor(player1, player2, p1GoesFirst, player2IsBot = true) {
     this.player1 = player1
     this.player2 = player2
+    this.player2IsBot = player2IsBot
     this.player1.isFirstPlayer = p1GoesFirst
     this.player2.isFirstPlayer = !p1GoesFirst
     this.player1.turnManagerRef = this
@@ -78,7 +83,11 @@ class TurnManager {
     if (this.activePlayer.mustAttackAllUntilEndOfTurn && this.activePlayer.basePals.some(p => p.isStanding)) {
       return { success: false, reason: 'MUST_ATTACK' }
     }
-    this._endPhaseCleanup()
+    // "AUTO At the end of your turn, ..." (Shadowbeak) pode abrir uma escolha (ex: qual Pal butcher) —
+    // só passa a vez pro outro jogador DEPOIS que essa escolha (e a cadeia dela) terminar de resolver;
+    // ver _pendingEndTurnContinuation/_resumeAttackAfterTrigger.
+    const result = this._endPhaseCleanup()
+    if (result.paused) return { success: true, paused: true }
     this._endTurn()
     return { success: true }
   }
@@ -112,10 +121,11 @@ class TurnManager {
         this.setPhase('end')
         break
 
-      case 'end':
-        this._endPhaseCleanup()
-        this._endTurn()
+      case 'end': {
+        const result = this._endPhaseCleanup()
+        if (!result.paused) this._endTurn()
         break
+      }
     }
   }
 
@@ -143,13 +153,30 @@ class TurnManager {
 
     for (const p of [this.player1, this.player2]) {
       for (const pal of p.basePals) pal.grantedKeywordsUntilEndOfTurn = null
+      // "... they get that declared card name in addition until end of turn." (Antique Dresser) —
+      // vale pra Pal/Structure/Gear ("all of your cards"), não só Pal.
+      for (const c of [...p.basePals, ...p.baseStructures, ...p.baseGear]) c.grantedNamesUntilEndOfTurn = null
     }
 
-    const isBot = this.activePlayer === this.player2
+    const isBot = this.player2IsBot && this.activePlayer === this.player2
     const opponent = this.activePlayer === this.player1 ? this.player2 : this.player1
-    for (const pal of [...this.activePlayer.basePals]) {
-      EffectEngine.runTrigger(this, 'onEndOfTurn', pal, this.activePlayer, opponent, { isBot })
+    // "AUTO At the end of your turn, ..." não é só de Pal (ex: Shoddy Bed é Structure) — varre tudo
+    // que a carta tenha em campo, mesmo padrão do fieldCardsOf usado pra CONT em EffectEngine.
+    const fieldCards = [...this.activePlayer.basePals, ...this.activePlayer.baseStructures, ...this.activePlayer.baseGear]
+    return this._runEndOfTurnTriggers(fieldCards, 0, this.activePlayer, opponent, isBot)
+  }
+
+  // "AUTO At the end of your turn, ..." (Shadowbeak) roda um Pal por vez — se um pausar esperando
+  // escolha do jogador, guarda a continuação e SÓ chama _endTurn() depois que todos terminarem
+  // (ver endMainPhase/advancePhase e _resumeAttackAfterTrigger).
+  _runEndOfTurnTriggers(pals, index, activePlayerState, opponent, isBot) {
+    if (index >= pals.length) return { paused: false }
+    const result = EffectEngine.runTrigger(this, 'onEndOfTurn', pals[index], activePlayerState, opponent, { isBot })
+    if (result.paused) {
+      this._pendingEndTurnContinuation = { pals, index: index + 1, activePlayerState, opponent, isBot }
+      return { paused: true }
     }
+    return this._runEndOfTurnTriggers(pals, index + 1, activePlayerState, opponent, isBot)
   }
 
   _endTurn() {
@@ -184,10 +211,10 @@ class TurnManager {
     if (target.type === 'pal' && !EffectEngine.canBeAttackedBy(target.instance, attackerInstance)) {
       return { success: false, reason: 'TARGET_NOT_VALID' }
     }
-    // Structure (9.2.3): só é alvo válido se estiver descansada — sem equivalente a Assault
-    if (target.type === 'structure' && target.instance.isStanding) {
-      return { success: false, reason: 'TARGET_NOT_VALID' }
-    }
+    // Structure (9.2.3): pode ser atacada em qualquer estado — ao contrário do Pal (que só é alvo
+    // válido descansado, a menos que o atacante tenha Assault), a Structure não tem "estado de combate"
+    // nenhum; `isStanding`/`rest()` nela só existem pro custo das próprias habilidades ACT dela mesma
+    // (ex: "[Rest this card]"), não pra elegibilidade de ser atacada.
     const forcedTaunt = EffectEngine.getForcedTauntTargets(defenderState, attackerInstance)
     if (forcedTaunt.length > 0 && (target.type !== 'pal' || !forcedTaunt.includes(target.instance))) {
       return { success: false, reason: 'TAUNT_FORCED' }
@@ -234,6 +261,14 @@ class TurnManager {
       this._pendingClauseContinuation = null
       const result = EffectEngine.resumeClauseContinuation(this, clauseCont)
       if (!result.paused && !this.pendingEffect) this._resumeAttackAfterTrigger()
+      return
+    }
+    const endTurnCont = this._pendingEndTurnContinuation
+    if (endTurnCont) {
+      this._pendingEndTurnContinuation = null
+      const result = this._runEndOfTurnTriggers(endTurnCont.pals, endTurnCont.index, endTurnCont.activePlayerState, endTurnCont.opponent, endTurnCont.isBot)
+      // Só agora, com todos os "AUTO At the end of your turn" resolvidos, passa a vez de fato.
+      if (!result.paused && !this.pendingEffect) this._endTurn()
     }
   }
 
@@ -254,7 +289,7 @@ class TurnManager {
   // Passo 9.4 (Block) e 9.5 (Quick Step) — cada um só pausa de fato se houver escolha real
   // (mesma filosofia do pendingEffect: 0 opções válidas = pula automático).
   _advanceBattle(battle) {
-    const defenderIsBot = battle.defenderState === this.player2
+    const defenderIsBot = this.player2IsBot && battle.defenderState === this.player2
 
     if (!battle.blockResolved) {
       const validBlockers = EffectEngine.getValidBlockers(battle)
@@ -296,7 +331,7 @@ class TurnManager {
     this.pendingBattle = null
     const damageResult = skipDamage ? {} : this._resolveDamage(battle)
     if (!skipDamage) {
-      EffectEngine.runTrigger(this, 'onEndOfBattleAttacked', battle.attackerInstance, battle.attackerState, battle.defenderState, { isBot: battle.attackerState === this.player2 })
+      EffectEngine.runTrigger(this, 'onEndOfBattleAttacked', battle.attackerInstance, battle.attackerState, battle.defenderState, { isBot: this.player2IsBot && battle.attackerState === this.player2 })
     }
     battle.resolveWait()
     return { success: true, paused: false, nullified: skipDamage, ...damageResult }
@@ -415,7 +450,7 @@ class TurnManager {
     const { attackerInstance, attackerState, defenderState, target } = battle
 
     if (target.type === 'pal') {
-      EffectEngine.runTrigger(this, 'onAttacked', target.instance, defenderState, attackerState, { isBot: defenderState === this.player2 })
+      EffectEngine.runTrigger(this, 'onAttacked', target.instance, defenderState, attackerState, { isBot: this.player2IsBot && defenderState === this.player2 })
       return this.resolveBattle(attackerInstance, target.instance)
     }
 
@@ -424,13 +459,9 @@ class TurnManager {
       const power = attackerInstance.effectivePower(attackerState, defenderState)
       target.instance.damageMarked += power
       const structureDestroyed = target.instance.isDestroyed
-      if (structureDestroyed) {
-        const idx = defenderState.baseStructures.indexOf(target.instance)
-        if (idx !== -1) {
-          defenderState.baseStructures.splice(idx, 1)
-          defenderState.graveyard.push(target.instance.data)
-        }
-      }
+      // Via _sendToGraveyard (não splice direto) pra disparar onGraveyard/onLeaveBase da própria
+      // Structure destruída (ex: Wooden Wall "AUTO When this card is put into the graveyard, draw 1").
+      if (structureDestroyed) this._sendToGraveyard(target.instance, defenderState)
       return { structureDestroyed }
     }
 
@@ -510,26 +541,45 @@ class TurnManager {
     return false
   }
 
-  _sendToGraveyard(palInstance, ownerState) {
-    const idx = ownerState.basePals.indexOf(palInstance)
-    if (idx === -1) return
-    ownerState.basePals.splice(idx, 1)
-    ownerState.graveyard.push(palInstance.data)
-
-    const opponentState = ownerState === this.player1 ? this.player2 : this.player1
-    const isBot = ownerState !== this.player1
-    EffectEngine.runTrigger(this, 'onGraveyard', palInstance, ownerState, opponentState, { isBot })
-    EffectEngine.runTrigger(this, 'onLeaveBase', palInstance, ownerState, opponentState, { isBot })
+  // "While this card is in the base, that card does not stand" (Relaxaurus – Hungry Gunner) — libera
+  // qualquer Pal (de qualquer lado) travado por `leavingInstance`, assim que ela sai de campo.
+  _releaseStandLocksFrom(leavingInstance) {
+    for (const p of [...this.player1.basePals, ...this.player2.basePals]) {
+      if (p.standLockedBy) p.standLockedBy.delete(leavingInstance)
+    }
   }
 
-  _returnToHand(palInstance, ownerState) {
-    const idx = ownerState.basePals.indexOf(palInstance)
-    if (idx === -1) return
-    ownerState.basePals.splice(idx, 1)
-    ownerState.hand.push(palInstance.data)
+  // Descobre em qual das 3 zonas de campo (Pal/Structure/Gear) uma instância está — onGraveyard/
+  // onLeaveBase (Wooden Wall, Hanging Trap, Viewing Cage) valem pra Structure/Gear também, não só Pal.
+  _findBaseArray(instance, ownerState) {
+    if (ownerState.basePals.includes(instance)) return ownerState.basePals
+    if (ownerState.baseStructures.includes(instance)) return ownerState.baseStructures
+    if (ownerState.baseGear.includes(instance)) return ownerState.baseGear
+    return null
+  }
+
+  _sendToGraveyard(instance, ownerState) {
+    const array = this._findBaseArray(instance, ownerState)
+    if (!array) return
+    array.splice(array.indexOf(instance), 1)
+    ownerState.graveyard.push(instance.data)
+    this._releaseStandLocksFrom(instance)
 
     const opponentState = ownerState === this.player1 ? this.player2 : this.player1
-    EffectEngine.runTrigger(this, 'onLeaveBase', palInstance, ownerState, opponentState, { isBot: ownerState !== this.player1 })
+    const isBot = this.player2IsBot && ownerState !== this.player1
+    EffectEngine.runTrigger(this, 'onGraveyard', instance, ownerState, opponentState, { isBot })
+    EffectEngine.runTrigger(this, 'onLeaveBase', instance, ownerState, opponentState, { isBot })
+  }
+
+  _returnToHand(instance, ownerState) {
+    const array = this._findBaseArray(instance, ownerState)
+    if (!array) return
+    array.splice(array.indexOf(instance), 1)
+    ownerState.hand.push(instance.data)
+    this._releaseStandLocksFrom(instance)
+
+    const opponentState = ownerState === this.player1 ? this.player2 : this.player1
+    EffectEngine.runTrigger(this, 'onLeaveBase', instance, ownerState, opponentState, { isBot: this.player2IsBot && ownerState !== this.player1 })
   }
 
   // Devolve os Pals guardados em sourceInstance.exiledCards (exilados POR essa carta) pro campo
@@ -560,7 +610,7 @@ class TurnManager {
       }
     }
 
-    const isBot = casterState !== this.player1
+    const isBot = this.player2IsBot && casterState !== this.player1
     let instance
 
     if (cardData.card_type === 'Pal') {

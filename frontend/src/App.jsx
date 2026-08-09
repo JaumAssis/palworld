@@ -9,9 +9,14 @@ import MyCollection from './MyCollection'
 import Shop from './Shop'
 import Breeding from './Breeding'
 import Farming from './Farming'
+import TutorialSelect from './TutorialSelect'
+import TutorialMatch from './TutorialMatch'
+import FindMatchSelect from './FindMatchSelect'
+import FindMatchDeckSelect from './FindMatchDeckSelect'
 import { useLanguage } from './i18n/LanguageContext'
 import { translations } from './i18n/translations'
 import { useAuth } from './auth/AuthContext'
+import { useTheme } from './theme/ThemeContext'
 import { apiFetch } from './api'
 
 // Bloqueia rotas que exigem login (o backend já rejeita com 401; isso evita o "flash" da
@@ -21,6 +26,72 @@ function RequireAuth({ children }) {
   if (loading) return null
   if (!user) return <Navigate to="/" replace />
   return children
+}
+
+// Cor de destaque de cada rank da Arena — usada no quadrado de troféu e no popup de rank.
+const RANK_TIER_COLORS = {
+  bronze: '#a5682a',
+  silver: '#9aa5ad',
+  gold: '#d4af37',
+  platinum: '#4fb8af',
+  diamond: '#4fa3f7',
+  master: '#9b59b6',
+  legend: '#e5533d'
+}
+
+// Popup com o rank atual da Arena: tier, pontos e quanto falta pro próximo — abre ao clicar no
+// quadrado de troféu ao lado do botão de logout.
+function RankPopup({ onClose }) {
+  const { t } = useLanguage()
+  const [player, setPlayer] = useState(null)
+
+  useEffect(() => {
+    apiFetch('/api/player').then(r => r.json()).then(setPlayer)
+  }, [])
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+    }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '320px', textAlign: 'center', background: '#fff', borderRadius: '20px',
+        padding: '20px', boxShadow: '0 20px 60px rgba(0,0,0,0.4)'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+          <h2 style={{ margin: 0, color: '#222', fontSize: '17px' }}>{t('rankPopupTitle')}</h2>
+          <button onClick={onClose} style={{ padding: '4px 10px' }}>✕</button>
+        </div>
+
+        {!player && <p style={{ color: '#222' }}>{t('loading')}</p>}
+
+        {/* player.rank pode faltar se o backend ainda não tiver sido reiniciado depois da migração
+            da coluna rank_points, ou se a resposta vier com erro (ex.: sessão expirada) — evita
+            quebrar o popup inteiro nesse caso, só não mostra o bloco de rank. */}
+        {player && !player.rank && <p style={{ color: '#c0392b', fontSize: '13px' }}>{t('rankUnavailable')}</p>}
+
+        {player?.rank && (
+          <>
+            <div style={{
+              display: 'inline-block', padding: '8px 22px', borderRadius: '12px', color: '#fff',
+              fontWeight: 700, fontSize: '16px', marginBottom: '10px',
+              background: RANK_TIER_COLORS[player.rank.tierKey] || '#888'
+            }}>
+              🏆 {t(`rankTierName_${player.rank.tierKey}`)}
+            </div>
+            <p style={{ color: '#444', fontSize: '14px', margin: '6px 0' }}>
+              {t('rankPointsLabel', { points: player.rank.points })}
+            </p>
+            <p style={{ color: '#777', fontSize: '13px', margin: 0 }}>
+              {player.rank.isMaxRank
+                ? t('rankMaxReached')
+                : t('rankPointsToNext', { n: player.rank.pointsToNext, nextTier: t(`rankTierName_${player.rank.nextTierKey}`) })}
+            </p>
+          </>
+        )}
+      </div>
+    </div>
+  )
 }
 
 // Painel de login/cadastro — canto superior esquerdo do menu. Também mostra quem está logado.
@@ -33,14 +104,29 @@ function AuthPanel({ onBlockedAction }) {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [showRank, setShowRank] = useState(false)
 
   if (loading) return <div className="auth-panel" />
 
   if (user) {
     return (
-      <div className="auth-panel">
-        <p className="auth-panel-user">{t('authLoggedInAs', { username: user.username })}</p>
-        <button className="sign-button auth-submit" onClick={logout}>{t('authLogout')}</button>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+        <div className="auth-panel">
+          <p className="auth-panel-user">{t('authLoggedInAs', { username: user.username })}</p>
+          <button className="sign-button auth-submit" onClick={logout}>{t('authLogout')}</button>
+        </div>
+        <button
+          className="currency-badge"
+          onClick={() => setShowRank(true)}
+          title={t('rankButtonTitle')}
+          style={{
+            width: '42px', height: '42px', padding: 0, fontSize: '20px', cursor: 'pointer',
+            borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center'
+          }}
+        >
+          🏆
+        </button>
+        {showRank && <RankPopup onClose={() => setShowRank(false)} />}
       </div>
     )
   }
@@ -194,9 +280,9 @@ function MissionsPopup({ onClose }) {
 function MainMenu() {
   const { lang, toggleLang, t } = useLanguage()
   const { user } = useAuth()
+  const { isNight, toggleTheme } = useTheme()
   const [player, setPlayer] = useState(null)
   const [showMissions, setShowMissions] = useState(false)
-  const [isNight, setIsNight] = useState(false)
   const [popup, setPopup] = useState(null)
   const [authHint, setAuthHint] = useState(false)
 
@@ -233,7 +319,7 @@ function MainMenu() {
       <div style={{ position: 'fixed', top: '20px', right: '20px', display: 'flex', gap: '8px' }}>
         <button
           className="currency-badge"
-          onClick={() => setIsNight(n => !n)}
+          onClick={toggleTheme}
           style={{ padding: '8px 14px', fontSize: '18px', cursor: 'pointer' }}
         >
           {isNight ? '🌙' : '☀️'}
@@ -254,11 +340,12 @@ function MainMenu() {
       <h1 className="title-sign">Palworld TCG</h1>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxWidth: '300px', margin: '0 auto' }}>
+        <Link to="/tutorial"><button className="sign-button" style={{ width: '100%' }}>{t('menuTutorial')}</button></Link>
         <Link to="/catalog"><button className="sign-button" style={{ width: '100%' }}>{t('menuCatalog')}</button></Link>
         <Link to="/mycollection" onClick={guardedLinkClick}><button className="sign-button" style={{ width: '100%' }}>{t('menuCollection')}</button></Link>
         <Link to="/deckbuilder" onClick={guardedLinkClick}><button className="sign-button" style={{ width: '100%' }}>{t('menuDeckBuilder')}</button></Link>
         <Link to="/mydecks"><button className="sign-button" style={{ width: '100%' }}>{t('menuMyDecks')}</button></Link>
-        <button className="sign-button" style={{ width: '100%' }} disabled>{t('menuFindMatch')}</button>
+        <Link to="/findmatch" onClick={guardedLinkClick}><button className="sign-button" style={{ width: '100%' }}>{t('menuFindMatch')}</button></Link>
         <Link to="/game" onClick={guardedLinkClick}><button className="sign-button" style={{ width: '100%' }}>{t('menuBotMatch')}</button></Link>
       </div>
 
@@ -271,6 +358,15 @@ function MainMenu() {
         </button>
         <button className="sign-button" onClick={() => guard(() => setShowMissions(true))}>{t('menuDailyMissions')}</button>
       </div>
+
+      <p style={{
+        position: 'fixed', bottom: '6px', left: '50%', transform: 'translateX(-50%)', margin: 0,
+        textAlign: 'center', fontSize: '11px', color: '#fff', lineHeight: 1.4,
+        background: 'rgba(0,0,0,0.55)', borderRadius: '8px', padding: '8px 12px',
+        textShadow: '0 1px 3px rgba(0,0,0,0.6)', maxWidth: '90vw', pointerEvents: 'none'
+      }}>
+        {t('fanDisclaimer')}
+      </p>
 
       {showMissions && <MissionsPopup onClose={() => { setShowMissions(false); refreshPlayer() }} />}
 
@@ -305,6 +401,10 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<MainMenu />} />
+        <Route path="/tutorial" element={<TutorialSelect />} />
+        <Route path="/tutorial/web" element={<TutorialMatch />} />
+        <Route path="/findmatch" element={<RequireAuth><FindMatchSelect /></RequireAuth>} />
+        <Route path="/findmatch/:matchType" element={<RequireAuth><FindMatchDeckSelect /></RequireAuth>} />
         <Route path="/catalog" element={<CardGrid />} />
         <Route path="/mycollection" element={<RequireAuth><MyCollection /></RequireAuth>} />
         <Route path="/shop" element={<RequireAuth><Shop /></RequireAuth>} />

@@ -42,6 +42,9 @@ class PlayerState {
     this.assignedThisTurn = [] // Pals descansados por custo "[Assign N Pal(s)]" neste turno (Alarm Bell)
     this.cannotAssignUntilEndOfTurn = false // "Your Pals cannot be assigned" até o fim do turno (Alarm Bell)
     this.mustAttackAllUntilEndOfTurn = false // "must attack as much as possible" até o fim do turno (Alarm Bell)
+    // "If you have not played any other cards during this game, ..." (The Adventure Begins) — conta
+    // toda carta jogada da mão (Pal/Structure/Gear aqui; Event/Quick incrementado em server.js/EffectEngine).
+    this.cardsPlayedThisGame = 0
   }
 
   gainMaterial(amount) { this.material += amount }
@@ -97,7 +100,13 @@ class PlayerState {
     this.assignedThisTurn = []
     this.cannotAssignUntilEndOfTurn = false
     this.mustAttackAllUntilEndOfTurn = false
-    for (const pal of this.basePals) { pal.stand(); pal.actUsedThisTurn.clear() }
+    for (const pal of this.basePals) {
+      // "That card does not stand during your opponent's next stand phase" (Jormuntide, Crystal
+      // Breath) — pula SÓ esta vez e libera a flag; nas próximas o Pal volta a levantar normalmente.
+      if (pal.skipNextOwnStandPhase) pal.skipNextOwnStandPhase = false
+      else pal.stand()
+      pal.actUsedThisTurn.clear()
+    }
     for (const s of this.baseStructures) { s.stand(); s.actUsedThisTurn.clear() }
     for (const g of this.baseGear) { g.stand(); g.actUsedThisTurn.clear() }
   }
@@ -110,6 +119,7 @@ class PlayerState {
       return { success: false, reason: 'NOT_ENOUGH_SOUL' }
     }
     this.hand = this.hand.filter(c => c !== card)
+    this.cardsPlayedThisGame++
     const instance = new PalInstance(card)
     this.basePals.push(instance)
     return { success: true, instance }
@@ -120,6 +130,7 @@ class PlayerState {
       return { success: false, reason: 'NOT_ENOUGH_SOUL' }
     }
     this.hand = this.hand.filter(c => c !== card)
+    this.cardsPlayedThisGame++
     const instance = new StructureInstance(card)
     this.baseStructures.push(instance)
     return { success: true, instance }
@@ -134,6 +145,7 @@ class PlayerState {
     }
     this.nextGearDiscount = 0
     this.hand = this.hand.filter(c => c !== card)
+    this.cardsPlayedThisGame++
     const instance = new GearInstance(card)
     this.baseGear.push(instance)
     return { success: true, instance }
@@ -163,6 +175,9 @@ class PlayerState {
       handCount: this.hand.length,
       deckCount: this.deck.length,
       graveyardCount: this.graveyard.length,
+      // Cemitério é informação pública na regra (cartas descartadas ficam viradas pra cima) —
+      // manda a lista pra dar pra ver o que tem lá, não só a contagem.
+      graveyard: this.graveyard.map(c => ({ cardNumber: c.card_number, name: c.name, imageUrl: c.image_url })),
       basePals: this.basePals.map(p => ({
         cardNumber: p.data.card_number, name: p.data.name,
         isStanding: p.isStanding, damageMarked: p.damageMarked, power: p.effectivePower(this, opponentState),

@@ -13,6 +13,8 @@ class PalInstance {
     this.grantedActs = null // [ability, ...] — ACTs próprias cedidas até fim do turno (ex: Pengullet Rocket Launcher)
     this.tauntGrantedUntilTurn = null // nº do turno-limite pra Taunt cedido (ex: No Pals Beyond Sign) — ver hasGrantedTaunt
     this.grantedKeywordsUntilEndOfTurn = null // Set de keywords cedidas até fim do turno (ex: Digtoise ganha Breakthrough) — ver hasKeywordOrGranted
+    this.standLockedBy = null // Set de cartas cuja permanência em campo trava este Pal descansado (ex: Relaxaurus – Hungry Gunner)
+    this.skipNextOwnStandPhase = false // pula só a PRÓXIMA vez que o stand phase do dono rodar, depois libera sozinho (ex: Jormuntide, Crystal Breath)
     this.exiledCards = [] // { data, ownerState }[] — cartas exiladas POR esta carta (ver EffectEngine 'exile')
   }
 
@@ -33,6 +35,7 @@ class PalInstance {
 
   rest() { this.isStanding = false }
   stand() {
+    if (this.standLockedBy && this.standLockedBy.size > 0) return // ex: Relaxaurus – Hungry Gunner
     this.isStanding = true
     this.damageMarked = 0
   }

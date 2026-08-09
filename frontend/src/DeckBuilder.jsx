@@ -8,6 +8,13 @@ function countCopiesByNumber(deck, card) {
   return deck.filter(c => c.card_number === card.card_number).length
 }
 
+// Mantém o tamanho compacto que os filtros de tipo já tinham antes de virarem sign-button.
+const FILTER_BTN_STYLE = { padding: '4px 10px', fontSize: '12px' }
+
+const COLOR_SWATCH = {
+  Red: '#c62828', Blue: '#1565c0', Green: '#2e7d32', Purple: '#6a1b9a', Colorless: '#888'
+}
+
 function DeckBuilder() {
   const { t } = useLanguage()
   const [allCards, setAllCards] = useState([])
@@ -16,6 +23,8 @@ function DeckBuilder() {
   const [soulDeck, setSoulDeck] = useState([])
   const [chosenColors, setChosenColors] = useState(new Set())
   const [filterType, setFilterType] = useState('Todos')
+  const [filterColor, setFilterColor] = useState('Todos')
+  const [showColorMenu, setShowColorMenu] = useState(false)
   const [search, setSearch] = useState('')
   const [validationMsg, setValidationMsg] = useState('')
   const [hoveredCard, setHoveredCard] = useState(null)
@@ -220,6 +229,7 @@ function DeckBuilder() {
   // (o Soul Deck fica de fora dessa restrição — não é uma carta "de coleção")
   const filteredCollection = allCards.filter(c =>
     (filterType === 'Todos' || c.card_type === filterType) &&
+    (filterColor === 'Todos' || (c.colors || []).includes(filterColor)) &&
     c.name.toLowerCase().includes(search.toLowerCase()) &&
     (deckMode !== 'rank' || c.card_type === 'Soul' || getAvailable(c.card_number) > 0)
   )
@@ -240,11 +250,8 @@ function DeckBuilder() {
     }}>
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '16px', padding: '1rem', width: '100%', alignItems: 'start', boxSizing: 'border-box' }}>
       <div style={{ textAlign: 'left' }}>
-        <Link to="/"><button style={{ marginBottom: '12px' }}>{t('backToMenu')}</button></Link>
-        <a href="https://palworldtcg.gg/decks" target="_blank" rel="noopener noreferrer">
-          <button style={{ marginBottom: '12px', marginLeft: '8px' }}>{t('communityDecks')}</button>
-        </a>
-        <button onClick={() => setShowImport(true)} style={{ marginBottom: '12px', marginLeft: '8px' }}>
+        <Link to="/"><button className="sign-button" style={{ marginBottom: '12px' }}>{t('backToMenu')}</button></Link>
+        <button className="sign-button" onClick={() => setShowImport(true)} style={{ marginBottom: '12px', marginLeft: '8px' }}>
           {t('importDeck')}
         </button>
         <span style={{
@@ -253,13 +260,37 @@ function DeckBuilder() {
         }}>
           {deckMode === 'rank' ? '🏆 Rank' : '🎲 Normal'}
         </span>
-        <button onClick={() => setShowModeModal(true)} style={{ marginBottom: '12px', marginLeft: '8px' }}>
+        <button className="sign-button" onClick={() => setShowModeModal(true)} style={{ marginBottom: '12px', marginLeft: '8px' }}>
           {t('changeMode')}
         </button>
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap', position: 'relative' }}>
           {['Todos', 'Pal', 'Structure', 'Gear', 'Event', 'Soul'].map(type => (
-            <button key={type} onClick={() => setFilterType(type)}>{type === 'Todos' ? t('filterAll') : type}</button>
+            <button key={type} className="sign-button" style={FILTER_BTN_STYLE} onClick={() => setFilterType(type)}>{type === 'Todos' ? t('filterAll') : type}</button>
           ))}
+          <button className="sign-button" style={FILTER_BTN_STYLE} onClick={() => setShowColorMenu(v => !v)}>
+            {t('colorFilterButton')}{filterColor !== 'Todos' ? `: ${filterColor}` : ''}
+          </button>
+          {showColorMenu && (
+            <div style={{
+              position: 'absolute', top: '110%', left: 0, zIndex: 20,
+              background: '#2b1a10', border: '2px solid #c99a4e', borderRadius: '8px',
+              padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px'
+            }}>
+              {['Todos', 'Red', 'Blue', 'Green', 'Purple', 'Colorless'].map(color => (
+                <button
+                  key={color}
+                  className="sign-button"
+                  style={{ ...FILTER_BTN_STYLE, display: 'flex', alignItems: 'center', gap: '6px' }}
+                  onClick={() => { setFilterColor(color); setShowColorMenu(false) }}
+                >
+                  {color !== 'Todos' && (
+                    <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: COLOR_SWATCH[color], display: 'inline-block' }} />
+                  )}
+                  {color === 'Todos' ? t('filterAll') : color}
+                </button>
+              ))}
+            </div>
+          )}
           <input
             type="text"
             placeholder={t('searchCard')}

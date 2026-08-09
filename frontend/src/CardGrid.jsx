@@ -3,11 +3,21 @@ import { Link } from 'react-router-dom'
 import { useLanguage } from './i18n/LanguageContext'
 import { apiFetch } from './api'
 
+// Mantém o tamanho compacto que os filtros já tinham antes de virarem sign-button.
+const FILTER_BTN_STYLE = { padding: '6px 12px', fontSize: '13px' }
+const ACTIVE_FILTER_STYLE = { outline: '2px solid #ffcf7a', outlineOffset: '2px' }
+
+const COLOR_SWATCH = {
+  Red: '#c62828', Blue: '#1565c0', Green: '#2e7d32', Purple: '#6a1b9a', Colorless: '#888'
+}
+
 function CardGrid() {
   const { t } = useLanguage()
   const [cards, setCards] = useState([])
   const [loading, setLoading] = useState(true)
   const [filterType, setFilterType] = useState('Todos')
+  const [filterColor, setFilterColor] = useState('Todos')
+  const [showColorMenu, setShowColorMenu] = useState(false)
   const [search, setSearch] = useState('')
   const [selectedCard, setSelectedCard] = useState(null)
 
@@ -28,8 +38,9 @@ function CardGrid() {
 
   const filtered = cards.filter(card => {
     const matchesType = filterType === 'Todos' || card.card_type === filterType
+    const matchesColor = filterColor === 'Todos' || (card.colors || []).includes(filterColor)
     const matchesSearch = card.name.toLowerCase().includes(search.toLowerCase())
-    return matchesType && matchesSearch
+    return matchesType && matchesColor && matchesSearch
   })
 
   return (
@@ -38,30 +49,51 @@ function CardGrid() {
       background: 'radial-gradient(circle at 50% 40%, rgba(255,255,255,0.05), transparent 60%), #2b1a10',
       padding: '1rem', textAlign: 'left', overflowX: 'hidden'
     }}>
-      <Link to="/"><button style={{ marginBottom: '12px' }}>{t('backToMenu')}</button></Link>
+      <Link to="/"><button className="sign-button" style={{ marginBottom: '12px' }}>{t('backToMenu')}</button></Link>
       <h2 style={{
         fontFamily: "'Rye', Georgia, serif", color: '#f3e2b3', WebkitTextStroke: '1px #2b160a',
         textShadow: '2px 2px 0 #000, 0 0 14px rgba(0,0,0,0.6)'
       }}>{t('cardGridTitle', { filtered: filtered.length, total: cards.length })}</h2>
 
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap', position: 'relative' }}>
         {['Todos', 'Pal', 'Structure', 'Gear', 'Event'].map(type => (
           <button
             key={type}
+            className="sign-button"
             onClick={() => setFilterType(type)}
-            style={{
-              padding: '6px 12px',
-              fontWeight: filterType === type ? 'bold' : 'normal',
-              background: filterType === type ? '#333' : '#eee',
-              color: filterType === type ? '#fff' : '#000',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer'
-            }}
+            style={{ ...FILTER_BTN_STYLE, ...(filterType === type ? ACTIVE_FILTER_STYLE : {}) }}
           >
             {type === 'Todos' ? t('filterAll') : type}
           </button>
         ))}
+        <button
+          className="sign-button"
+          style={{ ...FILTER_BTN_STYLE, ...(filterColor !== 'Todos' ? ACTIVE_FILTER_STYLE : {}) }}
+          onClick={() => setShowColorMenu(v => !v)}
+        >
+          {t('colorFilterButton')}{filterColor !== 'Todos' ? `: ${filterColor}` : ''}
+        </button>
+        {showColorMenu && (
+          <div style={{
+            position: 'absolute', top: '110%', left: 0, zIndex: 20,
+            background: '#2b1a10', border: '2px solid #c99a4e', borderRadius: '8px',
+            padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px'
+          }}>
+            {['Todos', 'Red', 'Blue', 'Green', 'Purple', 'Colorless'].map(color => (
+              <button
+                key={color}
+                className="sign-button"
+                style={{ ...FILTER_BTN_STYLE, display: 'flex', alignItems: 'center', gap: '6px' }}
+                onClick={() => { setFilterColor(color); setShowColorMenu(false) }}
+              >
+                {color !== 'Todos' && (
+                  <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: COLOR_SWATCH[color], display: 'inline-block' }} />
+                )}
+                {color === 'Todos' ? t('filterAll') : color}
+              </button>
+            ))}
+          </div>
+        )}
         <input
           type="text"
           placeholder={t('searchCard')}

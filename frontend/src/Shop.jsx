@@ -189,7 +189,10 @@ function Shop({ onClose } = {}) {
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000
         }}>
-          <div style={{ background: '#fff', borderRadius: '16px', padding: '24px', maxWidth: '480px', textAlign: 'center' }}>
+          <div style={{
+            background: '#fff', borderRadius: '16px', padding: '24px', maxWidth: '480px', maxHeight: '85vh',
+            overflowY: 'auto', textAlign: 'center', boxSizing: 'border-box'
+          }}>
             <h3 style={{ marginTop: 0 }}>{t('cardsObtained')}</h3>
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center', marginBottom: '16px' }}>
               {revealedCards.map((c, i) => (
@@ -199,7 +202,7 @@ function Shop({ onClose } = {}) {
                 </div>
               ))}
             </div>
-            <button onClick={() => setRevealedCards(null)} style={{ padding: '10px 24px' }}>{t('close')}</button>
+            <button onClick={() => setRevealedCards(null)} style={{ padding: '10px 24px', position: 'sticky', bottom: 0 }}>{t('close')}</button>
           </div>
         </div>
       )}
