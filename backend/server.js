@@ -25,6 +25,10 @@ function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
 
 const app = express();
+// Em produção o Nginx termina o HTTPS e fala com o Node por HTTP simples — sem isso, o Express
+// acha que a conexão é insegura (req.secure=false) e recusa a mandar cookie com `secure: true`
+// (ver sessionMiddleware abaixo). 1 = confia só no proxy imediato (o próprio Nginx local).
+app.set('trust proxy', 1);
 // crossOriginResourcePolicy 'same-origin' (padrão do helmet) bloqueia o front (porta 5173)
 // de carregar as imagens das cartas servidas pelo back (porta 3001) — são origens diferentes
 // de propósito nesse projeto, então relaxamos só essa política.
@@ -42,6 +46,7 @@ const sessionMiddleware = session({
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
+  proxy: true, // idem trust proxy acima — precisa dos dois pra express-session confiar no X-Forwarded-Proto
   cookie: {
     httpOnly: true,
     sameSite: 'lax',
