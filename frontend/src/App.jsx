@@ -362,7 +362,7 @@ function LoginStreakPopup({ onClose }) {
   }
 
   const rewardIcon = (reward) => reward.booster ? '🎁' : '🪙'
-  const rewardLabel = (reward) => reward.booster ? t('loginStreakBoosterLabel') : reward.gold
+  const rewardLabel = (reward) => reward.booster ? t('loginStreakBoosterLabel') : `${reward.gold} · 💧${reward.fluid}`
 
   return (
     <div style={{
@@ -428,7 +428,7 @@ function LoginStreakPopup({ onClose }) {
                 </div>
               </>
             ) : (
-              <p style={{ fontWeight: 600, color: '#222' }}>{t('loginStreakGoldWon', { amount: result.goldGained })}</p>
+              <p style={{ fontWeight: 600, color: '#222' }}>{t('loginStreakGoldWon', { amount: result.goldGained, fluid: result.fluidGained })}</p>
             )}
           </div>
         )}

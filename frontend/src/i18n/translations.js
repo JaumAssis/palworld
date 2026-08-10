@@ -75,7 +75,7 @@ const pt = {
   loginStreakDone: '✓',
   loginStreakLocked: '🔒',
   loginStreakBoosterLabel: 'Booster',
-  loginStreakGoldWon: ({ amount }) => `+${amount} moedas de ouro!`,
+  loginStreakGoldWon: ({ amount, fluid }) => `+${amount} moedas de ouro e +${fluid} de Fluido de Pal!`,
   loginStreakBoosterWon: 'Você ganhou um booster do set BP01!',
   loginStreakAlreadyClaimed: 'Recompensa de hoje já resgatada.',
 
@@ -186,11 +186,12 @@ const pt = {
   addKindlingPlaceholder: '+ Pal Kindling',
   clickToSwap: 'Clique pra trocar',
   kindlingSuffix: ({ name }) => `${name} (Kindling)`,
-  ingredientsFor10: '10 de cada ingrediente',
+  ingredientsFor10: ({ qty }) => `${10 * qty} de cada ingrediente`,
   bakeCake: 'Assar Cake',
-  ingredientsFor30: '30 de cada ingrediente',
+  ingredientsFor30: ({ qty }) => `${30 * qty} de cada ingrediente`,
   bakeSpecialCake: 'Assar Special Cake',
   chooseKindlingFirst: 'Escolha um Pal com Kindling primeiro.',
+  bakeQuantityTimes: ({ qty }) => `x${qty}`,
   countdownMinSec: 'Pronto!',
 
   // ---------- MyCollection ----------
@@ -511,7 +512,7 @@ const en = {
   loginStreakDone: '✓',
   loginStreakLocked: '🔒',
   loginStreakBoosterLabel: 'Booster',
-  loginStreakGoldWon: ({ amount }) => `+${amount} gold coins!`,
+  loginStreakGoldWon: ({ amount, fluid }) => `+${amount} gold coins and +${fluid} Pal Fluid!`,
   loginStreakBoosterWon: 'You got a BP01 booster pack!',
   loginStreakAlreadyClaimed: "Today's reward has already been claimed.",
 
@@ -617,11 +618,12 @@ const en = {
   addKindlingPlaceholder: '+ Kindling Pal',
   clickToSwap: 'Click to swap',
   kindlingSuffix: ({ name }) => `${name} (Kindling)`,
-  ingredientsFor10: '10 of each ingredient',
+  ingredientsFor10: ({ qty }) => `${10 * qty} of each ingredient`,
   bakeCake: 'Bake Cake',
-  ingredientsFor30: '30 of each ingredient',
+  ingredientsFor30: ({ qty }) => `${30 * qty} of each ingredient`,
   bakeSpecialCake: 'Bake Special Cake',
   chooseKindlingFirst: 'Choose a Pal with Kindling first.',
+  bakeQuantityTimes: ({ qty }) => `x${qty}`,
   countdownMinSec: 'Ready!',
 
   // ---------- MyCollection ----------

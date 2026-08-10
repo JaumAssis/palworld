@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom'
 import { useLanguage } from './i18n/LanguageContext'
 import { apiFetch } from './api'
 
+const OVEN_RECIPE_AMOUNTS = { cake: 10, special_cake: 30 }
+
 function CardPicker({ onSelect, onClose, ownedPals, selectedNumbers, requiredKeywords }) {
   const { t } = useLanguage()
   const filtered = requiredKeywords
@@ -58,6 +60,7 @@ function Farming({ onClose } = {}) {
   const [pickingKindling, setPickingKindling] = useState(false)
   const [ovenStatus, setOvenStatus] = useState(null)
   const [ovenError, setOvenError] = useState('')
+  const [bakeQty, setBakeQty] = useState({ cake: 1, special_cake: 1 })
 
   useEffect(() => {
     loadOwnedPals()
@@ -140,17 +143,32 @@ function Farming({ onClose } = {}) {
     apiFetch('/api/farming/stop-repeat', { method: 'POST' }).then(loadStatus)
   }
 
+  // Quantas unidades dessa receita o jogador tem ingrediente pra fazer de uma vez (limita o botão "+").
+  const maxBakeQty = (type) => {
+    if (!player) return 1
+    return Math.max(0, Math.floor(Math.min(player.wheat, player.lettuce, player.tomato) / OVEN_RECIPE_AMOUNTS[type]))
+  }
+
+  const changeBakeQty = (type, delta) => {
+    setBakeQty(prev => {
+      const next = prev[type] + delta
+      if (next < 1 || next > maxBakeQty(type)) return prev
+      return { ...prev, [type]: next }
+    })
+  }
+
   const bake = (type) => {
     if (!kindlingPal) { alert(t('chooseKindlingFirst')); return }
     setOvenError('')
     apiFetch('/api/farming/bake', {
       method: 'POST',
-      body: JSON.stringify({ type, kindlingCardNumber: kindlingPal.card_number })
+      body: JSON.stringify({ type, kindlingCardNumber: kindlingPal.card_number, quantity: bakeQty[type] })
     })
       .then(async res => {
         const data = await res.json()
         if (!res.ok) throw new Error(data.error)
         setPlayer(data)
+        setBakeQty(prev => ({ ...prev, [type]: 1 }))
         loadOvenStatus()
         loadOwnedPals()
       })
@@ -311,7 +329,15 @@ function Farming({ onClose } = {}) {
                 <img src={ovenStatus.kindlingPal.image_url} alt={ovenStatus.kindlingPal.name} style={{ width: '60px', borderRadius: '6px' }} />
               )}
             </div>
-            <img src={ovenStatus.type === 'special_cake' ? '/Special_Cake_icon.webp' : '/Cake_icon.webp'} alt="" style={{ width: '50px' }} />
+            <div style={{ position: 'relative', display: 'inline-block' }}>
+              <img src={ovenStatus.type === 'special_cake' ? '/Special_Cake_icon.webp' : '/Cake_icon.webp'} alt="" style={{ width: '50px' }} />
+              {ovenStatus.quantity > 1 && (
+                <span style={{
+                  position: 'absolute', bottom: '-4px', right: '-10px', background: '#3a2410', color: '#fff',
+                  fontSize: '11px', fontWeight: 700, borderRadius: '10px', padding: '1px 6px'
+                }}>{t('bakeQuantityTimes', { qty: ovenStatus.quantity })}</span>
+              )}
+            </div>
             {ovenStatus.isReady ? (
               <>
                 <h4 style={{ margin: '8px 0' }}>{t('ovenReady')}</h4>
@@ -340,20 +366,29 @@ function Farming({ onClose } = {}) {
             </div>
 
             <div style={{ display: 'flex', gap: '16px', justifyContent: 'center', flexWrap: 'wrap' }}>
-              <div style={{ textAlign: 'center' }}>
-                <img src="/Cake_icon.webp" alt="Cake" style={{ width: '50px' }} />
-                <p style={{ fontSize: '12px' }}>{t('ingredientsFor10')}</p>
-                <button onClick={() => bake('cake')} disabled={!player || !kindlingPal || player.wheat < 10 || player.lettuce < 10 || player.tomato < 10}>
-                  {t('bakeCake')}
-                </button>
-              </div>
-              <div style={{ textAlign: 'center' }}>
-                <img src="/Special_Cake_icon.webp" alt="Special Cake" style={{ width: '50px' }} />
-                <p style={{ fontSize: '12px' }}>{t('ingredientsFor30')}</p>
-                <button onClick={() => bake('special_cake')} disabled={!player || !kindlingPal || player.wheat < 30 || player.lettuce < 30 || player.tomato < 30}>
-                  {t('bakeSpecialCake')}
-                </button>
-              </div>
+              {[{ type: 'cake', img: '/Cake_icon.webp', alt: 'Cake', ingredientsKey: 'ingredientsFor10', bakeKey: 'bakeCake' },
+                { type: 'special_cake', img: '/Special_Cake_icon.webp', alt: 'Special Cake', ingredientsKey: 'ingredientsFor30', bakeKey: 'bakeSpecialCake' }
+              ].map(({ type, img, alt, ingredientsKey, bakeKey }) => {
+                const qty = bakeQty[type]
+                const maxQty = maxBakeQty(type)
+                const amount = OVEN_RECIPE_AMOUNTS[type]
+                return (
+                  <div key={type} style={{ textAlign: 'center' }}>
+                    <img src={img} alt={alt} style={{ width: '50px' }} />
+                    <p style={{ fontSize: '12px' }}>{t(ingredientsKey, { qty })}</p>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginBottom: '6px' }}>
+                      <button type="button" onClick={() => changeBakeQty(type, -1)} disabled={qty <= 1}
+                              style={{ width: '26px', height: '26px', padding: 0, fontSize: '14px' }}>−</button>
+                      <strong style={{ fontSize: '14px', minWidth: '18px' }}>{qty}</strong>
+                      <button type="button" onClick={() => changeBakeQty(type, 1)} disabled={qty >= maxQty}
+                              style={{ width: '26px', height: '26px', padding: 0, fontSize: '14px' }}>+</button>
+                    </div>
+                    <button onClick={() => bake(type)} disabled={!player || !kindlingPal || player.wheat < amount * qty || player.lettuce < amount * qty || player.tomato < amount * qty}>
+                      {t(bakeKey)}
+                    </button>
+                  </div>
+                )
+              })}
             </div>
             {ovenError && <p style={{ color: 'red', fontSize: '12px', marginTop: '8px' }}>{ovenError}</p>}
           </>

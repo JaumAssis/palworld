@@ -1030,7 +1030,8 @@ db.exec(`
     type TEXT,
     kindling_card_number TEXT,
     start_time TEXT,
-    ready_time TEXT
+    ready_time TEXT,
+    quantity INTEGER NOT NULL DEFAULT 1
   )
 `);
 migrateToPlayerIdPk('oven_slot',
@@ -1039,10 +1040,12 @@ migrateToPlayerIdPk('oven_slot',
     type TEXT,
     kindling_card_number TEXT,
     start_time TEXT,
-    ready_time TEXT
+    ready_time TEXT,
+    quantity INTEGER NOT NULL DEFAULT 1
   )`,
-  ['type', 'kindling_card_number', 'start_time', 'ready_time']
+  ['type', 'kindling_card_number', 'start_time', 'ready_time', 'quantity']
 );
+try { db.exec('ALTER TABLE oven_slot ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1'); } catch (e) {}
 
 function getActiveOvenSlot(playerId) {
   return db.prepare('SELECT * FROM oven_slot WHERE player_id = ?').get(playerId);
@@ -1052,8 +1055,10 @@ app.post('/api/farming/bake', requirePlayer, (req, res) => {
   if (getActiveOvenSlot(req.playerId)) return res.status(400).json({ error: 'Já existe algo assando no forno.' });
 
   const { type, kindlingCardNumber } = req.body;
+  const quantity = Math.floor(Number(req.body.quantity) || 1);
   const recipe = OVEN_RECIPES[type];
   if (!recipe) return res.status(400).json({ error: 'Receita inválida.' });
+  if (quantity < 1) return res.status(400).json({ error: 'Quantidade inválida.' });
 
   if (!kindlingCardNumber) return res.status(400).json({ error: 'Escolha um Pal com Kindling pra acender o forno.' });
   if (getAvailableQuantity(req.playerId, kindlingCardNumber) < 1) return res.status(400).json({ error: 'Você não tem esse Pal disponível (ele pode estar ocupado em outra tarefa).' });
@@ -1061,25 +1066,28 @@ app.post('/api/farming/bake', requirePlayer, (req, res) => {
   const keywords = getPalWorkKeywords(kindlingCardNumber);
   if (!keywords.includes('kindling')) return res.status(400).json({ error: 'Esse Pal não tem "Kindling".' });
 
+  const totalNeeded = recipe.amount * quantity;
   const player = db.prepare('SELECT * FROM players WHERE id = ?').get(req.playerId);
-  if (player.wheat < recipe.amount || player.lettuce < recipe.amount || player.tomato < recipe.amount) {
-    return res.status(400).json({ error: `Precisa de ${recipe.amount} de cada ingrediente.` });
+  if (player.wheat < totalNeeded || player.lettuce < totalNeeded || player.tomato < totalNeeded) {
+    return res.status(400).json({ error: `Precisa de ${totalNeeded} de cada ingrediente pra fazer ${quantity}.` });
   }
 
   db.prepare(`
     UPDATE players SET wheat = wheat - ?, lettuce = lettuce - ?, tomato = tomato - ?
     WHERE id = ?
-  `).run(recipe.amount, recipe.amount, recipe.amount, req.playerId);
+  `).run(totalNeeded, totalNeeded, totalNeeded, req.playerId);
 
+  // O Pal na fornalha reduz o tempo de CADA bolo — a fila inteira demora reductionTime * quantidade.
   const reductionMinutes = computeBakeReductionMinutes(kindlingCard?.cost ?? 0);
-  const durationMs = Math.max(0, (OVEN_BASE_MINUTES - reductionMinutes) * 60 * 1000);
+  const perUnitMs = Math.max(0, (OVEN_BASE_MINUTES - reductionMinutes) * 60 * 1000);
+  const durationMs = perUnitMs * quantity;
   const startTime = new Date();
   const readyTime = new Date(startTime.getTime() + durationMs);
 
   db.prepare(`
-    INSERT INTO oven_slot (player_id, type, kindling_card_number, start_time, ready_time)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(req.playerId, type, kindlingCardNumber, startTime.toISOString(), readyTime.toISOString());
+    INSERT INTO oven_slot (player_id, type, kindling_card_number, start_time, ready_time, quantity)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(req.playerId, type, kindlingCardNumber, startTime.toISOString(), readyTime.toISOString(), quantity);
 
   reserveCards(req.playerId, [kindlingCardNumber]);
 
@@ -1095,6 +1103,7 @@ app.get('/api/farming/oven-status', requirePlayer, (req, res) => {
   res.json({
     active: true,
     type: slot.type,
+    quantity: slot.quantity,
     kindlingPal: kindlingCard ? { ...kindlingCard, colors: JSON.parse(kindlingCard.colors), image_url: `/${kindlingCard.image_path}` } : null,
     startTime: slot.start_time,
     readyTime: slot.ready_time,
@@ -1108,7 +1117,7 @@ app.post('/api/farming/oven-claim', requirePlayer, (req, res) => {
   if (new Date() < new Date(slot.ready_time)) return res.status(400).json({ error: 'Ainda não está pronto.' });
 
   const recipe = OVEN_RECIPES[slot.type];
-  db.prepare(`UPDATE players SET ${recipe.column} = ${recipe.column} + 1 WHERE id = ?`).run(req.playerId);
+  db.prepare(`UPDATE players SET ${recipe.column} = ${recipe.column} + ? WHERE id = ?`).run(slot.quantity, req.playerId);
   releaseCards(req.playerId, [slot.kindling_card_number]);
   db.prepare('DELETE FROM oven_slot WHERE player_id = ?').run(req.playerId);
 
@@ -1695,11 +1704,12 @@ app.post('/api/missions/claim', requirePlayer, (req, res) => {
 
 // ---------- RECOMPENSA DE LOGIN DIÁRIO (medalha ao lado das missões) ----------
 // Ciclo de 7 dias consecutivos: dia 1 começa em 10 moedas e sobe 5 por dia até o dia 5 (30),
-// o dia 6 dá 40 e o dia 7 dá 1 booster do set BP01. Se o jogador pular um dia (sem logar), a
-// sequência quebra e volta pro dia 1. Cada dia só pode ser resgatado uma vez.
+// o dia 6 dá 40 — junto com a moeda, cada um desses dias também dá Fluido de Pal, escalando em
+// 5 (5, 10, 15, 20, 25, 30) — e o dia 7 dá 1 booster do set BP01. Se o jogador pular um dia (sem
+// logar), a sequência quebra e volta pro dia 1. Cada dia só pode ser resgatado uma vez.
 const LOGIN_STREAK_REWARDS = {
-  1: { gold: 10 }, 2: { gold: 15 }, 3: { gold: 20 }, 4: { gold: 25 },
-  5: { gold: 30 }, 6: { gold: 40 }, 7: { booster: true }
+  1: { gold: 10, fluid: 5 }, 2: { gold: 15, fluid: 10 }, 3: { gold: 20, fluid: 15 }, 4: { gold: 25, fluid: 20 },
+  5: { gold: 30, fluid: 25 }, 6: { gold: 40, fluid: 30 }, 7: { booster: true }
 };
 
 db.exec(`
@@ -1795,8 +1805,9 @@ app.post('/api/login-streak/claim', requirePlayer, (req, res) => {
   }
 
   const newGold = player.gold_coins + reward.gold;
-  db.prepare('UPDATE players SET gold_coins = ? WHERE id = ?').run(newGold, req.playerId);
-  res.json({ currentDay, goldGained: reward.gold, goldCoins: newGold, palFluid: player.pal_fluid });
+  const newFluid = player.pal_fluid + reward.fluid;
+  db.prepare('UPDATE players SET gold_coins = ?, pal_fluid = ? WHERE id = ?').run(newGold, newFluid, req.playerId);
+  res.json({ currentDay, goldGained: reward.gold, fluidGained: reward.fluid, goldCoins: newGold, palFluid: newFluid });
 });
 
 // Compra um Trial Deck (500 moedas, compra única por set, dá 4 cópias de cada carta do set)
