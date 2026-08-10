@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useLanguage } from './i18n/LanguageContext'
+import { useAuth } from './auth/AuthContext'
 import { apiFetch } from './api'
 import { socket } from './socket'
 import {
@@ -15,8 +16,10 @@ import {
 // tabuleiro em si (cartas, popups, etc.) vem de GameBoardUI pra não duplicar aquele código.
 
 function FindMatchDeckSelect() {
-  const { t } = useLanguage()
+  const { t, lang } = useLanguage()
+  const { user } = useAuth()
   const CHOICE_LABELS = { rock: t('rockLabel'), paper: t('paperLabel'), scissors: t('scissorsLabel') }
+  const formatChatTime = (ts) => new Date(ts).toLocaleTimeString(lang === 'pt' ? 'pt-BR' : 'en-US', { hour: '2-digit', minute: '2-digit' })
   const { matchType } = useParams() // 'normal' ou 'arena'
   const isArena = matchType === 'arena'
 
@@ -25,6 +28,15 @@ function FindMatchDeckSelect() {
   const [selectedDeckId, setSelectedDeckId] = useState(null)
   const [errorMsg, setErrorMsg] = useState('')
   const [opponentName, setOpponentName] = useState('')
+  const [lobbyChatMessages, setLobbyChatMessages] = useState([])
+  const [lobbyChatInput, setLobbyChatInput] = useState('')
+  const [lobbyChatError, setLobbyChatError] = useState('')
+  const [challengeTarget, setChallengeTarget] = useState(null) // { playerId, username } — clicou num nick
+  const [challengeStatus, setChallengeStatus] = useState('') // mensagem de status do desafio que EU mandei
+  // Só o setter importa — sempre lido via forma funcional (prev => ...) pra comparar com o
+  // challengeId de um "expired" recebido, nunca precisa do valor em render.
+  const [, setOutgoingChallengeId] = useState(null)
+  const [incomingChallenge, setIncomingChallenge] = useState(null) // { challengeId, fromPlayerId, fromUsername, matchType }
 
   // ---------- setup da partida (Jokenpô / ordem / mulligan) ----------
   const [stage, setStage] = useState('selecting')
@@ -50,17 +62,33 @@ function FindMatchDeckSelect() {
   const seenDamageRevealIdRef = useRef(null)
   const damageRevealTimerRef = useRef(null)
   const logBoxRef = useRef(null)
+  const lobbyChatBoxRef = useRef(null)
   const stageRef = useRef(stage)
   useEffect(() => { stageRef.current = stage }, [stage])
 
-  // O *1.08 é de propósito: sem ele, a escala "de encaixe exato" deixa o tabuleiro sempre do
-  // mesmo tamanho relativo à tela — esse fator é o que de fato deixa o tabuleiro maior na tela.
-  // O segundo Math.min trava o resultado em 1.08 pra não explodir o corte nas bordas em janelas
-  // onde o encaixe "exato" já bate perto de 1 (telas grandes, pouca barra de navegador sobrando).
+  useEffect(() => {
+    if (!lobbyChatError) return
+    const timer = setTimeout(() => setLobbyChatError(''), 3000)
+    return () => clearTimeout(timer)
+  }, [lobbyChatError])
+
+  useEffect(() => {
+    if (lobbyChatBoxRef.current) lobbyChatBoxRef.current.scrollTop = lobbyChatBoxRef.current.scrollHeight
+  }, [lobbyChatMessages.length])
+
+  useEffect(() => {
+    if (!challengeStatus) return
+    const timer = setTimeout(() => setChallengeStatus(''), 4000)
+    return () => clearTimeout(timer)
+  }, [challengeStatus])
+
+  // Encaixe exato (sem multiplicador de "aumento") — é a única forma de garantir que nada corte
+  // nas bordas em NENHUMA resolução. Qualquer multiplicador > 1 aplicado aqui sobra pra fora do
+  // lado que está "no limite" (normalmente a altura), e o quanto isso corta cabeçalho/botões
+  // varia com a barra de navegador/tarefas de cada tela — testamos e ficava inconsistente.
   useEffect(() => {
     const updateScale = () => {
-      const fitScale = Math.min(window.innerWidth / BOARD_WIDTH, window.innerHeight / BOARD_HEIGHT)
-      setBoardScale(Math.min(fitScale * 1.08, 1.08))
+      setBoardScale(Math.min(window.innerWidth / BOARD_WIDTH, window.innerHeight / BOARD_HEIGHT, 1))
     }
     updateScale()
     window.addEventListener('resize', updateScale)
@@ -75,6 +103,10 @@ function FindMatchDeckSelect() {
 
     socket.on('match:found', ({ opponentName: name }) => {
       setOpponentName(name)
+      setChallengeTarget(null)
+      setChallengeStatus('')
+      setOutgoingChallengeId(null)
+      setIncomingChallenge(null)
       setStage('found')
     })
 
@@ -118,6 +150,32 @@ function FindMatchDeckSelect() {
       setStage('opponentLeft')
     })
 
+    // Chat de lobby: global (não é por sala), mas só ouvimos os eventos enquanto essa tela
+    // estiver montada — a caixa de chat só aparece na etapa "selecting" mesmo assim.
+    socket.on('lobbyChat:history', (history) => setLobbyChatMessages(history))
+    socket.on('lobbyChat:message', (msg) => setLobbyChatMessages(prev => [...prev, msg]))
+    socket.on('lobbyChat:error', ({ message }) => setLobbyChatError(message))
+
+    // Desafio direto (clicar no nick de alguém no chat)
+    socket.on('lobbyChat:challengeSent', ({ challengeId, targetUsername }) => {
+      setOutgoingChallengeId(challengeId)
+      setChallengeStatus(t('challengeSentMsg', { name: targetUsername }))
+    })
+    socket.on('lobbyChat:challengeReceived', (data) => setIncomingChallenge(data))
+    socket.on('lobbyChat:challengeDenied', ({ byUsername }) => {
+      setOutgoingChallengeId(null)
+      setChallengeStatus(t('challengeDeniedMsg', { name: byUsername }))
+    })
+    socket.on('lobbyChat:challengeExpired', ({ challengeId }) => {
+      setIncomingChallenge(prev => (prev?.challengeId === challengeId ? null : prev))
+      setOutgoingChallengeId(prev => {
+        if (prev !== challengeId) return prev
+        setChallengeStatus(t('challengeExpiredMsg'))
+        return null
+      })
+    })
+    socket.on('lobbyChat:challengeError', ({ message }) => setChallengeStatus(message))
+
     return () => {
       clearTimeout(damageRevealTimerRef.current)
       socket.off('match:queued')
@@ -128,6 +186,14 @@ function FindMatchDeckSelect() {
       socket.off('match:state')
       socket.off('match:error')
       socket.off('match:opponentLeft')
+      socket.off('lobbyChat:history')
+      socket.off('lobbyChat:message')
+      socket.off('lobbyChat:error')
+      socket.off('lobbyChat:challengeSent')
+      socket.off('lobbyChat:challengeReceived')
+      socket.off('lobbyChat:challengeDenied')
+      socket.off('lobbyChat:challengeExpired')
+      socket.off('lobbyChat:challengeError')
       // Só cancela a fila se ainda estiver procurando — depois que a partida existe, saindo daqui
       // (ex.: botão voltar) não desfaz a sessão, igual já acontece na partida contra o Bot.
       if (stageRef.current === 'searching') socket.emit('match:cancelFindMatch')
@@ -156,6 +222,33 @@ function FindMatchDeckSelect() {
   const cancelSearch = () => {
     socket.emit('match:cancelFindMatch')
     setStage('selecting')
+  }
+
+  const sendLobbyChat = () => {
+    const text = lobbyChatInput.trim()
+    if (!text) return
+    socket.emit('lobbyChat:send', { text })
+    setLobbyChatInput('')
+  }
+
+  const sendChallenge = () => {
+    if (!selectedDeckId || !challengeTarget) return
+    socket.emit('lobbyChat:challenge', {
+      targetPlayerId: challengeTarget.playerId,
+      deckId: selectedDeckId,
+      matchType: isArena ? 'arena' : 'normal'
+    })
+    setChallengeTarget(null)
+  }
+
+  const respondToChallenge = (accept) => {
+    if (!incomingChallenge) return
+    socket.emit('lobbyChat:challengeRespond', {
+      challengeId: incomingChallenge.challengeId,
+      accept,
+      deckId: selectedDeckId
+    })
+    setIncomingChallenge(null)
   }
 
   // ---------- ações: setup (Jokenpô / ordem / mulligan) ----------
@@ -299,6 +392,109 @@ function FindMatchDeckSelect() {
             >
               {t('findMatchSearchButton')}
             </button>
+          </div>
+        )}
+
+        {/* ---------- CHAT ---------- */}
+        <div style={{
+          margin: '30px auto 0', maxWidth: '900px',
+          background: '#000', border: '3px solid #c99a4e', borderRadius: '20px',
+          padding: '14px', display: 'flex', flexDirection: 'column', gap: '10px'
+        }}>
+          <div ref={lobbyChatBoxRef} style={{
+            background: 'rgba(0,0,0,0.55)', border: '2px solid #c99a4e', borderRadius: '14px',
+            padding: '12px', height: '260px', overflowY: 'auto', textAlign: 'left'
+          }}>
+            {lobbyChatMessages.length === 0 ? (
+              <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '13px', margin: 0 }}>{t('lobbyChatEmpty')}</p>
+            ) : (
+              lobbyChatMessages.map((msg, i) => {
+                const isOwnMessage = msg.author === user?.username
+                return (
+                  <p key={i} style={{ color: '#f3e2b3', fontSize: '13px', margin: '4px 0' }}>
+                    <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: '11px' }}>{formatChatTime(msg.ts)}</span>{' '}
+                    {isOwnMessage ? (
+                      <strong>{msg.author}:</strong>
+                    ) : (
+                      <strong
+                        onClick={() => setChallengeTarget({ playerId: msg.playerId, username: msg.author })}
+                        title={t('challengeNickTitle')}
+                        style={{ cursor: 'pointer', textDecoration: 'underline dotted' }}
+                      >{msg.author}:</strong>
+                    )}
+                    {' '}{msg.text}
+                  </p>
+                )
+              })
+            )}
+          </div>
+          {lobbyChatError && <p style={{ color: '#ff8a8a', fontSize: '12px', margin: 0 }}>{lobbyChatError}</p>}
+          {challengeStatus && <p style={{ color: '#ffd76a', fontSize: '12px', margin: 0 }}>{challengeStatus}</p>}
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <input
+              type="text"
+              value={lobbyChatInput}
+              onChange={e => setLobbyChatInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && sendLobbyChat()}
+              placeholder={t('lobbyChatPlaceholder')}
+              style={{
+                flex: 1, padding: '10px 14px', borderRadius: '10px', border: '2px solid #8a5a2e',
+                background: '#fdf6e3', color: '#3a2410', fontSize: '13px'
+              }}
+            />
+            <button className="sign-button" onClick={sendLobbyChat}>{t('lobbyChatSend')}</button>
+          </div>
+        </div>
+
+        {challengeTarget && (
+          <div onClick={() => setChallengeTarget(null)} style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100
+          }}>
+            <div onClick={e => e.stopPropagation()} style={{
+              width: '380px', maxWidth: '90vw', background: '#fff', borderRadius: '14px',
+              padding: '24px', boxShadow: '0 20px 60px rgba(0,0,0,0.5)', textAlign: 'center'
+            }}>
+              <h3 style={{ marginTop: 0, color: '#222' }}>{t('challengeConfirmQuestion', { name: challengeTarget.username })}</h3>
+              {!selectedDeckId && <p style={{ color: '#a5541b', fontSize: '12px' }}>{t('challengeNeedDeckHint')}</p>}
+              <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
+                <button
+                  onClick={sendChallenge}
+                  disabled={!selectedDeckId}
+                  style={{ flex: 1, padding: '14px 10px', fontSize: '13px', background: '#a5541b', color: '#fff', border: 'none', borderRadius: '8px', cursor: selectedDeckId ? 'pointer' : 'not-allowed', opacity: selectedDeckId ? 1 : 0.5 }}>
+                  {t('challengeConfirmSend')}
+                </button>
+                <button onClick={() => setChallengeTarget(null)} style={{ flex: 1, padding: '14px 10px', fontSize: '13px', background: '#888', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
+                  {t('challengeConfirmCancel')}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {incomingChallenge && (
+          <div style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100
+          }}>
+            <div style={{
+              width: '380px', maxWidth: '90vw', background: '#fff', borderRadius: '14px',
+              padding: '24px', boxShadow: '0 20px 60px rgba(0,0,0,0.5)', textAlign: 'center'
+            }}>
+              <h3 style={{ marginTop: 0, color: '#222' }}>{t('challengeReceivedQuestion', { name: incomingChallenge.fromUsername })}</h3>
+              {!selectedDeckId && <p style={{ color: '#a5541b', fontSize: '12px' }}>{t('challengeNeedDeckHint')}</p>}
+              <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
+                <button
+                  onClick={() => respondToChallenge(true)}
+                  disabled={!selectedDeckId}
+                  style={{ flex: 1, padding: '14px 10px', fontSize: '13px', background: '#3f6b3f', color: '#fff', border: 'none', borderRadius: '8px', cursor: selectedDeckId ? 'pointer' : 'not-allowed', opacity: selectedDeckId ? 1 : 0.5 }}>
+                  {t('challengeAccept')}
+                </button>
+                <button onClick={() => respondToChallenge(false)} style={{ flex: 1, padding: '14px 10px', fontSize: '13px', background: '#888', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
+                  {t('challengeDeny')}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -464,6 +660,12 @@ function FindMatchDeckSelect() {
       {standing} standing / {rested} rested
     </div>
   )
+
+  // Margem real sobrando à esquerda do tabuleiro escalado (o próprio tabuleiro é centralizado
+  // pelo flex do container). O quadro de log nunca pode passar dessa margem, senão sobrepõe o
+  // tabuleiro em telas mais estreitas/baixas.
+  const boardLeftMargin = Math.max(0, (window.innerWidth - BOARD_WIDTH * boardScale) / 2)
+  const logPanelWidth = Math.min(160, boardLeftMargin - 10)
 
   return (
     <div onClick={() => selectedPalIndex !== null && setSelectedPalIndex(null)} style={{
@@ -814,10 +1016,12 @@ function FindMatchDeckSelect() {
 
       {/* ---------- LOG DE JOGADAS: faixa fina e alta encostada na borda esquerda real da tela
           (fora do canvas escalado — não muda tamanho/escala de nada do tabuleiro). Rola
-          internamente, sempre mostrando a entrada mais recente no fundo. ---------- */}
-      {log && log.length > 0 && (
+          internamente, sempre mostrando a entrada mais recente no fundo. A largura é limitada pela
+          margem sobrando à esquerda do tabuleiro escalado (senão, em telas mais estreitas/baixas,
+          o quadro fixo de 160px passa a sobrepor o próprio tabuleiro). ---------- */}
+      {log && log.length > 0 && logPanelWidth >= 50 && (
         <div ref={logBoxRef} style={{
-          position: 'absolute', left: '2px', top: '45px', bottom: '60px', width: '160px',
+          position: 'absolute', left: '2px', top: '45px', bottom: '60px', width: `${logPanelWidth}px`,
           background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(201,154,78,0.5)',
           color: '#fff', fontSize: '10px', borderRadius: '8px', padding: '8px',
           lineHeight: 1.5, overflowY: 'auto', pointerEvents: 'none', textAlign: 'left'

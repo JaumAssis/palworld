@@ -11,6 +11,21 @@ const COLOR_STYLES = {
   Colorless: { bg: '#eee', text: '#555' }
 }
 
+// Mesma tabela usada no backend/MyCollection — OSR/SP/SSP/TSP ficam de fora de propósito
+// (só saem via Breeding/booster/mercado, nunca craft).
+const CRAFT_COSTS = { RR: 100, R: 50, U: 30, C: 15, SR: 150, TSR: 150 }
+const getCraftCost = (card) => {
+  if (CRAFT_COSTS[card.rarity]) return CRAFT_COSTS[card.rarity]
+  if (card.rarity === 'TD') {
+    const cost = card.cost ?? 8
+    if (cost >= 1 && cost <= 3) return 15
+    if (cost >= 4 && cost <= 6) return 30
+    if (cost === 7) return 50
+    return 100
+  }
+  return null
+}
+
 function ColorChip({ color }) {
   const style = COLOR_STYLES[color] || COLOR_STYLES.Colorless
   return (
@@ -88,10 +103,10 @@ function DeckList() {
                 cursor: 'pointer',
                 borderRadius: '16px',
                 overflow: 'hidden',
-                border: '3px solid #c99a4e',
+                border: deck.isDraft ? '3px solid #888' : '3px solid #c99a4e',
                 boxShadow: '0 2px 10px rgba(0,0,0,0.35)',
                 transition: 'transform 0.15s, box-shadow 0.15s',
-                background: '#fff'
+                background: deck.isDraft ? '#ccc' : '#fff'
               }}
               onMouseEnter={e => {
                 e.currentTarget.style.transform = 'translateY(-4px)'
@@ -140,12 +155,26 @@ function DeckList() {
                   padding: '3px 8px', borderRadius: '999px', color: '#fff',
                   background: deck.mode === 'rank' ? '#a5541b' : '#3f6b3f'
                 }}>{deck.mode === 'rank' ? '🏆 Rank' : '🎲 Normal'}</span>
+                {deck.isDraft && (
+                  <span style={{
+                    position: 'absolute', top: '8px', left: '8px', fontSize: '10px', fontWeight: 700,
+                    padding: '3px 8px', borderRadius: '999px', color: '#fff', background: '#555'
+                  }}>{t('draftBadge')}</span>
+                )}
               </div>
               <div style={{ padding: '14px', position: 'relative' }}>
                 <h3 style={{ margin: '0 0 4px', fontSize: '16px' }}>{deck.name}</h3>
                 <p style={{ margin: 0, fontSize: '12px', color: '#999' }}>
                   {t('createdAt', { date: new Date(deck.created_at).toLocaleDateString(lang === 'pt' ? 'pt-BR' : 'en-US') })}
                 </p>
+                <span
+                  onClick={e => { e.stopPropagation(); navigate(`/deckbuilder/${deck.id}`) }}
+                  title={t('editDeckTitle', { name: deck.name })}
+                  style={{
+                    position: 'absolute', bottom: '10px', left: '10px', fontSize: '18px',
+                    cursor: 'pointer', lineHeight: 1
+                  }}
+                >📝</span>
                 <span
                   onClick={e => { e.stopPropagation(); setDeleteError(''); setDeckToDelete(deck) }}
                   title={t('deleteDeckConfirm', { name: deck.name })}
@@ -195,12 +224,35 @@ function DeckDetail() {
   const [deck, setDeck] = useState(null)
   const [loading, setLoading] = useState(true)
   const [zoomCard, setZoomCard] = useState(null)
+  const [ownedMap, setOwnedMap] = useState({})
+  const [palFluid, setPalFluid] = useState(0)
+  const [craftMsg, setCraftMsg] = useState('')
+  const [crafting, setCrafting] = useState(false)
+  const [craftAllMsg, setCraftAllMsg] = useState('')
+  const [craftingAll, setCraftingAll] = useState(false)
+
+  const loadOwnedCards = () => {
+    apiFetch('/api/player/cards').then(res => res.json()).then(rows => {
+      const map = {}
+      rows.forEach(r => { map[r.card_number] = { quantity: r.quantity, reserved: r.reserved } })
+      setOwnedMap(map)
+    })
+  }
 
   useEffect(() => {
     apiFetch(`/api/decks/${id}`)
       .then(res => res.json())
       .then(data => { setDeck(data); setLoading(false) })
+    loadOwnedCards()
+    apiFetch('/api/player').then(res => res.json()).then(p => setPalFluid(p.pal_fluid))
   }, [id])
+
+  // Quantas cópias dessa carta o jogador tem disponíveis agora (só importa pra deck Rank).
+  const getAvailable = (cardNumber) => {
+    const entry = ownedMap[cardNumber]
+    if (!entry) return 0
+    return Math.max(0, entry.quantity - entry.reserved)
+  }
 
   if (loading) return <p style={{ padding: '2rem' }}>{t('deckLoading')}</p>
   if (!deck) return <p style={{ padding: '2rem' }}>{t('deckNotFound')}</p>
@@ -217,24 +269,71 @@ function DeckDetail() {
   const mainGrouped = groupCards(deck.mainDeck)
   const soulGrouped = groupCards(deck.soulDeck)
 
-  const CardTile = ({ card, count }) => (
-    <div key={card.card_number} style={{ textAlign: 'center' }}>
-      <div
-        style={{ position: 'relative', cursor: 'pointer' }}
-        onClick={() => setZoomCard(card)}
-      >
-        <img src={card.image_url} alt={card.name}
-             style={{ width: '100%', borderRadius: '8px', boxShadow: '0 2px 6px rgba(0,0,0,0.4)', border: '2px solid #c99a4e' }}
-             onError={e => e.target.style.display = 'none'} />
-        <span style={{
-          position: 'absolute', bottom: '4px', right: '4px',
-          background: 'rgba(0,0,0,0.75)', color: '#fff',
-          fontSize: '11px', fontWeight: 700, padding: '2px 6px', borderRadius: '6px'
-        }}>x{count}</span>
+  const missingCount = (card, count) => deck.mode === 'rank' ? Math.max(0, count - getAvailable(card.card_number)) : 0
+
+  const totalMissingCost = () => {
+    let total = 0
+    for (const { card, count } of mainGrouped) {
+      const missing = missingCount(card, count)
+      const cost = getCraftCost(card)
+      if (missing > 0 && cost) total += missing * cost
+    }
+    return total
+  }
+
+  const handleCraft = (card) => {
+    setCrafting(true)
+    setCraftMsg('')
+    apiFetch('/api/collection/craft', { method: 'POST', body: JSON.stringify({ cardNumber: card.card_number }) })
+      .then(async res => {
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error)
+        setPalFluid(data.palFluid)
+        setOwnedMap(prev => ({ ...prev, [card.card_number]: { quantity: data.newQuantity, reserved: prev[card.card_number]?.reserved || 0 } }))
+      })
+      .catch(err => setCraftMsg(err.message || t('saveDeckError')))
+      .finally(() => setCrafting(false))
+  }
+
+  const handleCraftAll = () => {
+    setCraftingAll(true)
+    setCraftAllMsg('')
+    apiFetch(`/api/decks/${id}/craft-missing`, { method: 'POST' })
+      .then(async res => {
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error)
+        setDeck(prev => ({ ...prev, isDraft: data.isDraft }))
+        setPalFluid(data.palFluid)
+        loadOwnedCards()
+      })
+      .catch(err => setCraftAllMsg(err.message || t('saveDeckError')))
+      .finally(() => setCraftingAll(false))
+  }
+
+  const CardTile = ({ card, count }) => {
+    const missing = missingCount(card, count)
+    return (
+      <div key={card.card_number} style={{ textAlign: 'center' }}>
+        <div
+          style={{ position: 'relative', cursor: 'pointer' }}
+          onClick={() => { setCraftMsg(''); setZoomCard(card) }}
+        >
+          <img src={card.image_url} alt={card.name}
+               style={{
+                 width: '100%', borderRadius: '8px', boxShadow: '0 2px 6px rgba(0,0,0,0.4)', border: '2px solid #c99a4e',
+                 filter: missing > 0 ? 'grayscale(100%)' : 'none', opacity: missing > 0 ? 0.35 : 1
+               }}
+               onError={e => e.target.style.display = 'none'} />
+          <span style={{
+            position: 'absolute', bottom: '4px', right: '4px',
+            background: 'rgba(0,0,0,0.75)', color: '#fff',
+            fontSize: '11px', fontWeight: 700, padding: '2px 6px', borderRadius: '6px'
+          }}>x{count}</span>
+        </div>
+        <p style={{ fontSize: '11px', margin: '4px 0 0', color: '#d9c4a3', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>{card.name}</p>
       </div>
-      <p style={{ fontSize: '11px', margin: '4px 0 0', color: '#d9c4a3', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>{card.name}</p>
-    </div>
-  )
+    )
+  }
 
   return (
     <div style={{
@@ -257,6 +356,11 @@ function DeckDetail() {
           fontSize: '11px', fontWeight: 700, padding: '4px 10px', borderRadius: '999px', color: '#fff',
           background: deck.mode === 'rank' ? '#a5541b' : '#3f6b3f'
         }}>{deck.mode === 'rank' ? '🏆 Rank' : '🎲 Normal'}</span>
+        {deck.isDraft && (
+          <span style={{
+            fontSize: '11px', fontWeight: 700, padding: '4px 10px', borderRadius: '999px', color: '#fff', background: '#555'
+          }}>{t('draftBadge')}</span>
+        )}
       </div>
 
       <h3 style={{ marginBottom: '10px', color: '#f3e2b3', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>{t('mainDeckCount', { n: deck.mainDeck.length })}</h3>
@@ -281,27 +385,76 @@ function DeckDetail() {
           <CardTile key={card.card_number} card={card} count={count} />
         ))}
       </div>
-    </div>
 
-      {zoomCard && (
-        <div onClick={() => setZoomCard(null)} style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, cursor: 'zoom-out'
-        }}>
-          <div onClick={e => e.stopPropagation()} style={{ textAlign: 'center' }}>
-            <img src={zoomCard.image_url} alt={zoomCard.name}
-                 style={{
-                   maxWidth: '90vw', maxHeight: '80vh', borderRadius: '14px',
-                   border: '4px solid #c99a4e', boxShadow: '0 12px 36px rgba(0,0,0,0.6)'
-                 }} />
-            <p style={{
-              marginTop: '12px', color: '#f3e2b3', fontSize: '16px',
-              textShadow: '2px 2px 0 #000'
-            }}>{zoomCard.name}</p>
-            <button onClick={() => setZoomCard(null)} style={{ marginTop: '8px', padding: '8px 18px' }}>{t('close')}</button>
-          </div>
+      {deck.mode === 'rank' && (
+        <div style={{ marginTop: '30px', textAlign: 'center' }}>
+          {totalMissingCost() > 0 ? (
+            <>
+              <button
+                onClick={handleCraftAll}
+                disabled={craftingAll || palFluid < totalMissingCost()}
+                className="sign-button"
+                style={{ opacity: (craftingAll || palFluid < totalMissingCost()) ? 0.5 : 1 }}
+              >
+                {t('craftAllButton', { cost: totalMissingCost() })}
+              </button>
+              {craftAllMsg && <p style={{ color: '#e57373', fontSize: '12px', marginTop: '8px' }}>{craftAllMsg}</p>}
+            </>
+          ) : (
+            <p style={{ color: '#6cf25a', fontSize: '13px' }}>{t('deckCompleteMsg')}</p>
+          )}
         </div>
       )}
+    </div>
+
+      {zoomCard && (() => {
+        const groupedEntry = [...mainGrouped, ...soulGrouped].find(g => g.card.card_number === zoomCard.card_number)
+        const count = groupedEntry ? groupedEntry.count : 1
+        const missing = missingCount(zoomCard, count)
+        const cost = getCraftCost(zoomCard)
+        const canAfford = palFluid >= (cost || 0)
+        return (
+          <div onClick={() => setZoomCard(null)} style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, cursor: 'zoom-out'
+          }}>
+            <div onClick={e => e.stopPropagation()} style={{ textAlign: 'center' }}>
+              <img src={zoomCard.image_url} alt={zoomCard.name}
+                   style={{
+                     maxWidth: '90vw', maxHeight: '80vh', borderRadius: '14px',
+                     border: '4px solid #c99a4e', boxShadow: '0 12px 36px rgba(0,0,0,0.6)',
+                     filter: missing > 0 ? 'grayscale(100%)' : 'none', opacity: missing > 0 ? 0.6 : 1
+                   }} />
+              <p style={{
+                marginTop: '12px', color: '#f3e2b3', fontSize: '16px',
+                textShadow: '2px 2px 0 #000'
+              }}>{zoomCard.name}</p>
+
+              {missing > 0 && (
+                <div style={{ marginTop: '10px' }}>
+                  <p style={{ color: '#ffcf7a', fontSize: '13px' }}>{t('missingCopiesMsg', { missing })}</p>
+                  {cost ? (
+                    <>
+                      <p style={{ color: '#d9c4a3', fontSize: '12px' }}>{t('yourPalFluid')} <strong>{palFluid}</strong>{t('costSuffix', { cost })}</p>
+                      <button
+                        onClick={() => handleCraft(zoomCard)}
+                        disabled={crafting || !canAfford}
+                        style={{ padding: '10px 20px', fontWeight: 600, opacity: (crafting || !canAfford) ? 0.5 : 1 }}>
+                        {t('craftBtn', { cost })}
+                      </button>
+                    </>
+                  ) : (
+                    <p style={{ color: '#d9c4a3', fontSize: '12px' }}>{t('cannotCraftRarity')}</p>
+                  )}
+                  {craftMsg && <p style={{ color: '#e57373', fontSize: '12px', marginTop: '6px' }}>{craftMsg}</p>}
+                </div>
+              )}
+
+              <button onClick={() => setZoomCard(null)} style={{ marginTop: '10px', padding: '8px 18px' }}>{t('close')}</button>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

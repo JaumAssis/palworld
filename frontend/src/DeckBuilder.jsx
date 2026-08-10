@@ -1,12 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { validateMainDeck, validateSoulDeck, countCopies, MAIN_DECK_SIZE, SOUL_DECK_SIZE, MAX_COPIES_PER_NAME, MAX_LUCKY_PALS, MAX_COLORS } from './deckValidator'
 import { useLanguage } from './i18n/LanguageContext'
 import { apiFetch } from './api'
-
-function countCopiesByNumber(deck, card) {
-  return deck.filter(c => c.card_number === card.card_number).length
-}
 
 // Mantém o tamanho compacto que os filtros de tipo já tinham antes de virarem sign-button.
 const FILTER_BTN_STYLE = { padding: '4px 10px', fontSize: '12px' }
@@ -17,6 +13,7 @@ const COLOR_SWATCH = {
 
 function DeckBuilder() {
   const { t } = useLanguage()
+  const { editId } = useParams() // presente em /deckbuilder/:editId — modo de edição de um deck já salvo
   const [allCards, setAllCards] = useState([])
   const [ownedMap, setOwnedMap] = useState({})
   const [mainDeck, setMainDeck] = useState([])
@@ -30,8 +27,12 @@ function DeckBuilder() {
   const [hoveredCard, setHoveredCard] = useState(null)
   const [showImport, setShowImport] = useState(false)
   const [importText, setImportText] = useState('')
-  const [deckMode, setDeckMode] = useState(null) // 'normal' ou 'rank' — perguntado ao entrar
-  const [showModeModal, setShowModeModal] = useState(true)
+  const [deckMode, setDeckMode] = useState(null) // 'normal' ou 'rank' — perguntado ao entrar (ou carregado do deck em edição)
+  const [showModeModal, setShowModeModal] = useState(!editId)
+  const [editedDeckName, setEditedDeckName] = useState('')
+  const [showRenameChoice, setShowRenameChoice] = useState(false)
+  const [showOnlyNotOwned, setShowOnlyNotOwned] = useState(false)
+  const [showDraftWarning, setShowDraftWarning] = useState(false)
 
   const showValidationMsg = (msg) => {
     setValidationMsg(msg)
@@ -46,26 +47,9 @@ function DeckBuilder() {
     return Math.max(0, entry.quantity - entry.reserved)
   }
 
-  // No modo Rank, o Main Deck só pode usar cópias que o jogador realmente tem disponíveis;
-  // o Soul Deck fica de fora dessa regra (a carta "Soul" não é craftável/dropável, não é "coleção").
+  // No modo Rank, cartas que faltam na coleção continuam podendo entrar no deck (fica marcado
+  // como rascunho ao salvar, e dá pra craftar as faltantes depois) — só muda o modo mesmo.
   const selectMode = (newMode) => {
-    if (newMode === 'rank') {
-      const filterAllowed = (deck) => {
-        const seen = {}
-        const kept = []
-        for (const c of deck) {
-          seen[c.card_number] = (seen[c.card_number] || 0) + 1
-          if (seen[c.card_number] <= getAvailable(c.card_number)) kept.push(c)
-        }
-        return kept
-      }
-      const newMain = filterAllowed(mainDeck)
-      const removed = mainDeck.length - newMain.length
-      setMainDeck(newMain)
-      if (removed > 0) {
-        showValidationMsg(t('rankActivatedMsg', { removed }))
-      }
-    }
     setDeckMode(newMode)
     setShowModeModal(false)
   }
@@ -75,9 +59,7 @@ function DeckBuilder() {
     const newMain = []
     const newSoul = []
     const newColors = new Set()
-    const mainCounts = {}
     let notFound = []
-    let notEnough = 0
 
     for (const rawLine of lines) {
       const line = rawLine.trim()
@@ -99,12 +81,8 @@ function DeckBuilder() {
         if (card.card_type === 'Soul') {
           newSoul.push(card)
         } else {
-          // no modo Rank, só importa cópias que o jogador realmente tem disponíveis
-          mainCounts[cardNumber] = (mainCounts[cardNumber] || 0) + 1
-          if (deckMode === 'rank' && mainCounts[cardNumber] > getAvailable(cardNumber)) {
-            notEnough++
-            continue
-          }
+          // cartas que faltam na coleção continuam entrando (o deck Rank fica marcado como
+          // rascunho ao salvar, já que agora dá pra completar craftando depois)
           newMain.push(card)
           if (card.colors?.length && !card.colors.includes('Colorless')) {
             card.colors.forEach(c => newColors.add(c))
@@ -126,7 +104,6 @@ function DeckBuilder() {
 
     const parts = [t('deckImportedMsg', { main: newMain.length, soul: newSoul.length })]
     if (notFound.length > 0) parts.push(t('cardsNotFoundMsg', { count: notFound.length, list: notFound.join(', ') }))
-    if (notEnough > 0) parts.push(t('copiesIgnoredMsg', { count: notEnough }))
     showValidationMsg(parts.join(' | '))
   }
 
@@ -141,7 +118,20 @@ function DeckBuilder() {
         rows.forEach(r => { map[r.card_number] = { quantity: r.quantity, reserved: r.reserved } })
         setOwnedMap(map)
       })
-  }, [])
+
+    if (editId) {
+      apiFetch(`/api/decks/${editId}`)
+        .then(res => res.json())
+        .then(deck => {
+          if (deck.error) { showValidationMsg(deck.error); return }
+          setMainDeck(deck.mainDeck)
+          setSoulDeck(deck.soulDeck)
+          setChosenColors(new Set(deck.colors))
+          setDeckMode(deck.mode)
+          setEditedDeckName(deck.name)
+        })
+    }
+  }, [editId])
 
   const addCard = (card) => {
     if (card.card_type === 'Soul') {
@@ -152,11 +142,6 @@ function DeckBuilder() {
 
     if (countCopies(mainDeck, card) >= MAX_COPIES_PER_NAME) return
     if (mainDeck.length >= MAIN_DECK_SIZE) return
-
-    if (deckMode === 'rank' && countCopiesByNumber(mainDeck, card) >= getAvailable(card.card_number)) {
-      showValidationMsg(t('onlyAvailableMsg', { available: getAvailable(card.card_number), name: card.name }))
-      return
-    }
 
     if (card.is_lucky) {
       const currentLucky = mainDeck.filter(c => c.is_lucky).length
@@ -189,6 +174,78 @@ function DeckBuilder() {
     }
   }
 
+  const submitUpdate = (name) => {
+    apiFetch(`/api/decks/${editId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        name,
+        mainDeckCardNumbers: mainDeck.map(c => c.card_number),
+        soulDeckCardNumbers: soulDeck.map(c => c.card_number),
+        colors: [...chosenColors],
+        mode: deckMode
+      })
+    })
+      .then(async res => {
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error)
+        setEditedDeckName(name)
+        setShowRenameChoice(false)
+        showValidationMsg(t('deckUpdatedMsg', { name }))
+      })
+      .catch(err => {
+        console.error(err)
+        showValidationMsg(err.message || t('saveDeckError'))
+      })
+  }
+
+  const handleKeepName = () => submitUpdate(editedDeckName)
+  const handleChangeName = () => {
+    const newName = window.prompt(t('deckNamePrompt'), editedDeckName)
+    if (!newName) return
+    submitUpdate(newName)
+  }
+
+  // Só importa no modo Rank — Normal ignora a coleção de propósito, nunca fica incompleto.
+  const missingCount = () => {
+    if (deckMode !== 'rank') return 0
+    const counts = {}
+    for (const c of mainDeck) counts[c.card_number] = (counts[c.card_number] || 0) + 1
+    let missing = 0
+    for (const [num, needed] of Object.entries(counts)) {
+      missing += Math.max(0, needed - getAvailable(num))
+    }
+    return missing
+  }
+
+  const submitCreate = (name) => {
+    apiFetch('/api/decks', {
+      method: 'POST',
+      body: JSON.stringify({
+        name,
+        mainDeckCardNumbers: mainDeck.map(c => c.card_number),
+        soulDeckCardNumbers: soulDeck.map(c => c.card_number),
+        colors: [...chosenColors],
+        mode: deckMode
+      })
+    })
+      .then(async res => {
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error)
+        showValidationMsg(t('deckSavedMsg', { name, id: data.id }))
+      })
+      .catch(err => {
+        console.error(err)
+        showValidationMsg(err.message || t('saveDeckError'))
+      })
+  }
+
+  const proceedToSave = () => {
+    if (editId) { setShowRenameChoice(true); return }
+    const deckName = window.prompt(t('deckNamePrompt'))
+    if (!deckName) return
+    submitCreate(deckName)
+  }
+
   const handleSave = () => {
     if (!deckMode) { setShowModeModal(true); return }
 
@@ -201,37 +258,21 @@ function DeckBuilder() {
       return
     }
 
-    const deckName = window.prompt(t('deckNamePrompt'))
-    if (!deckName) return
+    if (missingCount() > 0) { setShowDraftWarning(true); return }
 
-    apiFetch('/api/decks', {
-      method: 'POST',
-      body: JSON.stringify({
-        name: deckName,
-        mainDeckCardNumbers: mainDeck.map(c => c.card_number),
-        soulDeckCardNumbers: soulDeck.map(c => c.card_number),
-        colors: [...chosenColors],
-        mode: deckMode
-      })
-    })
-      .then(async res => {
-        const data = await res.json()
-        if (!res.ok) throw new Error(data.error)
-        showValidationMsg(t('deckSavedMsg', { name: deckName, id: data.id }))
-      })
-      .catch(err => {
-        console.error(err)
-        showValidationMsg(err.message || t('saveDeckError'))
-      })
+    proceedToSave()
   }
 
-  // No modo Rank, Pals/Structure/Gear/Event só aparecem se ainda houver cópia disponível
-  // (o Soul Deck fica de fora dessa restrição — não é uma carta "de coleção")
+  // Modo Rank não escolhe mais entre esconder ou mostrar quem falta — mostra sempre (cinza,
+  // igual a Coleção), e o filtro "Não possuído" é só mais um filtro que soma aos outros.
+  // Modo Rank: por padrão só mostra o que o jogador tem (igual antes); o toggle "Não possuído"
+  // inverte pra mostrar só o que falta na coleção — as duas visões são exclusivas, não somam.
   const filteredCollection = allCards.filter(c =>
     (filterType === 'Todos' || c.card_type === filterType) &&
     (filterColor === 'Todos' || (c.colors || []).includes(filterColor)) &&
     c.name.toLowerCase().includes(search.toLowerCase()) &&
-    (deckMode !== 'rank' || c.card_type === 'Soul' || getAvailable(c.card_number) > 0)
+    (deckMode !== 'rank' || c.card_type === 'Soul' ||
+      (showOnlyNotOwned ? getAvailable(c.card_number) === 0 : getAvailable(c.card_number) > 0))
   )
   const luckyCount = mainDeck.filter(c => c.is_lucky).length
 
@@ -263,12 +304,30 @@ function DeckBuilder() {
         <button className="sign-button" onClick={() => setShowModeModal(true)} style={{ marginBottom: '12px', marginLeft: '8px' }}>
           {t('changeMode')}
         </button>
+        {editId && (
+          <span style={{
+            marginLeft: '8px', fontSize: '12px', fontWeight: 700, padding: '6px 10px', borderRadius: '6px',
+            background: '#3a4a6b', color: '#e0e8ff'
+          }}>
+            {t('editingDeckBadge', { name: editedDeckName })}
+          </span>
+        )}
         <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap', position: 'relative' }}>
           {['Todos', 'Pal', 'Structure', 'Gear', 'Event', 'Soul'].map(type => (
             <button key={type} className="sign-button" style={FILTER_BTN_STYLE} onClick={() => setFilterType(type)}>{type === 'Todos' ? t('filterAll') : type}</button>
           ))}
           <button className="sign-button" style={FILTER_BTN_STYLE} onClick={() => setShowColorMenu(v => !v)}>
             {t('colorFilterButton')}{filterColor !== 'Todos' ? `: ${filterColor}` : ''}
+          </button>
+          <button
+            className="sign-button"
+            style={{
+              ...FILTER_BTN_STYLE,
+              ...(showOnlyNotOwned ? { outline: '2px solid #ffcf7a', outlineOffset: '2px' } : {})
+            }}
+            onClick={() => setShowOnlyNotOwned(v => !v)}
+          >
+            {t('notOwnedFilterButton')}
           </button>
           {showColorMenu && (
             <div style={{
@@ -304,8 +363,8 @@ function DeckBuilder() {
           {filteredCollection.map(card => {
             const isSoul = card.card_type === 'Soul'
             const copies = countCopies(isSoul ? soulDeck : mainDeck, card)
-            const rankLimited = !isSoul && deckMode === 'rank' && countCopiesByNumber(mainDeck, card) >= getAvailable(card.card_number)
-            const maxed = (isSoul ? soulDeck.length >= SOUL_DECK_SIZE : copies >= MAX_COPIES_PER_NAME) || rankLimited
+            const maxed = isSoul ? soulDeck.length >= SOUL_DECK_SIZE : copies >= MAX_COPIES_PER_NAME
+            const notOwned = deckMode === 'rank' && !isSoul && getAvailable(card.card_number) === 0
             return (
               <div key={card.card_number}
                    onClick={() => !maxed && addCard(card)}
@@ -313,7 +372,13 @@ function DeckBuilder() {
                    onMouseLeave={() => setHoveredCard(null)}
                    title={!isSoul && deckMode === 'rank' ? t('availableTitle', { n: getAvailable(card.card_number) }) : undefined}
                    style={{ cursor: maxed ? 'not-allowed' : 'pointer', opacity: maxed ? 0.4 : 1, textAlign: 'center', border: '1px solid #ccc', borderRadius: '8px', padding: '6px', position: 'relative' }}>
-                <img src={card.image_url} alt={card.name} style={{ width: '100%', borderRadius: '4px' }} onError={e => e.target.style.display = 'none'} />
+                <img src={card.image_url} alt={card.name}
+                     style={{
+                       width: '100%', borderRadius: '4px',
+                       filter: notOwned ? 'grayscale(100%)' : 'none',
+                       opacity: notOwned ? 0.35 : 1
+                     }}
+                     onError={e => e.target.style.display = 'none'} />
                 <p style={{ fontSize: '11px', margin: '4px 0 0' }}>{card.name} {copies > 0 && `x${copies}`}</p>
                 {!isSoul && deckMode === 'rank' && (
                   <p style={{ fontSize: '9px', margin: 0, color: '#8a5a2b' }}>{t('availLabel', { n: getAvailable(card.card_number) })}</p>
@@ -362,6 +427,13 @@ function DeckBuilder() {
         </div>
 
         <button onClick={handleSave} style={{ width: '100%', padding: '10px' }}>{t('saveDeck')}</button>
+        {editId && (
+          <Link to="/mydecks">
+            <button style={{ width: '100%', padding: '10px', marginTop: '8px', background: '#888', color: '#fff' }}>
+              {t('cancelEdit')}
+            </button>
+          </Link>
+        )}
         {validationMsg && <p style={{ fontSize: '12px', color: 'red', marginTop: '8px' }}>{validationMsg}</p>}
       </div>
 
@@ -412,6 +484,51 @@ function DeckBuilder() {
               <button onClick={() => selectMode('rank')} style={{ flex: 1, padding: '16px 10px', fontSize: '14px', background: '#fff', color: '#222', border: '1px solid #ccc', borderRadius: '8px', cursor: 'pointer' }}>
                 🏆 <strong>Rank</strong>
                 <p style={{ fontSize: '11px', color: '#555', margin: '6px 0 0' }}>{t('modeRankDesc')}</p>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRenameChoice && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100
+        }} onClick={() => setShowRenameChoice(false)}>
+          <div onClick={e => e.stopPropagation()} style={{
+            width: '420px', maxWidth: '90vw', background: '#fff', borderRadius: '14px',
+            padding: '24px', boxShadow: '0 20px 60px rgba(0,0,0,0.5)', textAlign: 'center'
+          }}>
+            <h3 style={{ marginTop: 0, color: '#222' }}>{t('renameChoiceQuestion', { name: editedDeckName })}</h3>
+            <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
+              <button onClick={handleKeepName} style={{ flex: 1, padding: '14px 10px', fontSize: '13px', background: '#3f6b3f', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
+                {t('renameChoiceKeep')}
+              </button>
+              <button onClick={handleChangeName} style={{ flex: 1, padding: '14px 10px', fontSize: '13px', background: '#a5541b', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
+                {t('renameChoiceChange')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDraftWarning && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100
+        }} onClick={() => setShowDraftWarning(false)}>
+          <div onClick={e => e.stopPropagation()} style={{
+            width: '420px', maxWidth: '90vw', background: '#fff', borderRadius: '14px',
+            padding: '24px', boxShadow: '0 20px 60px rgba(0,0,0,0.5)', textAlign: 'center'
+          }}>
+            <h3 style={{ marginTop: 0, color: '#222' }}>{t('draftWarningTitle')}</h3>
+            <p style={{ fontSize: '13px', color: '#555' }}>{t('draftWarningBody', { missing: missingCount() })}</p>
+            <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
+              <button onClick={() => { setShowDraftWarning(false); proceedToSave() }} style={{ flex: 1, padding: '14px 10px', fontSize: '13px', background: '#a5541b', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
+                {t('draftWarningConfirm')}
+              </button>
+              <button onClick={() => setShowDraftWarning(false)} style={{ flex: 1, padding: '14px 10px', fontSize: '13px', background: '#888', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
+                {t('draftWarningCancel')}
               </button>
             </div>
           </div>

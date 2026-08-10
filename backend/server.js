@@ -126,6 +126,9 @@ db.exec(`
 try { db.exec("ALTER TABLE decks ADD COLUMN mode TEXT NOT NULL DEFAULT 'normal'"); } catch (e) {}
 // NULL = deck preset/compartilhado (os 2 decks iniciais abaixo); preenchido = deck salvo por um jogador.
 try { db.exec('ALTER TABLE decks ADD COLUMN player_id INTEGER'); } catch (e) {}
+// Deck Rank pode ser salvo mesmo faltando cópias na coleção (fica marcado como rascunho até
+// completar via craft) — só existe pra decks 'rank'; decks 'normal' nunca são rascunho.
+try { db.exec('ALTER TABLE decks ADD COLUMN is_draft INTEGER NOT NULL DEFAULT 0'); } catch (e) {}
 
 // ---------- Decks pré-montados padrão (criados 1x, se ainda não existirem) ----------
 function expandPairs(pairs) {
@@ -215,6 +218,25 @@ function getUsernameForPlayer(playerId) {
   return row ? row.username : 'Jogador';
 }
 
+// ---------- Chat de lobby (tela de "Encontrar Partida", antes de entrar na fila) ----------
+// Global mesmo (não é por sala) — o front só ouve os eventos enquanto a tela do chat está montada,
+// então não precisa de sala/room separada por matchType. Em memória, some se o processo reiniciar.
+const LOBBY_CHAT_HISTORY_MS = 2 * 60 * 60 * 1000; // mantém só as últimas 2 horas de mensagens
+const LOBBY_CHAT_MAX_LENGTH = 200;
+const LOBBY_CHAT_COOLDOWN_MS = 1500; // anti-spam simples: 1 mensagem por jogador a cada 1.5s
+const lobbyChatHistory = [];
+const lobbyChatLastSent = new Map(); // playerId -> timestamp da última mensagem enviada
+
+// Tira do histórico qualquer mensagem com mais de 2h — chamada tanto ao mandar uma nova mensagem
+// quanto ao entrar (senão alguém que conecta depois de muito tempo sem ninguém falar nada ainda
+// veria mensagens antigas demais, já que só limpamos "sob demanda", não com um timer separado).
+function pruneLobbyChatHistory() {
+  const cutoff = Date.now() - LOBBY_CHAT_HISTORY_MS;
+  while (lobbyChatHistory.length && lobbyChatHistory[0].ts < cutoff) {
+    lobbyChatHistory.shift();
+  }
+}
+
 function otherSide(side) { return side === 'A' ? 'B' : 'A'; }
 
 // socket.id -> roomId, pra achar a sessão de dentro dos handlers match:* sem precisar de estado
@@ -224,6 +246,32 @@ const socketRoomMap = new Map();
 function getSessionBySocket(socket) {
   const roomId = socketRoomMap.get(socket.id);
   return roomId ? onlineSessions.get(roomId) : null;
+}
+
+// playerId -> socket ativo (só de quem está logado/conectado agora) — usado pelo desafio direto
+// do chat de lobby pra achar o socket de quem foi desafiado sem precisar que ele esteja na fila.
+const connectedSockets = new Map();
+
+// ---------- Desafio direto (clicar no nick de alguém no chat de lobby) ----------
+// challengeId -> { challengerSocket, challengerPlayerId, challengerDeckId, targetPlayerId, matchType, timeoutHandle }
+const pendingChallenges = new Map();
+const CHALLENGE_TIMEOUT_MS = 30000;
+
+// Cancela qualquer desafio pendente em que esse playerId esteja envolvido (desconexão de
+// qualquer um dos dois lados) e avisa a outra ponta, se ela ainda estiver conectada.
+function cancelChallengesFor(playerId) {
+  for (const [challengeId, challenge] of pendingChallenges) {
+    if (challenge.challengerPlayerId !== playerId && challenge.targetPlayerId !== playerId) continue;
+    clearTimeout(challenge.timeoutHandle);
+    pendingChallenges.delete(challengeId);
+
+    if (challenge.challengerPlayerId === playerId) {
+      const targetSocket = connectedSockets.get(challenge.targetPlayerId);
+      if (targetSocket) targetSocket.emit('lobbyChat:challengeExpired', { challengeId });
+    } else {
+      challenge.challengerSocket.emit('lobbyChat:challengeExpired', { challengeId });
+    }
+  }
 }
 
 function getSideBySocket(session, socket) {
@@ -441,7 +489,8 @@ app.get('/api/cards/:cardNumber', (req, res) => {
   });
 });
 
-// Salva um novo deck (sempre vinculado a quem salvou — precisa estar logado)
+// Salva um novo deck (sempre vinculado a quem salvou — precisa estar logado). Deck Rank pode
+// ser salvo faltando cópias — fica marcado como rascunho em vez de ser rejeitado.
 app.post('/api/decks', requirePlayer, (req, res) => {
   const { name, mainDeckCardNumbers, soulDeckCardNumbers, colors, mode } = req.body;
 
@@ -450,20 +499,11 @@ app.post('/api/decks', requirePlayer, (req, res) => {
   }
 
   const deckMode = mode === 'rank' ? 'rank' : 'normal';
-
-  if (deckMode === 'rank') {
-    const counts = {};
-    for (const num of mainDeckCardNumbers) counts[num] = (counts[num] || 0) + 1;
-    for (const [num, needed] of Object.entries(counts)) {
-      if (getAvailableQuantity(req.playerId, num) < needed) {
-        return res.status(400).json({ error: `Deck Rank inválido: você não tem ${needed} cópia(s) disponível(is) de ${num}.` });
-      }
-    }
-  }
+  const isDraft = computeDeckIsDraft(req.playerId, deckMode, mainDeckCardNumbers);
 
   const stmt = db.prepare(`
-    INSERT INTO decks (name, main_deck, soul_deck, colors, mode, player_id)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO decks (name, main_deck, soul_deck, colors, mode, player_id, is_draft)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     name,
@@ -471,18 +511,19 @@ app.post('/api/decks', requirePlayer, (req, res) => {
     JSON.stringify(soulDeckCardNumbers),
     JSON.stringify(colors || []),
     deckMode,
-    req.playerId
+    req.playerId,
+    isDraft ? 1 : 0
   );
 
-  res.json({ id: result.lastInsertRowid, message: 'Deck salvo com sucesso.' });
+  res.json({ id: result.lastInsertRowid, isDraft, message: 'Deck salvo com sucesso.' });
 });
 
 // Lista os decks preset (compartilhados, player_id NULL) + os próprios decks salvos de quem
 // estiver logado. Decks salvos por outros jogadores não aparecem.
 app.get('/api/decks', (req, res) => {
   const rows = req.playerId
-    ? db.prepare('SELECT id, name, colors, main_deck, created_at, mode FROM decks WHERE player_id IS NULL OR player_id = ? ORDER BY created_at DESC').all(req.playerId)
-    : db.prepare('SELECT id, name, colors, main_deck, created_at, mode FROM decks WHERE player_id IS NULL ORDER BY created_at DESC').all();
+    ? db.prepare('SELECT id, name, colors, main_deck, created_at, mode, is_draft FROM decks WHERE player_id IS NULL OR player_id = ? ORDER BY created_at DESC').all(req.playerId)
+    : db.prepare('SELECT id, name, colors, main_deck, created_at, mode, is_draft FROM decks WHERE player_id IS NULL ORDER BY created_at DESC').all();
   const getCard = db.prepare('SELECT * FROM cards WHERE card_number = ?');
 
   const decks = rows.map(r => {
@@ -501,6 +542,7 @@ app.get('/api/decks', (req, res) => {
       colors: JSON.parse(r.colors),
       created_at: r.created_at,
       mode: r.mode || 'normal',
+      isDraft: !!r.is_draft,
       luckyPals
     };
   });
@@ -537,6 +579,7 @@ app.get('/api/decks/:id', (req, res) => {
     name: row.name,
     colors: JSON.parse(row.colors),
     mode: row.mode || 'normal',
+    isDraft: !!row.is_draft,
     mainDeck: mainNumbers.map(buildCard),
     soulDeck: soulNumbers.map(buildCard)
   });
@@ -551,6 +594,96 @@ app.delete('/api/decks/:id', requirePlayer, (req, res) => {
 
   db.prepare('DELETE FROM decks WHERE id = ?').run(req.params.id);
   res.json({ message: 'Deck apagado com sucesso.' });
+});
+
+// Atualiza 1 deck salvo (edição). Só o dono pode editar; decks preset (player_id NULL) nunca
+// são editáveis por aqui. Deck Rank pode ficar/virar rascunho aqui também (mesma lógica do POST).
+app.put('/api/decks/:id', requirePlayer, (req, res) => {
+  const { name, mainDeckCardNumbers, soulDeckCardNumbers, colors, mode } = req.body;
+
+  const existing = db.prepare('SELECT id, player_id FROM decks WHERE id = ?').get(req.params.id);
+  if (!existing || existing.player_id !== req.playerId) {
+    return res.status(404).json({ error: 'Deck não encontrado.' });
+  }
+
+  if (!name || !mainDeckCardNumbers || !soulDeckCardNumbers) {
+    return res.status(400).json({ error: 'Dados incompletos.' });
+  }
+
+  const deckMode = mode === 'rank' ? 'rank' : 'normal';
+  const isDraft = computeDeckIsDraft(req.playerId, deckMode, mainDeckCardNumbers);
+
+  db.prepare(`
+    UPDATE decks SET name = ?, main_deck = ?, soul_deck = ?, colors = ?, mode = ?, is_draft = ? WHERE id = ?
+  `).run(
+    name,
+    JSON.stringify(mainDeckCardNumbers),
+    JSON.stringify(soulDeckCardNumbers),
+    JSON.stringify(colors || []),
+    deckMode,
+    isDraft ? 1 : 0,
+    req.params.id
+  );
+
+  res.json({ id: existing.id, isDraft, message: 'Deck atualizado com sucesso.' });
+});
+
+// Crafta de uma vez todas as cópias que faltam pro Main Deck de um deck Rank (rascunho).
+// Raridades não craftáveis (OSR/SP/SSP/TSP) são ignoradas no cálculo — só saem via Breeding/booster/mercado.
+app.post('/api/decks/:id/craft-missing', requirePlayer, (req, res) => {
+  const deck = db.prepare('SELECT * FROM decks WHERE id = ?').get(req.params.id);
+  if (!deck || deck.player_id !== req.playerId) {
+    return res.status(404).json({ error: 'Deck não encontrado.' });
+  }
+
+  const mainNumbers = JSON.parse(deck.main_deck);
+  const counts = {};
+  for (const num of mainNumbers) counts[num] = (counts[num] || 0) + 1;
+
+  const getCard = db.prepare('SELECT * FROM cards WHERE card_number = ?');
+  let totalCost = 0;
+  const toCraft = [];
+
+  for (const [cardNumber, needed] of Object.entries(counts)) {
+    const card = getCard.get(cardNumber);
+    if (!card) continue;
+    const cost = getCraftCost(card);
+    if (!cost) continue; // não craftável — não entra na conta, o deck pode continuar rascunho por causa dela
+    const missing = Math.max(0, needed - getAvailableQuantity(req.playerId, cardNumber));
+    if (missing > 0) {
+      totalCost += cost * missing;
+      toCraft.push({ cardNumber, missing });
+    }
+  }
+
+  if (toCraft.length === 0) {
+    return res.json({ message: 'Nada craftável pendente pra esse deck.', totalCost: 0, palFluid: db.prepare('SELECT pal_fluid FROM players WHERE id = ?').get(req.playerId).pal_fluid });
+  }
+
+  const player = db.prepare('SELECT * FROM players WHERE id = ?').get(req.playerId);
+  if (player.pal_fluid < totalCost) {
+    return res.status(400).json({ error: 'Fluido de Pal insuficiente pra craftar tudo.', totalCost });
+  }
+
+  const craftAll = db.transaction(() => {
+    for (const { cardNumber, missing } of toCraft) {
+      const current = db.prepare('SELECT quantity FROM player_cards WHERE player_id = ? AND card_number = ?').get(req.playerId, cardNumber)?.quantity || 0;
+      db.prepare(`
+        INSERT INTO player_cards (player_id, card_number, quantity) VALUES (?, ?, ?)
+        ON CONFLICT(player_id, card_number) DO UPDATE SET quantity = excluded.quantity
+      `).run(req.playerId, cardNumber, current + missing);
+    }
+    db.prepare('UPDATE players SET pal_fluid = pal_fluid - ? WHERE id = ?').run(totalCost, req.playerId);
+
+    const stillDraft = computeDeckIsDraft(req.playerId, deck.mode, mainNumbers);
+    db.prepare('UPDATE decks SET is_draft = ? WHERE id = ?').run(stillDraft ? 1 : 0, deck.id);
+    return stillDraft;
+  });
+
+  const isDraft = craftAll();
+  const updatedPlayer = db.prepare('SELECT pal_fluid FROM players WHERE id = ?').get(req.playerId);
+
+  res.json({ message: 'Cartas faltantes craftadas com sucesso.', totalCost, isDraft, palFluid: updatedPlayer.pal_fluid });
 });
 
 // ---------- ECONOMIA: moedas, coleção do jogador, loja de boosters ----------
@@ -605,6 +738,16 @@ function getAvailableQuantity(playerId, cardNumber) {
   const row = db.prepare('SELECT quantity, reserved FROM player_cards WHERE player_id = ? AND card_number = ?').get(playerId, cardNumber);
   if (!row) return 0;
   return row.quantity - row.reserved;
+}
+
+// Deck Rank vira "rascunho" se faltar qualquer cópia na coleção do jogador — igual ao esquema
+// do Hearthstone (dá pra salvar incompleto e completar craftando depois). Decks Normal nunca
+// são rascunho, já que ignoram a coleção de propósito.
+function computeDeckIsDraft(playerId, mode, mainDeckCardNumbers) {
+  if (mode !== 'rank') return false;
+  const counts = {};
+  for (const num of mainDeckCardNumbers) counts[num] = (counts[num] || 0) + 1;
+  return Object.entries(counts).some(([num, needed]) => getAvailableQuantity(playerId, num) < needed);
 }
 
 // Agrupa números repetidos (ex.: os 2 pais do Breeding sendo a mesma carta) antes de checar/reservar
@@ -1839,6 +1982,110 @@ io.on('connection', (socket) => {
   if (!playerId) return;
 
   console.log(`Cliente conectado: ${socket.id} (player ${playerId})`);
+  // Sobrescreve de propósito se já havia um socket antigo pra esse playerId (2ª aba/reconexão) —
+  // o socket mais recente é o que deve receber desafios/mensagens dali pra frente.
+  connectedSockets.set(playerId, socket);
+
+  // ---------- Chat de lobby (tela de "Encontrar Partida") ----------
+  pruneLobbyChatHistory();
+  socket.emit('lobbyChat:history', lobbyChatHistory);
+
+  socket.on('lobbyChat:send', ({ text } = {}) => {
+    if (typeof text !== 'string') return;
+    const trimmed = text.trim().slice(0, LOBBY_CHAT_MAX_LENGTH);
+    if (!trimmed) return;
+
+    const now = Date.now();
+    const lastSent = lobbyChatLastSent.get(playerId) || 0;
+    if (now - lastSent < LOBBY_CHAT_COOLDOWN_MS) {
+      socket.emit('lobbyChat:error', { message: 'Aguarde um instante antes de enviar outra mensagem.' });
+      return;
+    }
+    lobbyChatLastSent.set(playerId, now);
+
+    const message = { author: getUsernameForPlayer(playerId), text: trimmed, ts: now, playerId };
+    lobbyChatHistory.push(message);
+    pruneLobbyChatHistory();
+
+    io.emit('lobbyChat:message', message);
+  });
+
+  // Desafio direto: clicar no nick de alguém no chat e chamar pra partida, sem passar pela fila.
+  socket.on('lobbyChat:challenge', ({ targetPlayerId, deckId, matchType } = {}) => {
+    const type = matchType === 'arena' ? 'arena' : 'normal';
+    if (typeof targetPlayerId !== 'number' || targetPlayerId === playerId) return;
+
+    if (getSessionBySocket(socket)) {
+      socket.emit('lobbyChat:challengeError', { message: 'Você já está em uma partida.' });
+      return;
+    }
+
+    const validation = validateDeckForMatch(playerId, deckId, type);
+    if (!validation.ok) {
+      socket.emit('lobbyChat:challengeError', { message: validation.message });
+      return;
+    }
+
+    const targetSocket = connectedSockets.get(targetPlayerId);
+    if (!targetSocket) {
+      socket.emit('lobbyChat:challengeError', { message: 'Esse jogador não está mais online.' });
+      return;
+    }
+    if (getSessionBySocket(targetSocket)) {
+      socket.emit('lobbyChat:challengeError', { message: 'Esse jogador já está em uma partida.' });
+      return;
+    }
+
+    const challengeId = crypto.randomUUID();
+    const timeoutHandle = setTimeout(() => {
+      pendingChallenges.delete(challengeId);
+      socket.emit('lobbyChat:challengeExpired', { challengeId });
+      targetSocket.emit('lobbyChat:challengeExpired', { challengeId });
+    }, CHALLENGE_TIMEOUT_MS);
+
+    pendingChallenges.set(challengeId, {
+      challengeId, challengerSocket: socket, challengerPlayerId: playerId, challengerDeckId: deckId,
+      targetPlayerId, matchType: type, timeoutHandle
+    });
+
+    targetSocket.emit('lobbyChat:challengeReceived', {
+      challengeId, fromPlayerId: playerId, fromUsername: getUsernameForPlayer(playerId), matchType: type
+    });
+    socket.emit('lobbyChat:challengeSent', { challengeId, targetUsername: getUsernameForPlayer(targetPlayerId) });
+  });
+
+  // Quem foi desafiado aceita ou recusa. Aceitar exige um deck próprio válido pro mesmo matchType.
+  socket.on('lobbyChat:challengeRespond', ({ challengeId, accept, deckId } = {}) => {
+    const challenge = pendingChallenges.get(challengeId);
+    if (!challenge || challenge.targetPlayerId !== playerId) return;
+
+    clearTimeout(challenge.timeoutHandle);
+    pendingChallenges.delete(challengeId);
+
+    if (!accept) {
+      challenge.challengerSocket.emit('lobbyChat:challengeDenied', { byUsername: getUsernameForPlayer(playerId) });
+      return;
+    }
+
+    if (!challenge.challengerSocket.connected) {
+      socket.emit('lobbyChat:challengeError', { message: 'O desafiante desconectou.' });
+      return;
+    }
+
+    const validation = validateDeckForMatch(playerId, deckId, challenge.matchType);
+    if (!validation.ok) {
+      socket.emit('lobbyChat:challengeError', { message: validation.message });
+      challenge.challengerSocket.emit('lobbyChat:challengeError', { message: 'O desafio não pôde ser aceito.' });
+      return;
+    }
+
+    removeFromQueue(challenge.challengerPlayerId);
+    removeFromQueue(playerId);
+    startOnlineMatch(challenge.matchType,
+      { socket: challenge.challengerSocket, playerId: challenge.challengerPlayerId, deckId: challenge.challengerDeckId },
+      { socket, playerId, deckId }
+    );
+  });
 
   // ---------- Matchmaking online: entrar/sair da fila de "Encontrar Partida" ----------
   socket.on('match:findMatch', ({ deckId, matchType }) => {
@@ -2737,6 +2984,11 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     removeFromQueue(playerId);
+    lobbyChatLastSent.delete(playerId);
+    cancelChallengesFor(playerId);
+    // Só remove se ainda for O socket atual desse player — evita que uma desconexão da aba antiga
+    // apague por engano a entrada de uma reconexão mais nova (2ª aba) que já sobrescreveu a 1ª.
+    if (connectedSockets.get(playerId) === socket) connectedSockets.delete(playerId);
 
     // Partida online em andamento (Jokenpô, mulligan ou jogo): quem ficou avisa que o oponente saiu
     // e a sessão é encerrada — sem reconexão por enquanto, W.O. imediato.

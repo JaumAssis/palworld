@@ -474,6 +474,7 @@ function App() {
         <Route path="/breeding" element={<RequireAuth><Breeding /></RequireAuth>} />
         <Route path="/farming" element={<RequireAuth><Farming /></RequireAuth>} />
         <Route path="/deckbuilder" element={<RequireAuth><DeckBuilder /></RequireAuth>} />
+        <Route path="/deckbuilder/:editId" element={<RequireAuth><DeckBuilder /></RequireAuth>} />
         <Route path="/mydecks" element={<RequireAuth><DeckList /></RequireAuth>} />
         <Route path="/mydecks/:id" element={<RequireAuth><DeckDetail /></RequireAuth>} />
         <Route path="/game" element={<RequireAuth><GameBoard /></RequireAuth>} />

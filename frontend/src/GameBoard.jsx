@@ -32,17 +32,13 @@ function GameBoard() {
   const damageRevealTimerRef = useRef(null)
   const logBoxRef = useRef(null)
 
-  // Recalcula a escala do tabuleiro pra caber na janela. O *1.08 é de propósito: sem ele, a escala
-  // "de encaixe exato" deixa o tabuleiro sempre do mesmo tamanho relativo à tela, então aumentar
-  // BOARD_WIDTH/BOARD_HEIGHT não muda nada visualmente (a escala menor cancela o canvas maior) —
-  // esse fator é o que de fato deixa o tabuleiro maior na tela (pode cortar um pouco nas bordas).
-  // O segundo Math.min trava o resultado em 1.08: em janelas onde o encaixe "exato" já bate perto
-  // de 1 (telas grandes, com pouca barra de navegador/tarefas sobrando), multiplicar por 1.08 sem
-  // essa trava explode o corte nas bordas — foi o que aconteceu antes de existir esse limite.
+  // Encaixe exato (sem multiplicador de "aumento") — é a única forma de garantir que nada corte
+  // nas bordas em NENHUMA resolução. Qualquer multiplicador > 1 aplicado aqui sobra pra fora do
+  // lado que está "no limite" (normalmente a altura), e o quanto isso corta cabeçalho/botões
+  // varia com a barra de navegador/tarefas de cada tela — testamos e ficava inconsistente.
   useEffect(() => {
     const updateScale = () => {
-      const fitScale = Math.min(window.innerWidth / BOARD_WIDTH, window.innerHeight / BOARD_HEIGHT)
-      setBoardScale(Math.min(fitScale * 1.08, 1.08))
+      setBoardScale(Math.min(window.innerWidth / BOARD_WIDTH, window.innerHeight / BOARD_HEIGHT, 1))
     }
     updateScale()
     window.addEventListener('resize', updateScale)
@@ -340,6 +336,12 @@ function GameBoard() {
       {standing} standing / {rested} rested
     </div>
   )
+
+  // Margem real sobrando à esquerda do tabuleiro escalado (o próprio tabuleiro é centralizado
+  // pelo flex do container). O quadro de log nunca pode passar dessa margem, senão sobrepõe o
+  // tabuleiro em telas mais estreitas/baixas.
+  const boardLeftMargin = Math.max(0, (window.innerWidth - BOARD_WIDTH * boardScale) / 2)
+  const logPanelWidth = Math.min(160, boardLeftMargin - 10)
 
   return (
     <div onClick={() => selectedPalIndex !== null && setSelectedPalIndex(null)} style={{
@@ -657,10 +659,12 @@ function GameBoard() {
 
       {/* ---------- LOG DE JOGADAS: faixa fina e alta encostada na borda esquerda real da tela
           (fora do canvas escalado — não muda tamanho/escala de nada do tabuleiro). Rola
-          internamente, sempre mostrando a entrada mais recente no fundo. ---------- */}
-      {log && log.length > 0 && (
+          internamente, sempre mostrando a entrada mais recente no fundo. A largura é limitada pela
+          margem sobrando à esquerda do tabuleiro escalado (senão, em telas mais estreitas/baixas,
+          o quadro fixo de 160px passa a sobrepor o próprio tabuleiro). ---------- */}
+      {log && log.length > 0 && logPanelWidth >= 50 && (
         <div ref={logBoxRef} style={{
-          position: 'absolute', left: '2px', top: '45px', bottom: '60px', width: '160px',
+          position: 'absolute', left: '2px', top: '45px', bottom: '60px', width: `${logPanelWidth}px`,
           background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(201,154,78,0.5)',
           color: '#fff', fontSize: '10px', borderRadius: '8px', padding: '8px',
           lineHeight: 1.5, overflowY: 'auto', pointerEvents: 'none', textAlign: 'left'
