@@ -18,6 +18,7 @@ import { translations } from './i18n/translations'
 import { useAuth } from './auth/AuthContext'
 import { useTheme } from './theme/ThemeContext'
 import { apiFetch } from './api'
+import OnlineBadge from './OnlineBadge'
 
 // Bloqueia rotas que exigem login (o backend já rejeita com 401; isso evita o "flash" da
 // tela antes do redirect e cobre navegação direta/F5). Leva o aviso de login pelo state da
@@ -378,6 +379,7 @@ function MainMenu() {
       </div>
 
       <div style={{ position: 'fixed', top: '20px', right: '20px', display: 'flex', gap: '8px' }}>
+        <OnlineBadge />
         <button
           className="currency-badge"
           onClick={toggleTheme}

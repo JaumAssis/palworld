@@ -120,6 +120,35 @@
   filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.6));
 }
 
+.online-badge {
+  font-size: 14px;
+  padding: 6px 14px 6px 10px;
+}
+
+.online-dot {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 4px #4ade80;
+}
+
+/* Pulso: começa quase invisível/pequeno e cresce enquanto desaparece, em loop — efeito de "sinal ao vivo". */
+.online-dot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: #4ade80;
+  animation: online-pulse 1.8s ease-out infinite;
+}
+
+@keyframes online-pulse {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(2.8); opacity: 0; }
+}
+
 .auth-panel {
   font-family: 'Rye', 'Georgia', serif;
   width: 220px;

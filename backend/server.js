@@ -1817,13 +1817,22 @@ app.post('/api/shop/open-booster', requirePlayer, (req, res) => {
   });
 });
 
+// Contagem de "gente online" pro badge do menu — conexões WebSocket ativas, não contas
+// distintas (2 abas da mesma conta contam 2), é só uma estimativa de atividade no site.
+function broadcastOnlineCount() {
+  io.emit('online:count', io.engine.clientsCount);
+}
+
 io.on('connection', (socket) => {
   const userId = socket.request.session?.userId;
   const playerId = userId ? resolvePlayerId(userId) : null;
-  if (!playerId) {
-    socket.disconnect(true);
-    return;
-  }
+
+  // Conta pro badge de "gente online" mesmo sem login (ex: alguém ainda na tela de login) — mas
+  // sem playerId a conexão não ganha NENHUM dos handlers de jogo abaixo, só existe pra essa contagem.
+  broadcastOnlineCount();
+  socket.on('disconnect', () => broadcastOnlineCount());
+
+  if (!playerId) return;
 
   console.log(`Cliente conectado: ${socket.id} (player ${playerId})`);
 
