@@ -327,6 +327,116 @@ function MissionsPopup({ onClose }) {
   )
 }
 
+function LoginStreakPopup({ onClose }) {
+  const { t } = useLanguage()
+  const [status, setStatus] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [claiming, setClaiming] = useState(false)
+  const [result, setResult] = useState(null)
+  const [error, setError] = useState('')
+
+  const load = () => {
+    apiFetch('/api/login-streak/today').then(r => r.json()).then(data => {
+      setStatus(data)
+      setLoading(false)
+    })
+  }
+
+  useEffect(() => { load() }, [])
+
+  const claim = () => {
+    setError('')
+    setClaiming(true)
+    apiFetch('/api/login-streak/claim', { method: 'POST' })
+      .then(async res => {
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || t('buyError'))
+        setResult(data)
+        setClaiming(false)
+        load()
+      })
+      .catch(err => {
+        setError(err.message)
+        setClaiming(false)
+      })
+  }
+
+  const rewardIcon = (reward) => reward.booster ? '🎁' : '🪙'
+  const rewardLabel = (reward) => reward.booster ? t('loginStreakBoosterLabel') : reward.gold
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+    }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '420px', maxWidth: '92vw', maxHeight: '85vh', overflowY: 'auto', background: '#fff', borderRadius: '20px',
+        padding: '20px', boxShadow: '0 20px 60px rgba(0,0,0,0.4)'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+          <h2 style={{ margin: 0, color: '#222' }}>{t('loginStreakTitle')}</h2>
+          <button onClick={onClose} style={{ padding: '4px 10px' }}>✕</button>
+        </div>
+        <p style={{ fontSize: '12px', color: '#666', marginTop: 0 }}>{t('loginStreakSubtitle')}</p>
+
+        {loading && <p style={{ color: '#222' }}>{t('loading')}</p>}
+
+        {status && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', marginBottom: '16px' }}>
+            {status.rewards.map(reward => {
+              const isPast = reward.day < status.currentDay
+              const isCurrent = reward.day === status.currentDay
+              const isFuture = reward.day > status.currentDay
+              return (
+                <div key={reward.day} style={{
+                  border: isCurrent ? '2px solid #ffab00' : '1px solid #eee', borderRadius: '10px', padding: '8px',
+                  textAlign: 'center', background: isCurrent ? '#fff8e1' : (isFuture ? '#fafafa' : '#f5f5f5'),
+                  opacity: isFuture ? 0.6 : 1
+                }}>
+                  <p style={{ margin: '0 0 4px', fontSize: '11px', fontWeight: 600, color: '#222' }}>{t('loginStreakDayLabel', { day: reward.day })}</p>
+                  <div style={{ fontSize: '22px' }}>{rewardIcon(reward)}</div>
+                  <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#555' }}>{rewardLabel(reward)}</p>
+                  {isPast && <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#34c759' }}>{t('loginStreakDone')}</p>}
+                  {isFuture && <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#999' }}>{t('loginStreakLocked')}</p>}
+                  {isCurrent && status.claimedToday && <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#34c759' }}>{t('loginStreakClaimed')}</p>}
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {error && <p style={{ color: '#c00', fontSize: '12px' }}>{error}</p>}
+
+        {status && !status.claimedToday && (
+          <button onClick={claim} disabled={claiming} className="sign-button" style={{ width: '100%' }}>
+            {t('loginStreakClaim')}
+          </button>
+        )}
+
+        {result && (
+          <div style={{ marginTop: '16px', textAlign: 'center' }}>
+            {result.boosterCards ? (
+              <>
+                <p style={{ fontWeight: 600, color: '#222' }}>{t('loginStreakBoosterWon')}</p>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                  {result.boosterCards.map((c, i) => (
+                    <div key={i} style={{ width: '70px' }}>
+                      <img src={c.image_url} alt={c.name} style={{ width: '100%', borderRadius: '6px' }} />
+                      <p style={{ fontSize: '10px', margin: '4px 0 0' }}>{c.rarity}</p>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p style={{ fontWeight: 600, color: '#222' }}>{t('loginStreakGoldWon', { amount: result.goldGained })}</p>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function MainMenu() {
   const { lang, toggleLang, t } = useLanguage()
   const { user } = useAuth()
@@ -335,6 +445,8 @@ function MainMenu() {
   const navigate = useNavigate()
   const [player, setPlayer] = useState(null)
   const [showMissions, setShowMissions] = useState(false)
+  const [showLoginStreak, setShowLoginStreak] = useState(false)
+  const [loginStreakClaimable, setLoginStreakClaimable] = useState(false)
   const [popup, setPopup] = useState(null)
   const [authHint, setAuthHint] = useState(false)
 
@@ -343,7 +455,13 @@ function MainMenu() {
     apiFetch('/api/player').then(r => r.json()).then(setPlayer)
   }
 
+  const refreshLoginStreak = () => {
+    if (!user) { setLoginStreakClaimable(false); return }
+    apiFetch('/api/login-streak/today').then(r => r.json()).then(data => setLoginStreakClaimable(!data.claimedToday))
+  }
+
   useEffect(() => { refreshPlayer() }, [user])
+  useEffect(() => { refreshLoginStreak() }, [user])
 
   useEffect(() => {
     if (!authHint) return
@@ -419,7 +537,19 @@ function MainMenu() {
           <img src="/egg.png" alt="Breeding" style={{ width: '28px', height: '28px' }} />
           Breeding
         </button>
-        <button className="sign-button" onClick={() => guard(() => setShowMissions(true))}>{t('menuDailyMissions')}</button>
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <button className="sign-button" onClick={() => guard(() => setShowMissions(true))}>{t('menuDailyMissions')}</button>
+          <button className="sign-button" onClick={() => guard(() => setShowLoginStreak(true))} title={t('loginStreakButtonTitle')}
+                  style={{ padding: '8px 12px', fontSize: '18px', position: 'relative' }}>
+            🏅
+            {loginStreakClaimable && (
+              <span style={{
+                position: 'absolute', top: '2px', right: '2px', width: '10px', height: '10px',
+                background: '#ff3b30', borderRadius: '50%', border: '1px solid #fff'
+              }} />
+            )}
+          </button>
+        </div>
       </div>
 
       <p style={{
@@ -432,6 +562,8 @@ function MainMenu() {
       </p>
 
       {showMissions && <MissionsPopup onClose={() => { setShowMissions(false); refreshPlayer() }} />}
+
+      {showLoginStreak && <LoginStreakPopup onClose={() => { setShowLoginStreak(false); refreshPlayer(); refreshLoginStreak() }} />}
 
       {popup && (
         <div className="popout-overlay">

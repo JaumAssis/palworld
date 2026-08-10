@@ -1693,6 +1693,112 @@ app.post('/api/missions/claim', requirePlayer, (req, res) => {
   res.json({ goldCoins: newGold, palFluid: newFluid });
 });
 
+// ---------- RECOMPENSA DE LOGIN DIÁRIO (medalha ao lado das missões) ----------
+// Ciclo de 7 dias consecutivos: dia 1 começa em 10 moedas e sobe 5 por dia até o dia 5 (30),
+// o dia 6 dá 40 e o dia 7 dá 1 booster do set BP01. Se o jogador pular um dia (sem logar), a
+// sequência quebra e volta pro dia 1. Cada dia só pode ser resgatado uma vez.
+const LOGIN_STREAK_REWARDS = {
+  1: { gold: 10 }, 2: { gold: 15 }, 3: { gold: 20 }, 4: { gold: 25 },
+  5: { gold: 30 }, 6: { gold: 40 }, 7: { booster: true }
+};
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS player_login_streak (
+    player_id INTEGER PRIMARY KEY,
+    current_day INTEGER NOT NULL DEFAULT 0,
+    last_login_date TEXT,
+    claimed_today INTEGER NOT NULL DEFAULT 0
+  )
+`);
+
+function yesterdayString() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+// Avança a sequência do jogador pro dia de hoje, se ainda não foi feito (idempotente dentro do
+// mesmo dia). Não concede a recompensa — isso só acontece explicitamente no /claim.
+function getOrAdvanceLoginStreak(playerId) {
+  const today = todayString();
+  const row = db.prepare('SELECT * FROM player_login_streak WHERE player_id = ?').get(playerId);
+
+  if (!row) {
+    db.prepare('INSERT INTO player_login_streak (player_id, current_day, last_login_date, claimed_today) VALUES (?, 1, ?, 0)').run(playerId, today);
+    return { currentDay: 1, claimedToday: false };
+  }
+  if (row.last_login_date === today) {
+    return { currentDay: row.current_day, claimedToday: !!row.claimed_today };
+  }
+
+  const newDay = row.last_login_date === yesterdayString() ? (row.current_day >= 7 ? 1 : row.current_day + 1) : 1;
+  db.prepare('UPDATE player_login_streak SET current_day = ?, last_login_date = ?, claimed_today = 0 WHERE player_id = ?').run(newDay, today, playerId);
+  return { currentDay: newDay, claimedToday: false };
+}
+
+// Sorteia cartas do booster BP01 e credita na coleção do jogador (cópias além da 4ª viram Fluido
+// de Pal) — mesma mecânica do /api/shop/open-booster, reaproveitada aqui pra recompensa do dia 7.
+function grantFreeBoosterPack(playerId) {
+  const pool = db.prepare("SELECT * FROM cards WHERE set_code = ? AND card_number NOT LIKE '%-%-%'").all(BOOSTER_SET);
+  const getQty = db.prepare('SELECT quantity FROM player_cards WHERE player_id = ? AND card_number = ?');
+  const upsertQty = db.prepare(`
+    INSERT INTO player_cards (player_id, card_number, quantity) VALUES (?, ?, ?)
+    ON CONFLICT(player_id, card_number) DO UPDATE SET quantity = excluded.quantity
+  `);
+
+  const revealed = [];
+  let fluidGained = 0;
+  for (let i = 0; i < CARDS_PER_PACK; i++) {
+    const card = maybeUpgradeToVariant(weightedRandomCard(pool));
+    revealed.push(card);
+    const current = getQty.get(playerId, card.card_number)?.quantity || 0;
+    if (current >= 4) {
+      fluidGained += RARITY_FLUID[card.rarity] || 5;
+    } else {
+      upsertQty.run(playerId, card.card_number, current + 1);
+    }
+  }
+  return {
+    cards: revealed.map(c => ({
+      ...c, colors: JSON.parse(c.colors), keywords: JSON.parse(c.keywords), is_lucky: !!c.is_lucky,
+      image_url: `/${c.image_path}`
+    })),
+    fluidGained
+  };
+}
+
+// Estado da sequência de hoje + a tabela dos 7 dias (pra desenhar a "cartela" no popup)
+app.get('/api/login-streak/today', requirePlayer, (req, res) => {
+  const { currentDay, claimedToday } = getOrAdvanceLoginStreak(req.playerId);
+  res.json({
+    currentDay,
+    claimedToday,
+    rewards: Object.entries(LOGIN_STREAK_REWARDS).map(([day, reward]) => ({ day: Number(day), ...reward }))
+  });
+});
+
+// Resgata a recompensa do dia atual da sequência
+app.post('/api/login-streak/claim', requirePlayer, (req, res) => {
+  const { currentDay, claimedToday } = getOrAdvanceLoginStreak(req.playerId);
+  if (claimedToday) return res.status(400).json({ error: 'Recompensa de hoje já resgatada.' });
+
+  db.prepare('UPDATE player_login_streak SET claimed_today = 1 WHERE player_id = ?').run(req.playerId);
+
+  const reward = LOGIN_STREAK_REWARDS[currentDay];
+  const player = db.prepare('SELECT * FROM players WHERE id = ?').get(req.playerId);
+
+  if (reward.booster) {
+    const { cards, fluidGained } = grantFreeBoosterPack(req.playerId);
+    const newFluid = player.pal_fluid + fluidGained;
+    db.prepare('UPDATE players SET pal_fluid = ? WHERE id = ?').run(newFluid, req.playerId);
+    return res.json({ currentDay, boosterCards: cards, fluidGained, goldCoins: player.gold_coins, palFluid: newFluid });
+  }
+
+  const newGold = player.gold_coins + reward.gold;
+  db.prepare('UPDATE players SET gold_coins = ? WHERE id = ?').run(newGold, req.playerId);
+  res.json({ currentDay, goldGained: reward.gold, goldCoins: newGold, palFluid: player.pal_fluid });
+});
+
 // Compra um Trial Deck (500 moedas, compra única por set, dá 4 cópias de cada carta do set)
 app.post('/api/shop/buy-trial-deck', requirePlayer, (req, res) => {
   const { setCode } = req.body; // 'TD01' ou 'TD02'

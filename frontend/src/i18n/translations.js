@@ -65,6 +65,20 @@ const pt = {
   missionDesc_soul_draw_4: 'Suspenda 3 Souls pra comprar carta 4 vezes',
   missionDescPalType: ({ type }) => `Jogue 3 Pals do tipo ${type}`,
 
+  // ---------- recompensa de login diário ----------
+  loginStreakButtonTitle: 'Recompensa de login diário',
+  loginStreakTitle: '🏅 Login Diário',
+  loginStreakSubtitle: 'Logue por dias consecutivos para ganhar recompensas maiores. Se pular um dia, a sequência reinicia.',
+  loginStreakDayLabel: ({ day }) => `Dia ${day}`,
+  loginStreakClaim: 'Resgatar',
+  loginStreakClaimed: '✓ Resgatado',
+  loginStreakDone: '✓',
+  loginStreakLocked: '🔒',
+  loginStreakBoosterLabel: 'Booster',
+  loginStreakGoldWon: ({ amount }) => `+${amount} moedas de ouro!`,
+  loginStreakBoosterWon: 'Você ganhou um booster do set BP01!',
+  loginStreakAlreadyClaimed: 'Recompensa de hoje já resgatada.',
+
   // ---------- menu principal ----------
   menuTutorial: '🎓 Tutorial',
   menuCatalog: '📚 Catálogo',
@@ -486,6 +500,20 @@ const en = {
   missionDesc_soul_draw_2: 'Suspend 3 Souls to draw a card 2 times',
   missionDesc_soul_draw_4: 'Suspend 3 Souls to draw a card 4 times',
   missionDescPalType: ({ type }) => `Play 3 ${type}-type Pals`,
+
+  // ---------- daily login reward ----------
+  loginStreakButtonTitle: 'Daily login reward',
+  loginStreakTitle: '🏅 Daily Login',
+  loginStreakSubtitle: 'Log in on consecutive days to earn bigger rewards. If you skip a day, the streak resets.',
+  loginStreakDayLabel: ({ day }) => `Day ${day}`,
+  loginStreakClaim: 'Claim',
+  loginStreakClaimed: '✓ Claimed',
+  loginStreakDone: '✓',
+  loginStreakLocked: '🔒',
+  loginStreakBoosterLabel: 'Booster',
+  loginStreakGoldWon: ({ amount }) => `+${amount} gold coins!`,
+  loginStreakBoosterWon: 'You got a BP01 booster pack!',
+  loginStreakAlreadyClaimed: "Today's reward has already been claimed.",
 
   // ---------- main menu ----------
   menuTutorial: '🎓 Tutorial',
