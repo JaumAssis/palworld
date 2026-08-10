@@ -1033,7 +1033,11 @@ const RARITY_DURATION_HOURS = {
   R: 2,         // 2 horas
   RR: 6,        // 6 horas
   TD: 10 / 60,  // cartas de trial deck tratadas como C
+  SR: 8,        // 8 horas
+  TSR: 8,       // variante Altered Art de trial deck, tratada como SR
   OSR: 10,      // 10 horas
+  SP: 16,       // 16 horas
+  TSP: 16,      // variante Altered Art de trial deck, tratada como SP
   SSP: 24       // 24 horas
 };
 
