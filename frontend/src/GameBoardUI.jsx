@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useLanguage } from './i18n/LanguageContext'
 
 // Componentes/estilos visuais do tabuleiro, compartilhados entre a partida contra o Bot (GameBoard)
@@ -196,6 +197,7 @@ export function DamageRevealModal({ reveal, onClose, t }) {
 // Popout informativo: cartas que estão no cemitério de um dos jogadores — cemitério é informação
 // pública (cartas descartadas ficam viradas pra cima), então dá pra ver o cemitério de qualquer lado.
 export function GraveyardModal({ view, onClose, t }) {
+  const [zoomCard, setZoomCard] = useState(null)
   return (
     <div onClick={onClose} style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
@@ -214,12 +216,22 @@ export function GraveyardModal({ view, onClose, t }) {
         ) : (
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center', marginTop: '10px' }}>
             {view.cards.map((c, i) => (
-              <img key={i} src={c.imageUrl} alt={c.name} title={c.name}
-                   style={{ width: '80px', borderRadius: '6px', boxShadow: '0 2px 8px rgba(0,0,0,0.4)' }} />
+              <img key={i} src={c.imageUrl} alt={c.name} title={c.name} onClick={() => setZoomCard(c)}
+                   style={{ width: '80px', borderRadius: '6px', boxShadow: '0 2px 8px rgba(0,0,0,0.4)', cursor: 'pointer' }} />
             ))}
           </div>
         )}
       </div>
+
+      {zoomCard && (
+        <div onClick={e => { e.stopPropagation(); setZoomCard(null) }} style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1500, cursor: 'zoom-out'
+        }}>
+          <img src={zoomCard.imageUrl} alt={zoomCard.name}
+               style={{ maxWidth: '85vw', maxHeight: '85vh', borderRadius: '14px', border: '4px solid #c99a4e', boxShadow: '0 12px 36px rgba(0,0,0,0.6)' }} />
+        </div>
+      )}
     </div>
   )
 }
@@ -249,7 +261,7 @@ export const WOOD_P = { color: '#d8c6a0', fontSize: '14px' }
 // escolher ordem, mulligan, vitória/derrota) pra dar uma identidade visual única antes da partida.
 export const WOOD_PAGE_BACKGROUND = 'radial-gradient(ellipse at 50% -10%, rgba(255,200,120,0.08), transparent 55%), linear-gradient(160deg, #3f2612 0%, #2b1608 60%, #1c0f06 100%)'
 
-export function Overlay({ children, accent = 'neutral' }) {
+export function Overlay({ children, accent = 'neutral', maxWidth = '440px' }) {
   const a = OVERLAY_ACCENTS[accent] || OVERLAY_ACCENTS.neutral
   return (
     <div style={{
@@ -261,7 +273,7 @@ export function Overlay({ children, accent = 'neutral' }) {
         border: `3px solid ${a.border}`,
         borderRadius: '16px',
         padding: '32px',
-        maxWidth: '440px',
+        maxWidth,
         textAlign: 'center',
         color: '#2b1608',
         boxShadow: `inset 0 0 0 2px #8a5a2e, inset 0 0 0 5px #2b160a, inset 0 2px 6px rgba(255,255,255,0.35), 0 0 44px ${a.glow}, 0 16px 50px rgba(0,0,0,0.55)`
@@ -275,5 +287,5 @@ export function Overlay({ children, accent = 'neutral' }) {
 // Tabuleiro desenhado pra um "canvas" de tamanho fixo e escalado (CSS transform) pra caber em
 // qualquer resolução — em vez de deixar cada linha "esparramar" via flex conforme a largura da
 // janela, todo mundo vê exatamente a mesma proporção/composição, só maior ou menor.
-export const BOARD_WIDTH = 1360
-export const BOARD_HEIGHT = 740
+export const BOARD_WIDTH = 1440
+export const BOARD_HEIGHT = 800

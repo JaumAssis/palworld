@@ -1117,6 +1117,29 @@ function closestByBreedingPower(targetRank) {
   return candidates.length ? pickRandom(candidates) : null;
 }
 
+// Quando o Pal real do combo (breedingData.combo_lookup) ainda não tem carta impressa no TCG,
+// substituímos por um Pal existente de power IMEDIATAMENTE ACIMA (nunca abaixo) do power real
+// dele — mesmo critério de empate/sorteio da closestByBreedingPower. Só cai pro mais próximo
+// (incluindo abaixo) se não existir nenhuma carta com power maior ou igual.
+function closestByBreedingPowerAbove(targetRank) {
+  const allPals = db.prepare("SELECT * FROM cards WHERE card_type = 'Pal' AND card_number NOT LIKE '%-%-%'").all();
+  let bestDiff = Infinity;
+  let candidates = [];
+  for (const pal of allPals) {
+    const rank = breedingData.breeding_power[pal.pal_name];
+    if (rank == null || rank < targetRank) continue;
+    const diff = rank - targetRank;
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      candidates = [pal];
+    } else if (diff === bestDiff) {
+      candidates.push(pal);
+    }
+  }
+  if (candidates.length) return pickRandom(candidates);
+  return closestByBreedingPower(targetRank); // fallback: nenhum Pal com power >= alvo
+}
+
 function computeBreedingResult(parent1Card, parent2Card) {
   const n1 = parent1Card.pal_name;
   const n2 = parent2Card.pal_name;
@@ -1132,7 +1155,7 @@ function computeBreedingResult(parent1Card, parent2Card) {
       baseResult = pickRandom(cardMatches);
     } else {
       const targetRank = breedingData.all_breeding_power[realResultName];
-      baseResult = targetRank != null ? closestByBreedingPower(targetRank) : null;
+      baseResult = targetRank != null ? closestByBreedingPowerAbove(targetRank) : null;
     }
   }
 
@@ -1933,6 +1956,7 @@ io.on('connection', (socket) => {
     if (!card) return;
     const result = self.tryDeployPal(card);
     if (result.success) {
+      tm._addLog(`${self.playerName} jogou ${card.name}.`);
       incrementMission(sidePlayerId, 'play_pal', null, 1);
       incrementMission(sidePlayerId, 'play_any', null, 1);
       const palTypes = getCardPalTypes(card.card_number);
@@ -1962,6 +1986,7 @@ io.on('connection', (socket) => {
     if (!card) return;
     const result = self.tryDeployStructure(card);
     if (result.success) {
+      tm._addLog(`${self.playerName} jogou ${card.name}.`);
       incrementMission(sidePlayerId, 'play_structure', null, 1);
       incrementMission(sidePlayerId, 'play_any', null, 1);
       EffectEngine.runTrigger(tm, 'onDeploy', result.instance, self, opponent, { isBot: false });
@@ -1985,6 +2010,7 @@ io.on('connection', (socket) => {
     if (!card) return;
     const result = self.tryDeployGear(card);
     if (result.success) {
+      tm._addLog(`${self.playerName} jogou ${card.name}.`);
       incrementMission(sidePlayerId, 'play_gear', null, 1);
       incrementMission(sidePlayerId, 'play_any', null, 1);
       const gearInstance = { data: card, tempPowerBonus: 0, tempStrikeBonus: 0 };
@@ -2014,6 +2040,7 @@ io.on('connection', (socket) => {
     self.hand = self.hand.filter(c => c !== card);
     self.graveyard.push(card);
     self.cardsPlayedThisGame = (self.cardsPlayedThisGame || 0) + 1;
+    tm._addLog(`${self.playerName} jogou ${card.name}.`);
     incrementMission(sidePlayerId, 'play_event', null, 1);
     incrementMission(sidePlayerId, 'play_any', null, 1);
     const eventInstance = { data: card, tempPowerBonus: 0, tempStrikeBonus: 0 };
@@ -2032,6 +2059,7 @@ io.on('connection', (socket) => {
     if (tm.activePlayer !== self || tm.currentPhase !== 'main') return;
     const result = self.drawWithSoulCost(3);
     if (result.success) {
+      tm._addLog(`${self.playerName} suspendeu 3 Souls pra comprar 1 carta.`);
       incrementMission(sidePlayerId, 'soul_draw', null, 1);
     } else if (result.reason === 'ALREADY_USED') {
       socket.emit('match:error', { message: 'Você já suspendeu Souls pra comprar carta neste turno (só é permitido 1x por turno).' });
@@ -2053,6 +2081,7 @@ io.on('connection', (socket) => {
       socket.emit('match:error', { message: 'Não foi possível ativar essa habilidade agora.' });
       return;
     }
+    tm._addLog(`${self.playerName} ativou uma habilidade de ${instance.data.name}.`);
     emitMatchState(session);
   });
 
@@ -2368,6 +2397,7 @@ io.on('connection', (socket) => {
         await delay(5000);
         const result = bot.tryDeployPal(playablePal);
         if (result.success) {
+          tm._addLog(`${bot.playerName} jogou ${playablePal.name}.`);
           EffectEngine.runTrigger(tm, 'onDeploy', result.instance, bot, match.playerState, { isBot: true });
           EffectEngine.notifyAllyDeploy(tm, bot, match.playerState, result.instance, { isBot: true });
           tm.checkOverloadedPals(bot, match.playerState, result.instance, true);
@@ -2382,7 +2412,8 @@ io.on('connection', (socket) => {
       if (pal.isStanding && !tm.gameOver) {
         await delay(5000);
         const tauntTargets = EffectEngine.getForcedTauntTargets(match.playerState, pal);
-        const target = tauntTargets.length > 0 ? { type: 'pal', instance: tauntTargets[0] } : { type: 'player' };
+        // cada entrada já carrega seu próprio type ('pal' ou 'structure' — ex: Wooden Wall)
+        const target = tauntTargets.length > 0 ? tauntTargets[0] : { type: 'player' };
         const result = tm.declareAttack(pal, target, { isBot: true });
         emitState();
         // Se pausou (jogador tem escolha de bloqueio/Quick Step), espera ele resolver antes de seguir
@@ -2447,6 +2478,7 @@ io.on('connection', (socket) => {
     if (!card) return;
     const result = match.playerState.tryDeployPal(card);
     if (result.success) {
+      match.turnManager._addLog(`${match.playerState.playerName} jogou ${card.name}.`);
       incrementMission(playerId, 'play_pal', null, 1);
       incrementMission(playerId, 'play_any', null, 1);
       const palTypes = getCardPalTypes(card.card_number);
@@ -2473,6 +2505,7 @@ io.on('connection', (socket) => {
     if (!card) return;
     const result = match.playerState.tryDeployStructure(card);
     if (result.success) {
+      match.turnManager._addLog(`${match.playerState.playerName} jogou ${card.name}.`);
       incrementMission(playerId, 'play_structure', null, 1);
       incrementMission(playerId, 'play_any', null, 1);
       EffectEngine.runTrigger(match.turnManager, 'onDeploy', result.instance, match.playerState, match.botState, { isBot: false });
@@ -2493,6 +2526,7 @@ io.on('connection', (socket) => {
     if (!card) return;
     const result = match.playerState.tryDeployGear(card);
     if (result.success) {
+      match.turnManager._addLog(`${match.playerState.playerName} jogou ${card.name}.`);
       incrementMission(playerId, 'play_gear', null, 1);
       incrementMission(playerId, 'play_any', null, 1);
       const gearInstance = { data: card, tempPowerBonus: 0, tempStrikeBonus: 0 };
@@ -2519,6 +2553,7 @@ io.on('connection', (socket) => {
     match.playerState.hand = match.playerState.hand.filter(c => c !== card);
     match.playerState.graveyard.push(card);
     match.playerState.cardsPlayedThisGame = (match.playerState.cardsPlayedThisGame || 0) + 1;
+    match.turnManager._addLog(`${match.playerState.playerName} jogou ${card.name}.`);
     incrementMission(playerId, 'play_event', null, 1);
     incrementMission(playerId, 'play_any', null, 1);
     const eventInstance = { data: card, tempPowerBonus: 0, tempStrikeBonus: 0 };
@@ -2535,6 +2570,7 @@ io.on('connection', (socket) => {
     if (match.turnManager.activePlayer !== match.playerState || match.turnManager.currentPhase !== 'main') return;
     const result = match.playerState.drawWithSoulCost(3);
     if (result.success) {
+      match.turnManager._addLog(`${match.playerState.playerName} suspendeu 3 Souls pra comprar 1 carta.`);
       incrementMission(playerId, 'soul_draw', null, 1);
     } else if (result.reason === 'ALREADY_USED') {
       socket.emit('bot:error', { message: 'Você já suspendeu Souls pra comprar carta neste turno (só é permitido 1x por turno).' });
@@ -2554,6 +2590,7 @@ io.on('connection', (socket) => {
       socket.emit('bot:error', { message: 'Não foi possível ativar essa habilidade agora.' });
       return;
     }
+    match.turnManager._addLog(`${match.playerState.playerName} ativou uma habilidade de ${instance.data.name}.`);
     emitState();
   });
 

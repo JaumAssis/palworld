@@ -215,8 +215,10 @@ class TurnManager {
     // válido descansado, a menos que o atacante tenha Assault), a Structure não tem "estado de combate"
     // nenhum; `isStanding`/`rest()` nela só existem pro custo das próprias habilidades ACT dela mesma
     // (ex: "[Rest this card]"), não pra elegibilidade de ser atacada.
+    // forcedTaunt agora mistura Pal e Structure (Wooden Wall etc.) — cada entrada carrega seu próprio
+    // type, então a checagem precisa bater type+instance, não só a instância (ver getForcedTauntTargets).
     const forcedTaunt = EffectEngine.getForcedTauntTargets(defenderState, attackerInstance)
-    if (forcedTaunt.length > 0 && (target.type !== 'pal' || !forcedTaunt.includes(target.instance))) {
+    if (forcedTaunt.length > 0 && !forcedTaunt.some(f => f.type === target.type && f.instance === target.instance)) {
       return { success: false, reason: 'TAUNT_FORCED' }
     }
 
@@ -459,9 +461,13 @@ class TurnManager {
       const power = attackerInstance.effectivePower(attackerState, defenderState)
       target.instance.damageMarked += power
       const structureDestroyed = target.instance.isDestroyed
+      this._addLog(`${attackerInstance.data.name} atacou a Structure ${target.instance.data.name} (${power} de dano).`)
       // Via _sendToGraveyard (não splice direto) pra disparar onGraveyard/onLeaveBase da própria
       // Structure destruída (ex: Wooden Wall "AUTO When this card is put into the graveyard, draw 1").
-      if (structureDestroyed) this._sendToGraveyard(target.instance, defenderState)
+      if (structureDestroyed) {
+        this._sendToGraveyard(target.instance, defenderState)
+        this._addLog(`${target.instance.data.name} foi destruída.`)
+      }
       return { structureDestroyed }
     }
 
@@ -482,6 +488,12 @@ class TurnManager {
       damageDealt = strike
     }
     defenderState.graveyard.push(...revealed)
+
+    if (canceled) {
+      this._addLog(`${attackerInstance.data.name} atacou ${defenderState.playerName} diretamente, mas revelou um Lucky Pal — ataque anulado.`)
+    } else {
+      this._addLog(`${attackerInstance.data.name} atacou ${defenderState.playerName} diretamente e causou ${damageDealt} de dano.`)
+    }
 
     this.lastDamageReveal = {
       id: ++this._damageRevealSeq,
@@ -507,12 +519,14 @@ class TurnManager {
     const defenderPower = defenderInstance.effectivePower(defenderState, attackerState)
     defenderInstance.damageMarked += attackerPower
     attackerInstance.damageMarked += defenderPower
+    this._addLog(`${attackerInstance.data.name} atacou ${defenderInstance.data.name} (${attackerPower} de dano).`)
 
     const results = { attackerDestroyed: false, defenderDestroyed: false }
 
     if (defenderInstance.isDestroyed(defenderState, attackerState)) {
       this._sendToGraveyard(defenderInstance, defenderState)
       results.defenderDestroyed = true
+      this._addLog(`${defenderInstance.data.name} foi destruído.`)
 
       if (EffectEngine.hasKeywordOrGranted(attackerInstance, 'Breakthrough')) {
         const strike = attackerInstance.effectiveStrike(attackerState, defenderState)
@@ -524,10 +538,12 @@ class TurnManager {
     if (attackerInstance.isDestroyed(attackerState, defenderState)) {
       this._sendToGraveyard(attackerInstance, attackerState)
       results.attackerDestroyed = true
+      this._addLog(`${attackerInstance.data.name} foi destruído.`)
 
       if (!results.defenderDestroyed && EffectEngine.hasKeyword(attackerInstance.data, 'Retaliate')) {
         this._sendToGraveyard(defenderInstance, defenderState)
         results.defenderDestroyed = true
+        this._addLog(`${defenderInstance.data.name} foi destruído (Retaliate).`)
       }
     }
     return results

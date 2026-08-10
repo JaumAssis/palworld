@@ -11,22 +11,33 @@ function CardPicker({ onSelect, onClose, ownedPals, selectedNumbers, requiredKey
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: '14px', padding: '20px', width: '520px', maxWidth: '90vw', maxHeight: '80vh', overflowY: 'auto' }}>
-        <h3 style={{ marginTop: 0 }}>{t('choosePalKeywordsTitle')}</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: '10px' }}>
-          {filtered.map(card => {
-            const already = selectedNumbers.includes(card.card_number)
-            return (
-              <div key={card.card_number} onClick={() => !already && onSelect(card)}
-                   style={{ cursor: already ? 'not-allowed' : 'pointer', opacity: already ? 0.4 : 1, textAlign: 'center' }}>
-                <img src={card.image_url} alt={card.name} style={{ width: '100%', borderRadius: '6px' }} />
-                <p style={{ fontSize: '10px', margin: '4px 0 0', fontWeight: 600 }}>{card.name}</p>
-                <p style={{ fontSize: '9px', margin: 0, color: '#777' }}>{(card.workKeywords || []).join(', ') || '—'}</p>
-              </div>
-            )
-          })}
+      <div onClick={e => e.stopPropagation()} style={{
+        background: '#fff', borderRadius: '14px', width: '520px', maxWidth: '90vw', maxHeight: '80vh',
+        display: 'flex', flexDirection: 'column', overflow: 'hidden'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px 8px', flexShrink: 0 }}>
+          <h3 style={{ margin: 0 }}>{t('choosePalKeywordsTitle')}</h3>
+          <button onClick={onClose} title={t('close')} style={{ background: 'none', border: 'none', fontSize: '20px', lineHeight: 1, color: '#666', cursor: 'pointer', padding: '4px' }}>✕</button>
         </div>
-        {filtered.length === 0 && <p style={{ color: '#999' }}>{t('noPalsWithSkill')}</p>}
+        <div style={{ padding: '0 20px 20px', overflowY: 'auto' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: '10px' }}>
+            {filtered.map(card => {
+              const already = selectedNumbers.includes(card.card_number)
+              return (
+                <div key={card.card_number} onClick={() => !already && onSelect(card)}
+                     style={{ cursor: already ? 'not-allowed' : 'pointer', opacity: already ? 0.4 : 1, textAlign: 'center' }}>
+                  <div style={{ width: '100%', aspectRatio: '5 / 7', borderRadius: '6px', overflow: 'hidden', background: '#eee' }}>
+                    <img src={card.image_url} alt={card.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                         onError={e => { e.target.style.visibility = 'hidden' }} />
+                  </div>
+                  <p style={{ fontSize: '10px', margin: '4px 0 0', fontWeight: 600 }}>{card.name}</p>
+                  <p style={{ fontSize: '9px', margin: 0, color: '#777' }}>{(card.workKeywords || []).join(', ') || '—'}</p>
+                </div>
+              )
+            })}
+          </div>
+          {filtered.length === 0 && <p style={{ color: '#999' }}>{t('noPalsWithSkill')}</p>}
+        </div>
       </div>
     </div>
   )
@@ -223,10 +234,26 @@ function Farming({ onClose } = {}) {
             {t('keywordStatus', { farming: hasFarming ? '✅' : '❌', harvesting: hasHarvesting ? '✅' : '❌', collecting: hasCollecting ? '✅' : '❌' })}
           </p>
 
-          <label style={{ fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', margin: '10px 0' }}>
-            <input type="checkbox" checked={repeatWanted} onChange={e => setRepeatWanted(e.target.checked)} disabled={!hasCollecting} />
-            {t('repeatCheckbox')}
-          </label>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', margin: '10px 0' }}>
+            <span style={{ fontSize: '13px', color: hasCollecting ? '#3a2410' : '#aaa' }}>{t('repeatCheckbox')}</span>
+            <button
+              type="button"
+              onClick={() => setRepeatWanted(v => !v)}
+              disabled={!hasCollecting}
+              aria-pressed={repeatWanted}
+              style={{
+                width: '44px', height: '24px', borderRadius: '999px', border: 'none', padding: '3px',
+                background: repeatWanted ? '#34c759' : '#ccc', flexShrink: 0,
+                cursor: hasCollecting ? 'pointer' : 'not-allowed', opacity: hasCollecting ? 1 : 0.5,
+                transition: 'background 0.2s ease'
+              }}>
+              <span style={{
+                display: 'block', width: '18px', height: '18px', borderRadius: '50%', background: '#fff',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.3)', transition: 'transform 0.2s ease',
+                transform: repeatWanted ? 'translateX(20px)' : 'translateX(0)'
+              }} />
+            </button>
+          </div>
 
           <button onClick={startFarming} disabled={!canStart} style={{ padding: '12px 30px', opacity: canStart ? 1 : 0.5 }}>
             {t('startFarming')}

@@ -121,10 +121,10 @@ const STEPS = [
 
 const HIGHLIGHT_STYLE = { outline: '3px solid #6cf25a', outlineOffset: '3px', boxShadow: '0 0 14px rgba(108,242,90,0.75)', borderRadius: '10px' }
 
-function MiniPal({ pal, highlighted }) {
+function MiniPal({ pal, highlighted, onZoom }) {
   return (
-    <div style={{
-      width: '72px', position: 'relative',
+    <div onClick={() => onZoom(pal)} style={{
+      width: '72px', position: 'relative', cursor: 'pointer',
       transform: pal.isStanding ? 'rotate(0deg)' : 'rotate(90deg)', transition: 'transform 0.25s ease',
       ...(highlighted ? HIGHLIGHT_STYLE : {})
     }}>
@@ -139,9 +139,9 @@ function MiniPal({ pal, highlighted }) {
   )
 }
 
-function MiniHandCard({ card, highlighted }) {
+function MiniHandCard({ card, highlighted, onZoom }) {
   return (
-    <div style={{ width: '74px', height: '104px', borderRadius: '6px', overflow: 'hidden', boxShadow: '0 2px 6px rgba(0,0,0,0.4)', flexShrink: 0, ...(highlighted ? HIGHLIGHT_STYLE : {}) }}>
+    <div onClick={() => onZoom(card)} style={{ width: '80px', height: '112px', borderRadius: '6px', overflow: 'hidden', cursor: 'pointer', boxShadow: '0 2px 6px rgba(0,0,0,0.4)', flexShrink: 0, ...(highlighted ? HIGHLIGHT_STYLE : {}) }}>
       <img src={card.imageUrl} alt={card.name} title={card.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
     </div>
   )
@@ -165,6 +165,7 @@ function TutorialMatch() {
   const { t } = useLanguage()
   const { isNight } = useTheme()
   const [stepIndex, setStepIndex] = useState(0)
+  const [zoomCard, setZoomCard] = useState(null)
 
   const step = STEPS[stepIndex]
   const board = BOARDS[step.board]
@@ -182,54 +183,54 @@ function TutorialMatch() {
       background: `url(${isNight ? '/night.png' : '/ambient.webp'}) center / cover no-repeat fixed`
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 20px' }}>
-        <Link to="/tutorial"><button style={{ fontSize: '12px' }}>{t('tutorialExit')}</button></Link>
-        <div style={{ color: '#fff', fontWeight: 600, fontSize: '13px', textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>
+        <Link to="/tutorial"><button className="sign-button" style={{ fontSize: '13px' }}>{t('tutorialExit')}</button></Link>
+        <div style={{ color: '#fff', fontWeight: 600, fontSize: '15px', textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>
           {t('tutorialStepCounter', { current: stepIndex + 1, total })}
         </div>
       </div>
 
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '10px', padding: '0 20px', maxWidth: '900px', width: '100%', margin: '0 auto', boxSizing: 'border-box' }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '10px', padding: '0 20px', maxWidth: '1040px', width: '100%', margin: '0 auto', boxSizing: 'border-box' }}>
         {/* ---------- BOT ---------- */}
-        <div style={{ background: 'rgba(10,15,25,0.45)', backdropFilter: 'blur(4px)', borderRadius: '12px', padding: '10px' }}>
+        <div style={{ background: 'rgba(10,15,25,0.45)', backdropFilter: 'blur(4px)', borderRadius: '12px', padding: '14px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-            <strong style={{ color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.6)', fontSize: '13px' }}>🤖 Bot</strong>
+            <strong style={{ color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.6)', fontSize: '15px' }}>🤖 Bot</strong>
             <div style={{ ...(hl === 'deckGrave' ? HIGHLIGHT_STYLE : {}), ...(hl === 'botDeck' ? HIGHLIGHT_STYLE : {}), display: 'flex', gap: '8px' }}>
-              <span style={{ color: '#fff', fontSize: '11px' }}>{t('gbDeckCount', { n: board.bot.deckCount })}</span>
-              <span style={{ color: '#fff', fontSize: '11px' }}>{t('gbGraveyard', { n: board.bot.graveyardCount })}</span>
+              <span style={{ color: '#fff', fontSize: '13px' }}>{t('gbDeckCount', { n: board.bot.deckCount })}</span>
+              <span style={{ color: '#fff', fontSize: '13px' }}>{t('gbGraveyard', { n: board.bot.graveyardCount })}</span>
             </div>
             <MiniSoulRow standing={board.bot.soulsStanding} rested={board.bot.soulsRested} highlighted={hl === 'souls'} />
-            <span style={{ color: '#fff', fontSize: '13px', textShadow: '0 1px 3px rgba(0,0,0,0.6)', ...(hl === 'botLife' ? HIGHLIGHT_STYLE : {}) }}>❤️ {board.bot.life}</span>
+            <span style={{ color: '#fff', fontSize: '15px', textShadow: '0 1px 3px rgba(0,0,0,0.6)', ...(hl === 'botLife' ? HIGHLIGHT_STYLE : {}) }}>❤️ {board.bot.life}</span>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', minHeight: '90px', marginTop: '8px' }}>
             {board.bot.basePals.length === 0
-              ? <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px' }}>—</span>
-              : board.bot.basePals.map((p, i) => <MiniPal key={i} pal={p} highlighted={hl === `botPal${i}`} />)}
+              ? <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '13px' }}>—</span>
+              : board.bot.basePals.map((p, i) => <MiniPal key={i} pal={p} highlighted={hl === `botPal${i}`} onZoom={setZoomCard} />)}
           </div>
         </div>
 
         {/* ---------- TURNO ---------- */}
-        <div style={{ textAlign: 'center', color: '#f3e2b3', fontFamily: "'Rye', Georgia, serif", fontSize: '15px', textShadow: '1px 1px 0 #000', padding: '2px', ...(hl === 'turnLabel' ? HIGHLIGHT_STYLE : {}) }}>
+        <div style={{ textAlign: 'center', color: '#f3e2b3', fontFamily: "'Rye', Georgia, serif", fontSize: '17px', textShadow: '1px 1px 0 #000', padding: '2px', ...(hl === 'turnLabel' ? HIGHLIGHT_STYLE : {}) }}>
           {board.turnNumber ? t('gbTurn', { n: board.turnNumber, whoseTurn: board.isPlayerTurn ? t('gbYourTurn') : t('gbBotTurn') }) : t('tutorialBeforeMatch')}
         </div>
 
         {/* ---------- JOGADOR ---------- */}
-        <div style={{ background: 'rgba(10,15,25,0.45)', backdropFilter: 'blur(4px)', borderRadius: '12px', padding: '10px' }}>
+        <div style={{ background: 'rgba(10,15,25,0.45)', backdropFilter: 'blur(4px)', borderRadius: '12px', padding: '14px' }}>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', minHeight: '90px' }}>
             {board.player.basePals.length === 0
-              ? (hl === 'base' ? <div style={{ ...HIGHLIGHT_STYLE, width: '72px', height: '4px' }} /> : <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px' }}>—</span>)
-              : board.player.basePals.map((p, i) => <MiniPal key={i} pal={p} highlighted={hl === `playerPal${i}`} />)}
+              ? (hl === 'base' ? <div style={{ ...HIGHLIGHT_STYLE, width: '72px', height: '4px' }} /> : <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '13px' }}>—</span>)
+              : board.player.basePals.map((p, i) => <MiniPal key={i} pal={p} highlighted={hl === `playerPal${i}`} onZoom={setZoomCard} />)}
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginTop: '8px', flexWrap: 'wrap' }}>
-            <strong style={{ color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.6)', fontSize: '13px' }}>🧑 {t('youLabel')}</strong>
+            <strong style={{ color: '#fff', textShadow: '0 1px 3px rgba(0,0,0,0.6)', fontSize: '15px' }}>🧑 {t('youLabel')}</strong>
             <div style={{ ...(hl === 'deckGrave' ? HIGHLIGHT_STYLE : {}), display: 'flex', gap: '8px' }}>
-              <span style={{ color: '#fff', fontSize: '11px' }}>{t('gbDeckCount', { n: board.player.deckCount })}</span>
-              <span style={{ color: '#fff', fontSize: '11px', ...(hl === 'playerGrave' ? HIGHLIGHT_STYLE : {}) }}>{t('gbGraveyard', { n: board.player.graveyardCount })}</span>
+              <span style={{ color: '#fff', fontSize: '13px' }}>{t('gbDeckCount', { n: board.player.deckCount })}</span>
+              <span style={{ color: '#fff', fontSize: '13px', ...(hl === 'playerGrave' ? HIGHLIGHT_STYLE : {}) }}>{t('gbGraveyard', { n: board.player.graveyardCount })}</span>
             </div>
             <MiniSoulRow standing={board.player.soulsStanding} rested={board.player.soulsRested} highlighted={hl === 'souls'} />
-            <span style={{ color: '#fff', fontSize: '11px', textShadow: '0 1px 3px rgba(0,0,0,0.6)', ...(hl === 'material' ? HIGHLIGHT_STYLE : {}) }}>
+            <span style={{ color: '#fff', fontSize: '13px', textShadow: '0 1px 3px rgba(0,0,0,0.6)', ...(hl === 'material' ? HIGHLIGHT_STYLE : {}) }}>
               {t('gbMaterial', { n: board.player.material })} · {t('gbIngredient', { n: board.player.ingredient })}
             </span>
-            <span style={{ color: '#fff', fontSize: '13px', textShadow: '0 1px 3px rgba(0,0,0,0.6)', ...(hl === 'life' ? HIGHLIGHT_STYLE : {}) }}>❤️ {board.player.life}</span>
+            <span style={{ color: '#fff', fontSize: '15px', textShadow: '0 1px 3px rgba(0,0,0,0.6)', ...(hl === 'life' ? HIGHLIGHT_STYLE : {}) }}>❤️ {board.player.life}</span>
           </div>
         </div>
 
@@ -246,7 +247,7 @@ function TutorialMatch() {
         {/* ---------- MÃO ---------- */}
         <div style={{ display: 'flex', justifyContent: 'center', gap: '6px', flexWrap: 'nowrap', paddingBottom: '10px' }}>
           {board.hand.map((card, i) => (
-            <MiniHandCard key={i} card={card}
+            <MiniHandCard key={i} card={card} onZoom={setZoomCard}
               highlighted={hl === 'hand' || (hl === 'handQuick' && card === CARDS.ignisBreath)} />
           ))}
         </div>
@@ -255,13 +256,13 @@ function TutorialMatch() {
       {/* ---------- PAINEL DE NARRAÇÃO ---------- */}
       <div style={{
         background: 'linear-gradient(155deg, #ecdcb2 0%, #d8bd86 55%, #c5a468 100%)',
-        borderTop: '3px solid #8a5a2e', padding: '16px 20px', boxShadow: '0 -8px 30px rgba(0,0,0,0.4)'
+        borderTop: '3px solid #8a5a2e', padding: '24px 20px', boxShadow: '0 -8px 30px rgba(0,0,0,0.4)'
       }}>
-        <div style={{ maxWidth: '760px', margin: '0 auto' }}>
-          <h2 style={{ fontFamily: "'Rye', Georgia, serif", color: '#3a2210', fontSize: '19px', margin: '0 0 8px' }}>
+        <div style={{ maxWidth: '880px', margin: '0 auto' }}>
+          <h2 style={{ fontFamily: "'Rye', Georgia, serif", color: '#3a2210', fontSize: '22px', margin: '0 0 10px' }}>
             {t(`tutorialStep_${step.id}_title`)}
           </h2>
-          <p style={{ color: '#4a3220', fontSize: '14px', lineHeight: 1.5, margin: 0 }}>
+          <p style={{ color: '#4a3220', fontSize: '16px', lineHeight: 1.6, margin: 0 }}>
             {t(`tutorialStep_${step.id}_body`)}
           </p>
 
@@ -281,6 +282,20 @@ function TutorialMatch() {
           </div>
         </div>
       </div>
+
+      {zoomCard && (
+        <div onClick={() => setZoomCard(null)} style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000, cursor: 'zoom-out'
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{ textAlign: 'center' }}>
+            <img src={zoomCard.imageUrl} alt={zoomCard.name}
+                 style={{ maxWidth: '90vw', maxHeight: '80vh', borderRadius: '14px', border: '4px solid #c99a4e', boxShadow: '0 12px 36px rgba(0,0,0,0.6)' }} />
+            <p style={{ marginTop: '12px', color: '#f3e2b3', fontSize: '16px', textShadow: '2px 2px 0 #000' }}>{zoomCard.name}</p>
+            <button className="sign-button" onClick={() => setZoomCard(null)} style={{ marginTop: '8px' }}>{t('close')}</button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

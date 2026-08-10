@@ -31,6 +31,7 @@ function FindMatchDeckSelect() {
   const [rpsResult, setRpsResult] = useState(null)
   const [rpsSubmitted, setRpsSubmitted] = useState(false)
   const [mulliganHand, setMulliganHand] = useState([])
+  const [mulliganZoomCard, setMulliganZoomCard] = useState(null)
   const [opponentLeftMessage, setOpponentLeftMessage] = useState('')
   const [opponentLeftPointsChange, setOpponentLeftPointsChange] = useState(null)
 
@@ -48,12 +49,18 @@ function FindMatchDeckSelect() {
   const hoverTimerRef = useRef(null)
   const seenDamageRevealIdRef = useRef(null)
   const damageRevealTimerRef = useRef(null)
+  const logBoxRef = useRef(null)
   const stageRef = useRef(stage)
   useEffect(() => { stageRef.current = stage }, [stage])
 
+  // O *1.08 é de propósito: sem ele, a escala "de encaixe exato" deixa o tabuleiro sempre do
+  // mesmo tamanho relativo à tela — esse fator é o que de fato deixa o tabuleiro maior na tela.
+  // O segundo Math.min trava o resultado em 1.08 pra não explodir o corte nas bordas em janelas
+  // onde o encaixe "exato" já bate perto de 1 (telas grandes, pouca barra de navegador sobrando).
   useEffect(() => {
     const updateScale = () => {
-      setBoardScale(Math.min(window.innerWidth / BOARD_WIDTH, window.innerHeight / BOARD_HEIGHT, 1))
+      const fitScale = Math.min(window.innerWidth / BOARD_WIDTH, window.innerHeight / BOARD_HEIGHT)
+      setBoardScale(Math.min(fitScale * 1.08, 1.08))
     }
     updateScale()
     window.addEventListener('resize', updateScale)
@@ -77,7 +84,8 @@ function FindMatchDeckSelect() {
       setRpsResult(data)
       setRpsSubmitted(false)
       if (data.result !== 'draw') {
-        setTimeout(() => setStage(data.result === 'win' ? 'chooseOrder' : 'waitingOrder'), 1200)
+        // 7s de propósito: dá tempo dos players lerem quem ganhou/perdeu antes de avançar.
+        setTimeout(() => setStage(data.result === 'win' ? 'chooseOrder' : 'waitingOrder'), 7000)
       }
     })
 
@@ -129,6 +137,12 @@ function FindMatchDeckSelect() {
   useEffect(() => {
     if (gameState?.pendingEffect?.kind === 'cardChoice') cancelHoverZoom()
   }, [gameState?.pendingEffect?.kind])
+
+  // Autoscroll do log de jogadas — mantém a entrada mais recente sempre visível, empurrando as
+  // antigas pra cima dentro do quadro (sem precisar o jogador rolar manualmente).
+  useEffect(() => {
+    if (logBoxRef.current) logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight
+  }, [gameState?.log?.length])
 
   // ---------- ações: fila / deck ----------
   const visibleDecks = isArena ? decks.filter(d => d.mode === 'rank') : decks
@@ -235,7 +249,7 @@ function FindMatchDeckSelect() {
 
   const startHoverZoom = (imageUrl, name) => {
     clearTimeout(hoverTimerRef.current)
-    hoverTimerRef.current = setTimeout(() => setZoomCard({ imageUrl, name }), 1000)
+    hoverTimerRef.current = setTimeout(() => setZoomCard({ imageUrl, name }), 500)
   }
   const cancelHoverZoom = () => {
     clearTimeout(hoverTimerRef.current)
@@ -310,7 +324,7 @@ function FindMatchDeckSelect() {
   if (stage === 'rps' || stage === 'waitingOrder') {
     const rpsAccent = rpsResult ? (rpsResult.result === 'win' ? 'win' : rpsResult.result === 'lose' ? 'lose' : 'neutral') : 'neutral'
     return (
-      <Overlay accent={rpsAccent}>
+      <Overlay accent={rpsAccent} maxWidth="500px">
         <h2 style={THEMED_H2}>{t('gbRpsTitle')}</h2>
         <p style={THEMED_P}>{t('gbRpsIntro')}</p>
         {!rpsResult && !rpsSubmitted && (
@@ -358,11 +372,12 @@ function FindMatchDeckSelect() {
   // ================= MULLIGAN =================
   if (stage === 'mulligan' || stage === 'waitingMulligan') {
     return (
-      <Overlay>
+      <Overlay maxWidth="560px">
         <h2 style={THEMED_H2}>{t('gbMulliganTitle')}</h2>
-        <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', margin: '16px 0', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', margin: '16px 0', flexWrap: 'wrap' }}>
           {mulliganHand.map((c, i) => (
-            <img key={i} src={c.image_url} alt={c.name} style={{ width: '70px', borderRadius: '6px', boxShadow: '0 2px 6px rgba(0,0,0,0.4)' }} />
+            <img key={i} src={c.image_url} alt={c.name} onClick={() => setMulliganZoomCard(c)}
+                 style={{ width: '95px', borderRadius: '8px', boxShadow: '0 2px 6px rgba(0,0,0,0.4)', cursor: 'pointer' }} />
           ))}
         </div>
         {stage === 'mulligan' ? (
@@ -375,6 +390,16 @@ function FindMatchDeckSelect() {
           </>
         ) : (
           <p style={THEMED_P}>{t('findMatchWaitingOpponent')}</p>
+        )}
+
+        {mulliganZoomCard && (
+          <div onClick={() => setMulliganZoomCard(null)} style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1500, cursor: 'zoom-out'
+          }}>
+            <img src={mulliganZoomCard.image_url} alt={mulliganZoomCard.name}
+                 style={{ maxWidth: '85vw', maxHeight: '85vh', borderRadius: '14px', border: '4px solid #c99a4e', boxShadow: '0 12px 36px rgba(0,0,0,0.6)' }} />
+          </div>
         )}
       </Overlay>
     )
@@ -417,24 +442,24 @@ function FindMatchDeckSelect() {
     pendingBattle?.waitingFor === 'quick' ? pendingBattle.quickOptions.find(o => o.cardNumber === cardNumber) : null
 
   const SoulRow = ({ standing, rested }) => (
-    <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
+    <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
       {Array.from({ length: standing }).map((_, i) => (
         soulImageUrl
-          ? <img key={'s' + i} src={soulImageUrl} alt="Soul" style={{ width: '14px', height: '20px', objectFit: 'cover', borderRadius: '3px', boxShadow: '0 1px 3px rgba(0,0,0,0.5)' }} />
-          : <div key={'s' + i} style={{ width: '14px', height: '20px', background: '#ffd54a', border: '1px solid #b8860b', borderRadius: '3px' }} />
+          ? <img key={'s' + i} src={soulImageUrl} alt="Soul" style={{ width: '19px', height: '27px', objectFit: 'cover', borderRadius: '4px', boxShadow: '0 1px 3px rgba(0,0,0,0.5)' }} />
+          : <div key={'s' + i} style={{ width: '19px', height: '27px', background: '#ffd54a', border: '1px solid #b8860b', borderRadius: '4px' }} />
       ))}
       {Array.from({ length: rested }).map((_, i) => (
         soulImageUrl
-          ? <img key={'r' + i} src={soulImageUrl} alt="Soul" style={{ width: '14px', height: '20px', objectFit: 'cover', borderRadius: '3px', transform: 'rotate(90deg)', filter: 'grayscale(100%)', opacity: 0.7 }} />
-          : <div key={'r' + i} style={{ width: '14px', height: '20px', background: '#7a7a7a', border: '1px solid #444', borderRadius: '3px', transform: 'rotate(90deg)' }} />
+          ? <img key={'r' + i} src={soulImageUrl} alt="Soul" style={{ width: '19px', height: '27px', objectFit: 'cover', borderRadius: '4px', transform: 'rotate(90deg)', filter: 'grayscale(100%)', opacity: 0.7 }} />
+          : <div key={'r' + i} style={{ width: '19px', height: '27px', background: '#7a7a7a', border: '1px solid #444', borderRadius: '4px', transform: 'rotate(90deg)' }} />
       ))}
     </div>
   )
 
   const SoulCount = ({ standing, rested }) => (
     <div style={{
-      background: 'rgba(0,0,0,0.35)', borderRadius: '8px', padding: '4px 10px',
-      color: '#fff', fontSize: '11px', textShadow: '0 1px 2px rgba(0,0,0,0.6)', whiteSpace: 'nowrap'
+      background: 'rgba(0,0,0,0.35)', borderRadius: '8px', padding: '5px 12px',
+      color: '#fff', fontSize: '14px', textShadow: '0 1px 2px rgba(0,0,0,0.6)', whiteSpace: 'nowrap'
     }}>
       {standing} standing / {rested} rested
     </div>
@@ -460,7 +485,7 @@ function FindMatchDeckSelect() {
         padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px', boxSizing: 'border-box'
       }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Link to="/"><button style={{ fontSize: '12px' }}>{t('gbExitMatch')}</button></Link>
+        <Link to="/"><button className="sign-button" style={{ fontSize: '12px' }}>{t('gbExitMatch')}</button></Link>
         <div style={{ color: '#fff', fontWeight: 600, fontSize: '13px', textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>
           {t('gbTurn', { n: turnNumber, whoseTurn: isYourTurn ? t('gbYourTurn') : t('findMatchOpponentTurn') })}
         </div>
@@ -726,25 +751,6 @@ function FindMatchDeckSelect() {
         </div>
       )}
 
-      {/* ---------- BOTÕES DE AÇÃO (fora do vidro) ---------- */}
-      <div style={{ display: 'flex', justifyContent: 'center', gap: '10px' }}>
-        <button onClick={drawWithSouls}
-                disabled={!!pendingEffect || !!pendingBattle || !isYourTurn || currentPhase !== 'main' || player.soulsStanding < 3 || player.soulDrawUsedThisTurn}
-                title={player.soulDrawUsedThisTurn ? t('gbDrawWithSoulsUsed') : undefined}
-                style={{ padding: '6px 14px', fontSize: '12px' }}>
-          {t('gbDrawWithSouls')}
-        </button>
-        {selectedPalIndex !== null ? (
-          <button onClick={() => attackWithPal(selectedPalIndex)} disabled={!!pendingEffect || !!pendingBattle} style={{ padding: '6px 16px', fontSize: '13px' }}>
-            {t('gbAttackWithPal')}
-          </button>
-        ) : (
-          <button onClick={advancePhase} disabled={!!pendingEffect || !!pendingBattle || !isYourTurn} style={{ padding: '6px 20px', fontSize: '13px' }}>
-            {t('gbEndTurn')}
-          </button>
-        )}
-      </div>
-
       {/* ---------- MÃO ---------- */}
       <div style={{ display: 'flex', justifyContent: 'center', gap: '6px', flexWrap: 'nowrap', overflow: 'hidden' }}>
         {hand.map((card, handIndex) => {
@@ -763,7 +769,7 @@ function FindMatchDeckSelect() {
                  }}
                  title={card.name}
                  style={{
-                   width: '74px', height: '104px', borderRadius: '6px', cursor: 'pointer',
+                   width: '84px', height: '118px', borderRadius: '6px', cursor: 'pointer',
                    boxShadow: '0 2px 6px rgba(0,0,0,0.4)', transition: 'transform 0.1s', flexShrink: 0,
                    position: 'relative', overflow: 'hidden',
                    outline: (quickOption || isInterruptDiscardChoice) ? '2px dashed #6cf25a' : 'none'
@@ -774,7 +780,7 @@ function FindMatchDeckSelect() {
                 <img src={card.image_url} alt={card.name}
                      style={{
                        position: 'absolute', top: '50%', left: '50%',
-                       width: '104px', height: '74px',
+                       width: '118px', height: '84px',
                        transform: 'translate(-50%, -50%) rotate(90deg)',
                        borderRadius: '6px'
                      }} />
@@ -785,15 +791,38 @@ function FindMatchDeckSelect() {
           )
         })}
       </div>
+
+      {/* ---------- BOTÕES DE AÇÃO (abaixo da mão) ---------- */}
+      <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '16px' }}>
+        <button className="sign-button" onClick={drawWithSouls}
+                disabled={!!pendingEffect || !!pendingBattle || !isYourTurn || currentPhase !== 'main' || player.soulsStanding < 3 || player.soulDrawUsedThisTurn}
+                title={player.soulDrawUsedThisTurn ? t('gbDrawWithSoulsUsed') : undefined}
+                style={{ padding: '6px 14px', fontSize: '12px' }}>
+          {t('gbDrawWithSouls')}
+        </button>
+        {selectedPalIndex !== null ? (
+          <button className="sign-button" onClick={() => attackWithPal(selectedPalIndex)} disabled={!!pendingEffect || !!pendingBattle} style={{ padding: '6px 16px', fontSize: '13px' }}>
+            {t('gbAttackWithPal')}
+          </button>
+        ) : (
+          <button className="sign-button" onClick={advancePhase} disabled={!!pendingEffect || !!pendingBattle || !isYourTurn} style={{ padding: '6px 20px', fontSize: '13px' }}>
+            {t('gbEndTurn')}
+          </button>
+        )}
+      </div>
       </div>
 
+      {/* ---------- LOG DE JOGADAS: faixa fina e alta encostada na borda esquerda real da tela
+          (fora do canvas escalado — não muda tamanho/escala de nada do tabuleiro). Rola
+          internamente, sempre mostrando a entrada mais recente no fundo. ---------- */}
       {log && log.length > 0 && (
-        <div style={{
-          position: 'absolute', left: '8px', bottom: '8px', maxWidth: '280px',
-          background: 'rgba(0,0,0,0.55)', color: '#fff', fontSize: '10px',
-          borderRadius: '6px', padding: '6px 8px', lineHeight: 1.4, pointerEvents: 'none'
+        <div ref={logBoxRef} style={{
+          position: 'absolute', left: '2px', top: '45px', bottom: '60px', width: '160px',
+          background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(201,154,78,0.5)',
+          color: '#fff', fontSize: '10px', borderRadius: '8px', padding: '8px',
+          lineHeight: 1.5, overflowY: 'auto', pointerEvents: 'none', textAlign: 'left'
         }}>
-          {log.slice(-3).map((line, i) => <div key={i}>{line}</div>)}
+          {log.map((line, i) => <div key={i}>{line}</div>)}
         </div>
       )}
 

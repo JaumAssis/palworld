@@ -18,6 +18,9 @@ const pt = {
   authSwitchToRegister: 'Não tem conta? Criar uma',
   authSwitchToLogin: 'Já tem conta? Entrar',
   authHintLoginRequired: 'Faça login pra continuar.',
+  authRegisterConfirmMsg: 'No momento não temos integração com emails. Faça uma senha forte e anote-a para não esquece-la. Deseja continuar?',
+  authRegisterConfirmYes: 'Sim',
+  authRegisterConfirmNo: 'Não',
   authError_password_mismatch: 'As senhas não coincidem.',
   authError_invalid_username: 'Usuário deve ter 3-24 letras, números ou _.',
   authError_invalid_password: 'Senha deve ter no mínimo 8 caracteres.',
@@ -136,9 +139,9 @@ const pt = {
   countdownReady: 'Pronto!',
 
   // ---------- Farming ----------
-  choosePalKeywordsTitle: 'Escolha um Pal (mostra os work_keywords dele)',
+  choosePalKeywordsTitle: 'Escolha um Pal',
   noPalsWithSkill: 'Nenhum Pal seu tem essa habilidade de trabalho ainda.',
-  farmingIntro: 'Escolha até 3 Pals que cubram "Farming" (plantar/regar) e "Harvesting" (colheita).',
+  farmingIntro: 'Escolha até 3 Pals para essa tarefa.',
   wheatLabel: '🌾 Trigo:',
   lettuceLabel: '🥬 Alface:',
   tomatoLabel: '🍅 Tomate:',
@@ -410,6 +413,9 @@ const en = {
   authSwitchToRegister: "Don't have an account? Create one",
   authSwitchToLogin: 'Already have an account? Log in',
   authHintLoginRequired: 'Log in to continue.',
+  authRegisterConfirmMsg: "We don't have email integration yet. Choose a strong password and write it down so you don't forget it. Do you want to continue?",
+  authRegisterConfirmYes: 'Yes',
+  authRegisterConfirmNo: 'No',
   authError_password_mismatch: "Passwords don't match.",
   authError_invalid_username: 'Username must be 3-24 letters, numbers or _.',
   authError_invalid_password: 'Password must be at least 8 characters.',
@@ -521,9 +527,9 @@ const en = {
   countdownReady: 'Ready!',
 
   // ---------- Farming ----------
-  choosePalKeywordsTitle: 'Choose a Pal (shows its work keywords)',
+  choosePalKeywordsTitle: 'Choose a Pal',
   noPalsWithSkill: "None of your Pals have this work skill yet.",
-  farmingIntro: 'Choose up to 3 Pals covering "Farming" (planting/watering) and "Harvesting" (harvest).',
+  farmingIntro: 'Choose up to 3 Pals for these tasks.',
   wheatLabel: '🌾 Wheat:',
   lettuceLabel: '🥬 Lettuce:',
   tomatoLabel: '🍅 Tomato:',

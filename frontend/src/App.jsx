@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { BrowserRouter, Routes, Route, Link, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import './App.css'
 import CardGrid from './CardGrid'
 import DeckBuilder from './DeckBuilder'
@@ -20,11 +20,13 @@ import { useTheme } from './theme/ThemeContext'
 import { apiFetch } from './api'
 
 // Bloqueia rotas que exigem login (o backend já rejeita com 401; isso evita o "flash" da
-// tela antes do redirect e cobre navegação direta/F5).
+// tela antes do redirect e cobre navegação direta/F5). Leva o aviso de login pelo state da
+// navegação — o MainMenu lê isso e mostra a mesma mensagem/tremida usada nos botões guardados,
+// em vez de simplesmente sumir de volta pro menu sem explicação nenhuma.
 function RequireAuth({ children }) {
   const { user, loading } = useAuth()
   if (loading) return null
-  if (!user) return <Navigate to="/" replace />
+  if (!user) return <Navigate to="/" replace state={{ authRequired: true }} />
   return children
 }
 
@@ -105,6 +107,7 @@ function AuthPanel({ onBlockedAction }) {
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [showRank, setShowRank] = useState(false)
+  const [showRegisterConfirm, setShowRegisterConfirm] = useState(false)
 
   if (loading) return <div className="auth-panel" />
 
@@ -134,14 +137,17 @@ function AuthPanel({ onBlockedAction }) {
   const submit = async (e) => {
     e.preventDefault()
     setError('')
-    if (mode === 'register' && password !== confirmPassword) {
-      setError(t('authError_password_mismatch'))
+    if (mode === 'register') {
+      if (password !== confirmPassword) {
+        setError(t('authError_password_mismatch'))
+        return
+      }
+      setShowRegisterConfirm(true)
       return
     }
     setSubmitting(true)
     try {
-      if (mode === 'login') await login(username, password)
-      else await register(username, password)
+      await login(username, password)
     } catch (err) {
       setError(t(`authError_${err.code || 'unknown'}`))
     } finally {
@@ -149,8 +155,23 @@ function AuthPanel({ onBlockedAction }) {
     }
   }
 
+  // Sem integração com email ainda — o aviso confirma que a pessoa entendeu que perder a
+  // senha significa perder o acesso à conta, sem chance de recuperação.
+  const confirmRegister = async () => {
+    setSubmitting(true)
+    try {
+      await register(username, password)
+      setShowRegisterConfirm(false)
+    } catch (err) {
+      setError(t(`authError_${err.code || 'unknown'}`))
+      setShowRegisterConfirm(false)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   return (
-    <div className="auth-panel">
+    <div className={`auth-panel${onBlockedAction ? ' auth-panel-shake' : ''}`}>
       <form onSubmit={submit}>
         <input className="auth-input" placeholder={t('authUsernamePlaceholder')} value={username}
                onChange={e => setUsername(e.target.value)} autoComplete="username" />
@@ -169,6 +190,34 @@ function AuthPanel({ onBlockedAction }) {
         </button>
       </form>
       {onBlockedAction && <p className="auth-hint">{onBlockedAction}</p>}
+
+      {showRegisterConfirm && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000
+        }}>
+          <div style={{
+            background: '#1a1410', border: '2px solid #c99a4e', borderRadius: '14px',
+            padding: '20px', maxWidth: '320px', textAlign: 'center', color: '#f3e2b3'
+          }}>
+            <p style={{ fontSize: '13px', marginBottom: '16px' }}>{t('authRegisterConfirmMsg')}</p>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+              <button onClick={confirmRegister} disabled={submitting} style={{
+                padding: '8px 18px', borderRadius: '8px', border: 'none', background: '#a5541b', color: '#fff3d6',
+                fontWeight: 700, cursor: submitting ? 'default' : 'pointer', opacity: submitting ? 0.6 : 1
+              }}>
+                {t('authRegisterConfirmYes')}
+              </button>
+              <button onClick={() => setShowRegisterConfirm(false)} disabled={submitting} style={{
+                padding: '8px 18px', borderRadius: '8px', border: 'none', background: '#555', color: '#fff',
+                fontWeight: 700, cursor: submitting ? 'default' : 'pointer', opacity: submitting ? 0.6 : 1
+              }}>
+                {t('authRegisterConfirmNo')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -281,6 +330,8 @@ function MainMenu() {
   const { lang, toggleLang, t } = useLanguage()
   const { user } = useAuth()
   const { isNight, toggleTheme } = useTheme()
+  const location = useLocation()
+  const navigate = useNavigate()
   const [player, setPlayer] = useState(null)
   const [showMissions, setShowMissions] = useState(false)
   const [popup, setPopup] = useState(null)
@@ -298,6 +349,16 @@ function MainMenu() {
     const timer = setTimeout(() => setAuthHint(false), 3000)
     return () => clearTimeout(timer)
   }, [authHint])
+
+  // Chegou aqui redirecionado pelo RequireAuth (ex: tentou acessar /game sem login, direto pela
+  // URL ou pelo botão "testar partida" do tutorial) — mostra o mesmo aviso dos botões guardados
+  // em vez de só voltar pro menu sem dizer nada. Limpa o state pra não repetir num F5/voltar.
+  useEffect(() => {
+    if (location.state?.authRequired) {
+      setAuthHint(true)
+      navigate('.', { replace: true, state: null })
+    }
+  }, [location.state])
 
   // Ações que dependem de estar logado (o backend já bloqueia com 401; isso só evita abrir
   // um popup/rota que vai falhar e mostra a dica de login em vez disso).
@@ -344,7 +405,7 @@ function MainMenu() {
         <Link to="/catalog"><button className="sign-button" style={{ width: '100%' }}>{t('menuCatalog')}</button></Link>
         <Link to="/mycollection" onClick={guardedLinkClick}><button className="sign-button" style={{ width: '100%' }}>{t('menuCollection')}</button></Link>
         <Link to="/deckbuilder" onClick={guardedLinkClick}><button className="sign-button" style={{ width: '100%' }}>{t('menuDeckBuilder')}</button></Link>
-        <Link to="/mydecks"><button className="sign-button" style={{ width: '100%' }}>{t('menuMyDecks')}</button></Link>
+        <Link to="/mydecks" onClick={guardedLinkClick}><button className="sign-button" style={{ width: '100%' }}>{t('menuMyDecks')}</button></Link>
         <Link to="/findmatch" onClick={guardedLinkClick}><button className="sign-button" style={{ width: '100%' }}>{t('menuFindMatch')}</button></Link>
         <Link to="/game" onClick={guardedLinkClick}><button className="sign-button" style={{ width: '100%' }}>{t('menuBotMatch')}</button></Link>
       </div>
@@ -411,8 +472,8 @@ function App() {
         <Route path="/breeding" element={<RequireAuth><Breeding /></RequireAuth>} />
         <Route path="/farming" element={<RequireAuth><Farming /></RequireAuth>} />
         <Route path="/deckbuilder" element={<RequireAuth><DeckBuilder /></RequireAuth>} />
-        <Route path="/mydecks" element={<DeckList />} />
-        <Route path="/mydecks/:id" element={<DeckDetail />} />
+        <Route path="/mydecks" element={<RequireAuth><DeckList /></RequireAuth>} />
+        <Route path="/mydecks/:id" element={<RequireAuth><DeckDetail /></RequireAuth>} />
         <Route path="/game" element={<RequireAuth><GameBoard /></RequireAuth>} />
       </Routes>
     </BrowserRouter>

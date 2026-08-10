@@ -189,10 +189,19 @@ function hasGrantedTaunt(instance, turnManager) {
   return instance.tauntGrantedUntilTurn != null && turnManager.turnNumber <= instance.tauntGrantedUntilTurn
 }
 
+// "Your opponent cannot attack other targets if a card with taunt can be targeted for an attack" —
+// o texto da keyword diz "a card", não "a Pal": Structure com Taunt (ex: Wooden Wall) força o ataque
+// tanto quanto um Pal com Taunt. Structure não tem "estado de combate" (sempre é alvo válido — ver
+// declareAttack), então não passa por canBeAttackedBy (que é uma checagem Pal-específica de pé/Assault).
 function getForcedTauntTargets(defendingState, attackerInstance) {
   const tm = defendingState.turnManagerRef
-  return defendingState.basePals.filter(p =>
-    (hasKeyword(p.data, 'Taunt') || (tm && hasGrantedTaunt(p, tm))) && canBeAttackedBy(p, attackerInstance))
+  const pals = defendingState.basePals
+    .filter(p => (hasKeyword(p.data, 'Taunt') || (tm && hasGrantedTaunt(p, tm))) && canBeAttackedBy(p, attackerInstance))
+    .map(instance => ({ type: 'pal', instance }))
+  const structures = defendingState.baseStructures
+    .filter(s => hasKeyword(s.data, 'Taunt'))
+    .map(instance => ({ type: 'structure', instance }))
+  return [...pals, ...structures]
 }
 
 // ---------- Block Declaration Step (9.4) ----------
@@ -636,6 +645,12 @@ function applyAction(turnManager, action, sourceInstance, casterState, opponentS
       const result = proceedActivation(turnManager, action.ability, action.group, {}, sourceInstance, casterState, opponentState, false, action.actIndex)
       return !!(result && result.success)
     }
+    // Retomada de "you may X" (Bushi – Ephemeral Blade) depois que o jogador confirmou "Sim" no popup —
+    // ver resolveClauseActions. `context.optionalResolved` evita reabrir o mesmo popup de novo aqui.
+    case 'resumeOptionalClause': {
+      const result = resolveClauseActions(turnManager, action.clauseActions, sourceInstance, casterState, opponentState, false, action.context)
+      return !result.paused
+    }
     default:
       return false
   }
@@ -663,7 +678,45 @@ function absoluteTarget(turnManager, casterState, candidate) {
 
 // ---------- Resolução de uma lista de ações (gatilho AUTO, corpo de ACT, Quick ou opção modal) ----------
 
+// Descreve pro jogador o que ele está confirmando no popup "you may ..." (Bushi – Ephemeral Blade,
+// etc.) — genérico o bastante pra qualquer ação futura que reuse essa mesma marcação `optional`.
+function describeOptionalAction(a) {
+  switch (a.type) {
+    case 'returnToHand': return 'Retornar esta carta para a mão'
+    case 'stand': return 'Ficar em pé'
+    case 'exile': return 'Exilar'
+    case 'destroy': return 'Enviar para o cemitério'
+    default: return 'Sim'
+  }
+}
+
+// Tipos cobertos pela confirmação genérica "you may X" (ver markOptionalIfYouMay) — só ações SEM
+// escolha de alvo própria. NÃO inclui discardOwnHandChoice/opponentDiscardChoice/cardSelect (mandatory:
+// false), que já resolvem sua própria opcionalidade via popup de escolha com botão de pular.
+const OPTIONAL_CONFIRM_TYPES = ['returnToHand', 'stand', 'exile', 'destroy']
+
 function resolveClauseActions(turnManager, clauseActions, instance, casterState, opponentState, isBot, context = {}) {
+  // "you may X" (Bushi – Ephemeral Blade: "you may return this card to hand") — ação(ões) marcadas
+  // optional:true por parseSentence precisam de confirmação do jogador antes de rodar; sem isso, o
+  // "you may" era ignorado e a ação acontecia sempre. Bot: por padrão, opta por fazer (heurística simples).
+  if (!context.optionalResolved && clauseActions.some(a => a.optional && OPTIONAL_CONFIRM_TYPES.includes(a.type))) {
+    if (isBot) {
+      context = { ...context, optionalResolved: true }
+    } else {
+      const label = clauseActions.filter(a => a.optional).map(describeOptionalAction).join(' e ')
+      turnManager.pendingEffect = {
+        kind: 'modal',
+        sourceCardName: instance.data.name,
+        description: instance.data.effect_text,
+        options: [
+          { description: label, actions: [{ type: 'resumeOptionalClause', clauseActions, context: { ...context, optionalResolved: true } }] },
+          { description: 'Não fazer nada', actions: [] }
+        ],
+        instance, casterState, opponentState
+      }
+      return { paused: true }
+    }
+  }
   if (clauseActions.length === 1 && clauseActions[0].type === 'cardRevealBranch') {
     applyCardRevealBranch(turnManager, clauseActions[0], instance, casterState)
     return { paused: false }

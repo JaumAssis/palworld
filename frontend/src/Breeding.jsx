@@ -7,17 +7,28 @@ function CardPicker({ onSelect, onClose, ownedPals }) {
   const { t } = useLanguage()
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: '14px', padding: '20px', width: '500px', maxWidth: '90vw', maxHeight: '80vh', overflowY: 'auto' }}>
-        <h3 style={{ marginTop: 0 }}>{t('choosePalTitle')}</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: '10px' }}>
-          {ownedPals.map(card => (
-            <div key={card.card_number} onClick={() => onSelect(card)} style={{ cursor: 'pointer', textAlign: 'center' }}>
-              <img src={card.image_url} alt={card.name} style={{ width: '100%', borderRadius: '6px' }} />
-              <p style={{ fontSize: '10px', margin: '4px 0 0' }}>{card.name}</p>
-            </div>
-          ))}
+      <div onClick={e => e.stopPropagation()} style={{
+        background: '#fff', borderRadius: '14px', width: '500px', maxWidth: '90vw', maxHeight: '80vh',
+        display: 'flex', flexDirection: 'column', overflow: 'hidden'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px 8px', flexShrink: 0 }}>
+          <h3 style={{ margin: 0 }}>{t('choosePalTitle')}</h3>
+          <button onClick={onClose} title={t('close')} style={{ background: 'none', border: 'none', fontSize: '20px', lineHeight: 1, color: '#666', cursor: 'pointer', padding: '4px' }}>✕</button>
         </div>
-        {ownedPals.length === 0 && <p style={{ color: '#999' }}>{t('noPalsOwned')}</p>}
+        <div style={{ padding: '0 20px 20px', overflowY: 'auto' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: '10px' }}>
+            {ownedPals.map(card => (
+              <div key={card.card_number} onClick={() => onSelect(card)} style={{ cursor: 'pointer', textAlign: 'center' }}>
+                <div style={{ width: '100%', aspectRatio: '5 / 7', borderRadius: '6px', overflow: 'hidden', background: '#eee' }}>
+                  <img src={card.image_url} alt={card.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                       onError={e => { e.target.style.visibility = 'hidden' }} />
+                </div>
+                <p style={{ fontSize: '10px', margin: '4px 0 0' }}>{card.name}</p>
+              </div>
+            ))}
+          </div>
+          {ownedPals.length === 0 && <p style={{ color: '#999' }}>{t('noPalsOwned')}</p>}
+        </div>
       </div>
     </div>
   )

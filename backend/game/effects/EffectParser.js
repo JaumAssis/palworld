@@ -241,21 +241,34 @@ function parseSentence(sentence) {
   }
   if (/\bStand this card\b/i.test(sentence)) {
     const before = sentence.replace(/\bStand this card\b/i, '')
-    return [...parseUntargetedActions(before), { type: 'stand', target: { mode: 'self' } }]
+    return [...parseUntargetedActions(before), markOptionalIfYouMay(sentence, { type: 'stand', target: { mode: 'self' } })]
   }
   if (/\bExile the assigned Pal\b/i.test(sentence)) {
     const before = sentence.replace(/\bExile the assigned Pal\b/i, '')
-    return [...parseUntargetedActions(before), { type: 'exile', target: { mode: 'contextPal' } }]
+    return [...parseUntargetedActions(before), markOptionalIfYouMay(sentence, { type: 'exile', target: { mode: 'contextPal' } })]
   }
+  // "AUTO At the end of the battle this card attacked, you may return this card to hand." (Bushi –
+  // Ephemeral Blade) — "you may" aqui é diferente do "you may discard N cards" (que já tem sua própria
+  // checagem, com popup de ESCOLHA DE CARTA); aqui não há escolha de alvo nenhuma (self/contextPal),
+  // só uma confirmação simples — ver `optional` em resolveClauseActions/applyAction.
   if (/\breturn this card to hand\b/i.test(sentence)) {
     const before = sentence.replace(/\breturn this card to hand\b/i, '')
-    return [...parseUntargetedActions(before), { type: 'returnToHand', target: { mode: 'self' } }]
+    return [...parseUntargetedActions(before), markOptionalIfYouMay(sentence, { type: 'returnToHand', target: { mode: 'self' } })]
   }
   if (/\bput this card into the graveyard\b/i.test(sentence)) {
     const before = sentence.replace(/\bput this card into the graveyard\b/i, '')
-    return [...parseUntargetedActions(before), { type: 'destroy', target: { mode: 'self' } }]
+    return [...parseUntargetedActions(before), markOptionalIfYouMay(sentence, { type: 'destroy', target: { mode: 'self' } })]
   }
   return parseUntargetedActions(sentence)
+}
+
+// "you may {verbo}" antes de uma ação SEM alvo escolhido (self/contextPal) — ao contrário de "you may
+// choose/discard N ..." (que já abrem um popup de escolha próprio e cobrem a opcionalidade sozinhos),
+// essas ações de sentença fixa (Stand this card, Exile the assigned Pal, return this card to hand, put
+// this card into the graveyard) rodavam incondicionalmente mesmo com "you may" no texto.
+function markOptionalIfYouMay(sentence, action) {
+  if (/\byou may\b/i.test(sentence)) action.optional = true
+  return action
 }
 
 // "X is equal to ..." — só as fórmulas que algum efeito suportado realmente consegue usar
