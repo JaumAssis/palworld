@@ -1,25 +1,19 @@
-import { useEffect, useState } from 'react'
-import { socket } from './socket'
+import { useLanguage } from './i18n/LanguageContext'
+import { useOnlineCount } from './live/LiveContext'
 
-// Contador de "gente online" — atualizado via evento online:count do servidor (ver
-// broadcastOnlineCount em server.js), emitido a cada conexão/desconexão de qualquer socket
-// (inclusive visitante sem login, só na tela inicial). null enquanto o socket não conectou
-// ainda (evita mostrar "0" por um instante ao carregar a página).
+// O contador vem do LiveContext (montado acima do router) em vez de um listener local — assim
+// o valor sobrevive a navegar pra outra tela e voltar, em vez de zerar toda vez que este
+// componente remonta (ver comentário em LiveContext.jsx).
 export default function OnlineBadge() {
-  const [count, setCount] = useState(null)
+  const { t } = useLanguage()
+  const { onlineCount } = useOnlineCount()
 
-  useEffect(() => {
-    const onCount = (n) => setCount(n)
-    socket.on('online:count', onCount)
-    return () => socket.off('online:count', onCount)
-  }, [])
-
-  if (count === null) return null
+  if (onlineCount === null) return null
 
   return (
-    <div className="currency-badge online-badge" title="Jogadores online agora">
+    <div className="currency-badge online-badge" title={t('onlineBadgeTitle')}>
       <span className="online-dot" />
-      {count}
+      {onlineCount}
     </div>
   )
 }

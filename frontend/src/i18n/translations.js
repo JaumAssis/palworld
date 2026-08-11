@@ -6,6 +6,7 @@ const pt = {
   exit: 'Sair',
   filterAll: 'Todos',
   searchCard: 'Buscar carta...',
+  onlineBadgeTitle: 'Jogadores online agora',
 
   // ---------- login / cadastro ----------
   authLoggedInAs: ({ username }) => `Logado como ${username}`,
@@ -44,6 +45,8 @@ const pt = {
   rankTierName_diamond: 'Diamante',
   rankTierName_master: 'Mestre',
   rankTierName_legend: 'Lenda',
+  rankBoardTitle: 'Ranks',
+  rankBoardEmpty: 'Ninguém no ranking ainda.',
 
   // ---------- missões ----------
   missionsTitle: '📅 Missões Diárias',
@@ -63,6 +66,9 @@ const pt = {
   missionDesc_win_2_games: 'Vença 2 partidas',
   missionDesc_soul_draw_2: 'Suspenda 3 Souls pra comprar carta 2 vezes',
   missionDesc_soul_draw_4: 'Suspenda 3 Souls pra comprar carta 4 vezes',
+  missionDesc_play_2_act_cards: 'Jogue 2 cartas com habilidade ACT',
+  missionDesc_play_2_cont_cards: 'Jogue 2 cartas com habilidade CONT',
+  missionDesc_play_2_auto_cards: 'Jogue 2 cartas com habilidade AUTO',
   missionDescPalType: ({ type }) => `Jogue 3 Pals do tipo ${type}`,
 
   // ---------- recompensa de login diário ----------
@@ -95,8 +101,10 @@ const pt = {
 
   // ---------- CardGrid ----------
   cardGridLoading: 'Carregando cartas...',
-  cardGridTitle: ({ filtered, total }) => `Coleção (${filtered} / ${total})`,
+  cardGridTitle: ({ filtered, total }) => `Catálogo (${filtered} / ${total})`,
   costLabel: ({ cost }) => `- Custo ${cost}`,
+  costFilterLabel: 'Custo:',
+  colorFilterLabel: 'Cor:',
 
   // ---------- DeckBuilder ----------
   importDeck: '📥 Importar Deck',
@@ -159,6 +167,8 @@ const pt = {
   hatchedTitle: '🎉 Eclodiu!',
   fluidGainedMsg: ({ n }) => `Já tinha 4 cópias — ganhou ${n} 💧 Fluido de Pal`,
   countdownReady: 'Pronto!',
+  breedingDiscoveriesTitle: 'Registro de Descobertas',
+  breedingDiscoveriesEmpty: 'Nenhuma descoberta ainda — cruze Pals que tenham uma combinação real no jogo pra registrar aqui.',
 
   // ---------- Farming ----------
   choosePalKeywordsTitle: 'Escolha um Pal',
@@ -232,6 +242,11 @@ const pt = {
   missingCopiesMsg: ({ missing }) => `Faltam ${missing} cópia(s) na sua coleção.`,
   craftAllButton: ({ cost }) => `🛠️ Craftar todas as faltantes (${cost} 💧)`,
   deckCompleteMsg: '✅ Deck completo — você tem todas as cartas.',
+  copyDeckButton: '📋 Copiar deck (texto)',
+  deckCopiedMsg: '✅ Deck copiado! Cole onde quiser.',
+  deckCopyFallbackHint: 'Não deu pra copiar automaticamente — selecione o texto abaixo e copie manualmente (Ctrl/Cmd+C).',
+  switchToRankButton: '🏆 Trocar para Rank',
+  switchToNormalButton: '🎲 Trocar para Normal',
 
   // ---------- Shop ----------
   shopTitle: '🛍️ Loja',
@@ -299,13 +314,21 @@ const pt = {
   gbTurn: ({ n, whoseTurn }) => `Turno ${n} — ${whoseTurn}`,
   gbYourTurn: 'sua vez',
   gbBotTurn: 'vez do bot',
+  gbOpponentTurnNamed: ({ name }) => `vez de ${name}`,
   gbDeckCount: ({ n }) => `Deck (${n})`,
   gbGraveyard: ({ n }) => `Cemitério (${n})`,
   gbLifeHand: ({ life, hand }) => `❤️ ${life} | Mão: ${hand}`,
   gbDrawWithSouls: '🔮 Comprar carta (3 Souls)',
   gbDrawWithSoulsUsed: 'Só é possível 1x por turno.',
-  gbAttackWithPal: '⚔️ Atacar o Bot com esse Pal',
+  gbAttackWithPal: '⚔️ Atacar o jogador',
   gbEndTurn: 'Encerrar Turno →',
+  gbAttackThisTarget: 'Atacar este alvo',
+  gbAttackTargetHint: 'Clique num alvo destacado para atacar.',
+  gbCancelSelection: 'Cancelar',
+  gbLogTitle: 'Log da partida',
+  gbLogOpen: 'Ver log completo',
+  gbLogJumpLatest: '↓ Mais recente',
+  gbLogTruncated: ({ shown, total }) => `Mostrando as últimas ${shown} de ${total} jogadas.`,
   gbMaterial: ({ n }) => `🪵 Material: ${n}`,
   gbIngredient: ({ n }) => `🥕 Ingredient: ${n}`,
   gbEffectChooseTarget: 'Escolha um alvo para o efeito:',
@@ -354,6 +377,7 @@ const pt = {
   findMatchChooseDeckNormalTitle: 'Escolha seu deck',
   findMatchChooseDeckArenaTitle: 'Escolha seu deck Rank',
   findMatchNoRankDecks: 'Você ainda não tem um deck Rank. Monte um em "Montar Deck".',
+  findMatchDraftBlocked: 'Esse deck é um rascunho (faltam cópias de cartas) — complete-o antes de entrar na Arena.',
   findMatchSearchButton: '🔎 Encontrar Partida',
   lobbyChatEmpty: 'Nenhuma mensagem ainda.',
   lobbyChatPlaceholder: 'Digite uma mensagem...',
@@ -443,6 +467,7 @@ const en = {
   exit: 'Exit',
   filterAll: 'All',
   searchCard: 'Search card...',
+  onlineBadgeTitle: 'Players online now',
 
   // ---------- login / register ----------
   authLoggedInAs: ({ username }) => `Logged in as ${username}`,
@@ -481,6 +506,8 @@ const en = {
   rankTierName_diamond: 'Diamond',
   rankTierName_master: 'Master',
   rankTierName_legend: 'Legend',
+  rankBoardTitle: 'Ranks',
+  rankBoardEmpty: 'No one on the leaderboard yet.',
 
   // ---------- missions ----------
   missionsTitle: '📅 Daily Missions',
@@ -500,6 +527,9 @@ const en = {
   missionDesc_win_2_games: 'Win 2 matches',
   missionDesc_soul_draw_2: 'Suspend 3 Souls to draw a card 2 times',
   missionDesc_soul_draw_4: 'Suspend 3 Souls to draw a card 4 times',
+  missionDesc_play_2_act_cards: 'Play 2 cards with an ACT ability',
+  missionDesc_play_2_cont_cards: 'Play 2 cards with a CONT ability',
+  missionDesc_play_2_auto_cards: 'Play 2 cards with an AUTO ability',
   missionDescPalType: ({ type }) => `Play 3 ${type}-type Pals`,
 
   // ---------- daily login reward ----------
@@ -532,8 +562,10 @@ const en = {
 
   // ---------- CardGrid ----------
   cardGridLoading: 'Loading cards...',
-  cardGridTitle: ({ filtered, total }) => `Collection (${filtered} / ${total})`,
+  cardGridTitle: ({ filtered, total }) => `Catalog (${filtered} / ${total})`,
   costLabel: ({ cost }) => `- Cost ${cost}`,
+  costFilterLabel: 'Cost:',
+  colorFilterLabel: 'Color:',
 
   // ---------- DeckBuilder ----------
   importDeck: '📥 Import Deck',
@@ -591,6 +623,8 @@ const en = {
   hatchedTitle: '🎉 Hatched!',
   fluidGainedMsg: ({ n }) => `Already had 4 copies — gained ${n} 💧 Pal Fluid`,
   countdownReady: 'Ready!',
+  breedingDiscoveriesTitle: 'Discoveries Log',
+  breedingDiscoveriesEmpty: "No discoveries yet — breed Pals that have a real in-game combo to log it here.",
 
   // ---------- Farming ----------
   choosePalKeywordsTitle: 'Choose a Pal',
@@ -664,6 +698,11 @@ const en = {
   missingCopiesMsg: ({ missing }) => `You're missing ${missing} copy/copies in your collection.`,
   craftAllButton: ({ cost }) => `🛠️ Craft all missing (${cost} 💧)`,
   deckCompleteMsg: "✅ Deck complete — you have every card.",
+  copyDeckButton: '📋 Copy deck (text)',
+  deckCopiedMsg: '✅ Deck copied! Paste it anywhere.',
+  deckCopyFallbackHint: "Couldn't copy automatically — select the text below and copy it manually (Ctrl/Cmd+C).",
+  switchToRankButton: '🏆 Switch to Rank',
+  switchToNormalButton: '🎲 Switch to Normal',
 
   // ---------- Shop ----------
   shopTitle: '🛍️ Shop',
@@ -731,13 +770,21 @@ const en = {
   gbTurn: ({ n, whoseTurn }) => `Turn ${n} — ${whoseTurn}`,
   gbYourTurn: 'your turn',
   gbBotTurn: "bot's turn",
+  gbOpponentTurnNamed: ({ name }) => `${name}'s turn`,
   gbDeckCount: ({ n }) => `Deck (${n})`,
   gbGraveyard: ({ n }) => `Graveyard (${n})`,
   gbLifeHand: ({ life, hand }) => `❤️ ${life} | Hand: ${hand}`,
   gbDrawWithSouls: '🔮 Draw card (3 Souls)',
   gbDrawWithSoulsUsed: 'Only once per turn.',
-  gbAttackWithPal: '⚔️ Attack the Bot with this Pal',
+  gbAttackWithPal: '⚔️ Attack the player',
   gbEndTurn: 'End Turn →',
+  gbAttackThisTarget: 'Attack this target',
+  gbAttackTargetHint: 'Click a highlighted target to attack.',
+  gbCancelSelection: 'Cancel',
+  gbLogTitle: 'Match log',
+  gbLogOpen: 'View full log',
+  gbLogJumpLatest: '↓ Latest',
+  gbLogTruncated: ({ shown, total }) => `Showing the last ${shown} of ${total} plays.`,
   gbMaterial: ({ n }) => `🪵 Material: ${n}`,
   gbIngredient: ({ n }) => `🥕 Ingredient: ${n}`,
   gbEffectChooseTarget: 'Choose a target for the effect:',
@@ -786,6 +833,7 @@ const en = {
   findMatchChooseDeckNormalTitle: 'Choose your deck',
   findMatchChooseDeckArenaTitle: 'Choose your Rank deck',
   findMatchNoRankDecks: "You don't have a Rank deck yet. Build one in \"Build Deck\".",
+  findMatchDraftBlocked: "This deck is a draft (missing card copies) — complete it before entering the Arena.",
   findMatchSearchButton: '🔎 Find Match',
   lobbyChatEmpty: 'No messages yet.',
   lobbyChatPlaceholder: 'Type a message...',

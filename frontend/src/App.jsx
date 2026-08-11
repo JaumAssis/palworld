@@ -97,6 +97,69 @@ function RankPopup({ onClose }) {
   )
 }
 
+const RANK_BOARD_REFRESH_MS = 60 * 60 * 1000 // o backend já cacheia por 1h (ver /api/ranks/top);
+// isso só garante que quem deixa o menu aberto sem navegar também vê a atualização horária.
+
+// Quadro fixo no menu inicial (entre o login e a loja) com o top 10 de pontos de Arena + a
+// posição de quem está logado, se estiver fora do top 10. Visível pra visitante também — parte do
+// mesmo objetivo dos "3 sempre online": mostrar atividade real no site pra quem ainda não jogou.
+function RankBoard() {
+  const { t } = useLanguage()
+  const [data, setData] = useState(null)
+
+  useEffect(() => {
+    const load = () => apiFetch('/api/ranks/top').then(r => r.json()).then(setData).catch(() => {})
+    load()
+    const interval = setInterval(load, RANK_BOARD_REFRESH_MS)
+    return () => clearInterval(interval)
+  }, [])
+
+  return (
+    <div style={{
+      width: '220px', maxHeight: '230px', overflowY: 'auto', boxSizing: 'border-box',
+      background: 'rgba(0,0,0,0.55)', border: '2px solid #c99a4e', borderRadius: '12px',
+      padding: '10px 12px', textAlign: 'left'
+    }}>
+      <h3 style={{ margin: '0 0 6px', fontSize: '13px', color: '#f3e2b3', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>
+        🏆 {t('rankBoardTitle')}
+      </h3>
+
+      {!data && <p style={{ color: '#d9c4a3', fontSize: '11px', margin: 0 }}>{t('loading')}</p>}
+
+      {data && data.top.length === 0 && (
+        <p style={{ color: '#d9c4a3', fontSize: '11px', margin: 0 }}>{t('rankBoardEmpty')}</p>
+      )}
+
+      {data && data.top.map(row => (
+        <div key={row.position} style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          fontSize: '11px', color: '#fff3d6', padding: '2px 0', gap: '6px'
+        }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ color: '#d9c4a3' }}>{row.position}.</span> {row.username}
+          </span>
+          <strong style={{ color: RANK_TIER_COLORS[row.rank.tierKey] || '#888', flexShrink: 0 }}>{row.rank.points}</strong>
+        </div>
+      ))}
+
+      {data?.you && (
+        <>
+          <div style={{ borderTop: '1px solid rgba(255,255,255,0.25)', margin: '4px 0' }} />
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            fontSize: '11px', color: '#ffd76a', fontWeight: 700, padding: '2px 0', gap: '6px'
+          }}>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {data.you.position}. {data.you.username}
+            </span>
+            <span style={{ flexShrink: 0 }}>{data.you.rank.points}</span>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 // Painel de login/cadastro — canto superior esquerdo do menu. Também mostra quem está logado.
 function AuthPanel({ onBlockedAction }) {
   const { t } = useLanguage()
@@ -492,8 +555,9 @@ function MainMenu() {
       padding: '2rem', textAlign: 'center', minHeight: '100vh', position: 'relative', boxSizing: 'border-box',
       backgroundImage: `url(${isNight ? '/night.png' : '/ambient.webp'})`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat'
     }}>
-      <div style={{ position: 'fixed', top: '20px', left: '20px', zIndex: 500 }}>
+      <div style={{ position: 'fixed', top: '20px', left: '20px', zIndex: 500, display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <AuthPanel onBlockedAction={authHint ? t('authHintLoginRequired') : null} />
+        <RankBoard />
       </div>
 
       <div style={{ position: 'fixed', top: '20px', right: '20px', display: 'flex', gap: '8px' }}>

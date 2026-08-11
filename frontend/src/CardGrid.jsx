@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useLanguage } from './i18n/LanguageContext'
 import { apiFetch } from './api'
+import { cardMatchesSearch } from './cardSearch'
 
 // Mantém o tamanho compacto que os filtros já tinham antes de virarem sign-button.
 const FILTER_BTN_STYLE = { padding: '6px 12px', fontSize: '13px' }
@@ -11,13 +12,23 @@ const COLOR_SWATCH = {
   Red: '#c62828', Blue: '#1565c0', Green: '#2e7d32', Purple: '#6a1b9a', Colorless: '#888'
 }
 
+// Alterna um valor dentro de um Set (multi-seleção dos subfiltros de custo/cor) sem mutar o original.
+function toggleInSet(set, value) {
+  const next = new Set(set)
+  if (next.has(value)) next.delete(value)
+  else next.add(value)
+  return next
+}
+
 function CardGrid() {
   const { t } = useLanguage()
   const [cards, setCards] = useState([])
   const [loading, setLoading] = useState(true)
   const [filterType, setFilterType] = useState('Todos')
-  const [filterColor, setFilterColor] = useState('Todos')
-  const [showColorMenu, setShowColorMenu] = useState(false)
+  // Subfiltros de custo/cor só aparecem com um tipo específico selecionado (não em "Todos") — ver
+  // changeType, que os reseta ao trocar de tipo (um custo que existe em Pal pode não existir em Gear).
+  const [selectedCosts, setSelectedCosts] = useState(new Set())
+  const [selectedColors, setSelectedColors] = useState(new Set())
   const [search, setSearch] = useState('')
   const [selectedCard, setSelectedCard] = useState(null)
 
@@ -36,11 +47,21 @@ function CardGrid() {
 
   if (loading) return <p>{t('cardGridLoading')}</p>
 
+  const changeType = (type) => {
+    setFilterType(type)
+    setSelectedCosts(new Set())
+    setSelectedColors(new Set())
+  }
+
+  const cardsOfType = filterType === 'Todos' ? cards : cards.filter(c => c.card_type === filterType)
+  const availableCosts = [...new Set(cardsOfType.map(c => c.cost).filter(c => c !== null && c !== undefined))].sort((a, b) => a - b)
+
   const filtered = cards.filter(card => {
     const matchesType = filterType === 'Todos' || card.card_type === filterType
-    const matchesColor = filterColor === 'Todos' || (card.colors || []).includes(filterColor)
-    const matchesSearch = card.name.toLowerCase().includes(search.toLowerCase())
-    return matchesType && matchesColor && matchesSearch
+    const matchesCost = selectedCosts.size === 0 || selectedCosts.has(card.cost)
+    const matchesColor = selectedColors.size === 0 || (card.colors || []).some(c => selectedColors.has(c))
+    const matchesSearch = cardMatchesSearch(card, search)
+    return matchesType && matchesCost && matchesColor && matchesSearch
   })
 
   return (
@@ -49,51 +70,9 @@ function CardGrid() {
       background: 'radial-gradient(circle at 50% 40%, rgba(255,255,255,0.05), transparent 60%), #2b1a10',
       padding: '1rem', textAlign: 'left', overflowX: 'hidden'
     }}>
-      <Link to="/"><button className="sign-button" style={{ marginBottom: '12px' }}>{t('backToMenu')}</button></Link>
-      <h2 style={{
-        fontFamily: "'Rye', Georgia, serif", color: '#f3e2b3', WebkitTextStroke: '1px #2b160a',
-        textShadow: '2px 2px 0 #000, 0 0 14px rgba(0,0,0,0.6)'
-      }}>{t('cardGridTitle', { filtered: filtered.length, total: cards.length })}</h2>
-
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap', position: 'relative' }}>
-        {['Todos', 'Pal', 'Structure', 'Gear', 'Event'].map(type => (
-          <button
-            key={type}
-            className="sign-button"
-            onClick={() => setFilterType(type)}
-            style={{ ...FILTER_BTN_STYLE, ...(filterType === type ? ACTIVE_FILTER_STYLE : {}) }}
-          >
-            {type === 'Todos' ? t('filterAll') : type}
-          </button>
-        ))}
-        <button
-          className="sign-button"
-          style={{ ...FILTER_BTN_STYLE, ...(filterColor !== 'Todos' ? ACTIVE_FILTER_STYLE : {}) }}
-          onClick={() => setShowColorMenu(v => !v)}
-        >
-          {t('colorFilterButton')}{filterColor !== 'Todos' ? `: ${filterColor}` : ''}
-        </button>
-        {showColorMenu && (
-          <div style={{
-            position: 'absolute', top: '110%', left: 0, zIndex: 20,
-            background: '#2b1a10', border: '2px solid #c99a4e', borderRadius: '8px',
-            padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px'
-          }}>
-            {['Todos', 'Red', 'Blue', 'Green', 'Purple', 'Colorless'].map(color => (
-              <button
-                key={color}
-                className="sign-button"
-                style={{ ...FILTER_BTN_STYLE, display: 'flex', alignItems: 'center', gap: '6px' }}
-                onClick={() => { setFilterColor(color); setShowColorMenu(false) }}
-              >
-                {color !== 'Todos' && (
-                  <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: COLOR_SWATCH[color], display: 'inline-block' }} />
-                )}
-                {color === 'Todos' ? t('filterAll') : color}
-              </button>
-            ))}
-          </div>
-        )}
+      {/* Linha 1: voltar ao menu + busca */}
+      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '12px' }}>
+        <Link to="/"><button className="sign-button">{t('backToMenu')}</button></Link>
         <input
           type="text"
           placeholder={t('searchCard')}
@@ -102,6 +81,63 @@ function CardGrid() {
           style={{ flex: 1, minWidth: '150px', padding: '6px' }}
         />
       </div>
+
+      {/* Linha 2: contador + filtros de tipo (sem cor aqui — ela virou subfiltro condicional abaixo) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '8px' }}>
+        <h2 style={{
+          margin: 0, fontFamily: "'Rye', Georgia, serif", color: '#f3e2b3', WebkitTextStroke: '1px #2b160a',
+          textShadow: '2px 2px 0 #000, 0 0 14px rgba(0,0,0,0.6)'
+        }}>{t('cardGridTitle', { filtered: filtered.length, total: cards.length })}</h2>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          {['Todos', 'Pal', 'Structure', 'Gear', 'Event'].map(type => (
+            <button
+              key={type}
+              className="sign-button"
+              onClick={() => changeType(type)}
+              style={{ ...FILTER_BTN_STYLE, ...(filterType === type ? ACTIVE_FILTER_STYLE : {}) }}
+            >
+              {type === 'Todos' ? t('filterAll') : type}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Linha 3, condicional: subfiltros de Custo e Cor — só com um tipo específico selecionado.
+          Multi-seleção dentro de cada grupo (ex: custo 3 e 5 juntos); os dois grupos se combinam
+          em E (custo 7 + vermelho = só Pals de custo 7 vermelhos). */}
+      {filterType !== 'Todos' && (
+        <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '16px' }}>
+          {availableCosts.length > 0 && (
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ color: '#d9c4a3', fontSize: '12px' }}>{t('costFilterLabel')}</span>
+              {availableCosts.map(cost => (
+                <button
+                  key={cost}
+                  className="sign-button"
+                  onClick={() => setSelectedCosts(prev => toggleInSet(prev, cost))}
+                  style={{ ...FILTER_BTN_STYLE, ...(selectedCosts.has(cost) ? ACTIVE_FILTER_STYLE : {}) }}
+                >
+                  {cost}
+                </button>
+              ))}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ color: '#d9c4a3', fontSize: '12px' }}>{t('colorFilterLabel')}</span>
+            {['Red', 'Blue', 'Green', 'Purple', 'Colorless'].map(color => (
+              <button
+                key={color}
+                className="sign-button"
+                onClick={() => setSelectedColors(prev => toggleInSet(prev, color))}
+                style={{ ...FILTER_BTN_STYLE, ...(selectedColors.has(color) ? ACTIVE_FILTER_STYLE : {}), display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: COLOR_SWATCH[color], display: 'inline-block' }} />
+                {color}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div style={{
         display: 'grid',

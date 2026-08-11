@@ -661,9 +661,15 @@ function pickBotTarget(candidates, siblingActions) {
     a.type === 'damage' || a.type === 'destroy' || a.type === 'rest' || a.type === 'preventBlock' ||
     (a.type === 'buffPower' && a.amount < 0) || (a.type === 'buffStrike' && a.amount < 0)
   )
-  const sorted = [...candidates].sort((a, b) => (b.instance.data.power || 0) - (a.instance.data.power || 0))
-  const preferred = isHarmful ? sorted.find(c => c.owner === 'opponent') : sorted.find(c => c.owner === 'caster')
-  return preferred || sorted[0]
+  const byPowerDesc = [...candidates].sort((a, b) => (b.instance.data.power || 0) - (a.instance.data.power || 0))
+  // Efeito danoso mira o Pal mais forte do OPONENTE; sem alvo inimigo legal, cai pro mais fraco
+  // dos próprios. Efeito benéfico faz o inverso: fortalece o próprio mais forte, senão enfraquece
+  // o mais fraco do oponente. O fallback antigo (sorted[0]) fazia um efeito danoso sem alvo
+  // inimigo acertar o PRÓPRIO Pal mais forte — gol contra.
+  const preferred = isHarmful
+    ? (byPowerDesc.find(c => c.owner === 'opponent') || [...byPowerDesc].reverse().find(c => c.owner === 'caster'))
+    : (byPowerDesc.find(c => c.owner === 'caster') || [...byPowerDesc].reverse().find(c => c.owner === 'opponent'))
+  return preferred || byPowerDesc[0]
 }
 
 // player1/player2 do TurnManager são SEMPRE, respectivamente, quem joga (humano) e o bot —
@@ -1194,9 +1200,14 @@ function runTrigger(turnManager, triggerName, instance, casterState, opponentSta
 
 // ---------- Efeitos modais ("Choose 1 of the following") ----------
 
-function startModalChoice(turnManager, instance, casterState, opponentState) {
+// { isBot } — antes dos bots poderem jogar Event, essa opção não existia e todo Event modal ia
+// pro jogador humano decidir. Um bot que jogasse um Event modal ficaria com um pendingEffect
+// 'modal' que ninguém nunca resolveria (deadlock). Com isBot, resolve na hora (ver mais abaixo),
+// então quem chamou nunca vê o pendingEffect 'modal' ficar de pé.
+function startModalChoice(turnManager, instance, casterState, opponentState, { isBot } = {}) {
   const options = getParsedEffects(instance.data).modal
   if (!options) return false
+
   turnManager.pendingEffect = {
     kind: 'modal',
     sourceCardName: instance.data.name,
@@ -1204,16 +1215,26 @@ function startModalChoice(turnManager, instance, casterState, opponentState) {
     options,
     instance, casterState, opponentState
   }
+
+  if (isBot) {
+    // Prefere a opção com ação claramente danosa ao oponente — cartas modais costumam listar o
+    // efeito mais fraco primeiro na lista (ex.: "ganhe 1 madeira" antes de "destrua um Pal").
+    const harmfulIndex = options.findIndex(o => o.actions.some(a =>
+      a.type === 'damage' || a.type === 'destroy' || a.type === 'rest' || a.type === 'preventBlock'
+    ))
+    resolveModalChoice(turnManager, harmfulIndex >= 0 ? harmfulIndex : 0, { isBot: true })
+  }
+
   return true
 }
 
-function resolveModalChoice(turnManager, optionIndex) {
+function resolveModalChoice(turnManager, optionIndex, { isBot = false } = {}) {
   const pending = turnManager.pendingEffect
   if (!pending || pending.kind !== 'modal') return
   turnManager.pendingEffect = null
   const option = pending.options[optionIndex]
   if (!option) return
-  resolveRepeatableClause(turnManager, option.actions, pending.instance, pending.casterState, pending.opponentState, false, {})
+  resolveRepeatableClause(turnManager, option.actions, pending.instance, pending.casterState, pending.opponentState, isBot, {})
   if (!turnManager.pendingEffect) turnManager._resumeAttackAfterTrigger()
 }
 

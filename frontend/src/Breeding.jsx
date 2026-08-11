@@ -34,6 +34,56 @@ function CardPicker({ onSelect, onClose, ownedPals }) {
   )
 }
 
+// Livro de descobertas — só combos que vieram DIRETO da tabela real de breeding (o backend já
+// filtra isso, ver result_source em server.js). Uma substituição por falta de carta impressa, ou
+// uma combinação fora da tabela real (aproximação por power), nunca aparece aqui.
+function DiscoveriesModal({ onClose }) {
+  const { t } = useLanguage()
+  const [discoveries, setDiscoveries] = useState(null)
+
+  useEffect(() => {
+    apiFetch('/api/breeding/discoveries').then(r => r.json()).then(setDiscoveries).catch(() => setDiscoveries([]))
+  }, [])
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: '#fff', borderRadius: '16px', width: '440px', maxWidth: '90vw', maxHeight: '80vh',
+        display: 'flex', flexDirection: 'column', overflow: 'hidden'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px 8px', flexShrink: 0 }}>
+          <h3 style={{ margin: 0, color: '#222' }}>📖 {t('breedingDiscoveriesTitle')}</h3>
+          <button onClick={onClose} title={t('close')} style={{ background: 'none', border: 'none', fontSize: '20px', lineHeight: 1, color: '#666', cursor: 'pointer', padding: '4px' }}>✕</button>
+        </div>
+        <div style={{ padding: '0 20px 20px', overflowY: 'auto' }}>
+          {!discoveries && <p style={{ color: '#666' }}>{t('loading')}</p>}
+          {discoveries && discoveries.length === 0 && <p style={{ color: '#999' }}>{t('breedingDiscoveriesEmpty')}</p>}
+          {discoveries && discoveries.map((d, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 0', borderBottom: i < discoveries.length - 1 ? '1px solid #eee' : 'none' }}>
+              {[d.parent1, d.parent2, d.result].map((c, j) => (
+                <div key={j} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {j > 0 && <span style={{ color: '#999', fontSize: '16px' }}>{j === 2 ? '=' : '+'}</span>}
+                  <div style={{ textAlign: 'center', width: '64px' }}>
+                    {c ? (
+                      <img src={c.image_url} alt={c.name} title={c.name} style={{ width: '100%', borderRadius: '6px' }} />
+                    ) : (
+                      <div style={{ width: '100%', aspectRatio: '5 / 7', background: '#eee', borderRadius: '6px' }} />
+                    )}
+                    <p style={{ fontSize: '9px', margin: '2px 0 0', color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c?.name}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function Breeding({ onClose } = {}) {
   const { t } = useLanguage()
   const [isOpen, setIsOpen] = useState(false)
@@ -42,9 +92,14 @@ function Breeding({ onClose } = {}) {
   const [parent2, setParent2] = useState(null)
   const [pickingSide, setPickingSide] = useState(null) // 1, 2, ou null
   const [status, setStatus] = useState(null)
-  const [now, setNow] = useState(Date.now())
+  // Contagem regressiva mostrada na tela — decrementada localmente a cada 1s a partir do
+  // remainingMs que o SERVIDOR calculou (ver computeTiming em server.js), nunca comparando
+  // readyTime com o relógio do próprio navegador. Antes disso, adiantar o relógio do PC fazia a
+  // barra mostrar "pronto" cedo demais, e o resgate então falhava (o servidor não confia nisso).
+  const [remainingMs, setRemainingMs] = useState(null)
   const [revealedResult, setRevealedResult] = useState(null)
   const [player, setPlayer] = useState(null)
+  const [showDiscoveries, setShowDiscoveries] = useState(false)
 
   const useCake = (type) => {
     apiFetch('/api/breeding/use-cake', {
@@ -64,11 +119,12 @@ function Breeding({ onClose } = {}) {
     loadOwnedPals()
     loadStatus()
     apiFetch('/api/player').then(r => r.json()).then(setPlayer)
-    const clockInterval = setInterval(() => setNow(Date.now()), 1000)
+    // Só decrementa o valor que já veio do servidor — nunca lê o relógio absoluto do navegador.
+    const tickInterval = setInterval(() => setRemainingMs(ms => (ms == null ? null : Math.max(0, ms - 1000))), 1000)
     const pollInterval = setInterval(() => { loadStatus(); loadOwnedPals() }, 5000) // corrige o "preso" até virar Chocar; também recarrega os Pals disponíveis (podem ter sido liberados em outra tela)
     const openTimeout = setTimeout(() => setIsOpen(true), 100)
     return () => {
-      clearInterval(clockInterval)
+      clearInterval(tickInterval)
       clearInterval(pollInterval)
       clearTimeout(openTimeout)
     }
@@ -86,7 +142,10 @@ function Breeding({ onClose } = {}) {
   }
 
   function loadStatus() {
-    apiFetch('/api/breeding/status').then(r => r.json()).then(setStatus)
+    apiFetch('/api/breeding/status').then(r => r.json()).then(data => {
+      setStatus(data)
+      if (data.active) setRemainingMs(data.remainingMs)
+    })
   }
 
   const startBreeding = () => {
@@ -120,12 +179,11 @@ function Breeding({ onClose } = {}) {
     loadStatus()
   }
 
-  const formatCountdown = (readyTime) => {
-    const diff = new Date(readyTime).getTime() - now
-    if (diff <= 0) return t('countdownReady')
-    const h = Math.floor(diff / 3600000)
-    const m = Math.floor((diff % 3600000) / 60000)
-    const s = Math.floor((diff % 60000) / 1000)
+  const formatCountdown = (ms) => {
+    if (ms == null || ms <= 0) return t('countdownReady')
+    const h = Math.floor(ms / 3600000)
+    const m = Math.floor((ms % 3600000) / 60000)
+    const s = Math.floor((ms % 60000) / 1000)
     return `${h}h ${m}m ${s}s`
   }
 
@@ -196,22 +254,38 @@ function Breeding({ onClose } = {}) {
             <img src="/egg.png" alt="" style={{ width: '18px', height: '18px', verticalAlign: 'middle', marginRight: '6px' }} />
             {t('startBreeding')}
           </button>
+
+          <div style={{ marginTop: '12px' }}>
+            <button onClick={() => setShowDiscoveries(true)} title={t('breedingDiscoveriesTitle')}
+                    style={{ padding: '8px 14px', fontSize: '13px', background: 'none', border: '1px solid #f3e2b3', color: '#fff3d6', borderRadius: '8px', cursor: 'pointer' }}>
+              📖 {t('breedingDiscoveriesTitle')}
+            </button>
+          </div>
         </>
       )}
 
       {status && status.active && !status.isReady && (
         <div style={{ marginTop: '30px' }}>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginBottom: '20px' }}>
-            <img src={status.parent1.image_url} alt="" style={{ width: '100px', borderRadius: '8px', opacity: 0.7 }} />
-            <img src="/egg.png" alt="" style={{ width: '60px', height: '60px' }} />
-            <img src={status.parent2.image_url} alt="" style={{ width: '100px', borderRadius: '8px', opacity: 0.7 }} />
+          {/* Mesmos quadros 140x196 de borda tracejada dos slots de escolha (acima), agora
+              preenchidos com um recorte da arte de cada pai — só pra dar uma prévia visual do que
+              está sendo cruzado, não a carta inteira. */}
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '16px', marginBottom: '20px' }}>
+            <div style={{ width: '140px', height: '196px', border: '2px dashed #f3e2b3', borderRadius: '10px', overflow: 'hidden' }}>
+              <img src={status.parent1.image_url} alt={status.parent1.name}
+                   style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top', opacity: 0.8 }} />
+            </div>
+            <img src="/egg.png" alt="" style={{ width: '48px', height: '48px' }} />
+            <div style={{ width: '140px', height: '196px', border: '2px dashed #f3e2b3', borderRadius: '10px', overflow: 'hidden' }}>
+              <img src={status.parent2.image_url} alt={status.parent2.name}
+                   style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top', opacity: 0.8 }} />
+            </div>
           </div>
           <h2 style={{ color: '#fff3d6', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>{t('hatchingEgg')}</h2>
-          <p style={{ fontSize: '20px', fontWeight: 'bold', color: '#fff3d6', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>{formatCountdown(status.readyTime)}</p>
+          <p style={{ fontSize: '20px', fontWeight: 'bold', color: '#fff3d6', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>{formatCountdown(remainingMs)}</p>
 
           <div style={{ width: '100%', maxWidth: '400px', margin: '16px auto', background: '#eee', borderRadius: '999px', height: '14px', overflow: 'hidden' }}>
             <div style={{
-              width: `${Math.min(100, ((now - new Date(status.startTime).getTime()) / (new Date(status.readyTime).getTime() - new Date(status.startTime).getTime())) * 100)}%`,
+              width: `${Math.min(100, (1 - (remainingMs ?? status.totalMs) / status.totalMs) * 100)}%`,
               height: '100%', background: 'linear-gradient(90deg, #ffb347, #ffcc33)', transition: 'width 1s linear'
             }} />
           </div>
@@ -263,6 +337,8 @@ function Breeding({ onClose } = {}) {
           </div>
         </div>
       )}
+
+      {showDiscoveries && <DiscoveriesModal onClose={() => setShowDiscoveries(false)} />}
           </div>
         </div>
       </div>

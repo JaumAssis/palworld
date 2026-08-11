@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useLanguage } from './i18n/LanguageContext'
-import { useAuth } from './auth/AuthContext'
 import { apiFetch } from './api'
 import { socket } from './socket'
+import LobbyChat from './LobbyChat'
 import {
   CardSlot, PalCard, StructureGearRow, CardChoiceModal, DamageRevealModal, GraveyardModal,
-  Overlay, THEMED_H2, THEMED_P, THEMED_RESULT_WIN, THEMED_RESULT_LOSE, THEMED_RESULT_NEUTRAL,
+  MatchLogPanel, Overlay, AttackBadge, canAttackPal, THEMED_H2, THEMED_P, THEMED_RESULT_WIN, THEMED_RESULT_LOSE, THEMED_RESULT_NEUTRAL,
   WOOD_H2, WOOD_P, WOOD_PAGE_BACKGROUND, BOARD_WIDTH, BOARD_HEIGHT
 } from './GameBoardUI'
 
@@ -16,10 +16,8 @@ import {
 // tabuleiro em si (cartas, popups, etc.) vem de GameBoardUI pra não duplicar aquele código.
 
 function FindMatchDeckSelect() {
-  const { t, lang } = useLanguage()
-  const { user } = useAuth()
+  const { t } = useLanguage()
   const CHOICE_LABELS = { rock: t('rockLabel'), paper: t('paperLabel'), scissors: t('scissorsLabel') }
-  const formatChatTime = (ts) => new Date(ts).toLocaleTimeString(lang === 'pt' ? 'pt-BR' : 'en-US', { hour: '2-digit', minute: '2-digit' })
   const { matchType } = useParams() // 'normal' ou 'arena'
   const isArena = matchType === 'arena'
 
@@ -28,9 +26,6 @@ function FindMatchDeckSelect() {
   const [selectedDeckId, setSelectedDeckId] = useState(null)
   const [errorMsg, setErrorMsg] = useState('')
   const [opponentName, setOpponentName] = useState('')
-  const [lobbyChatMessages, setLobbyChatMessages] = useState([])
-  const [lobbyChatInput, setLobbyChatInput] = useState('')
-  const [lobbyChatError, setLobbyChatError] = useState('')
   const [challengeTarget, setChallengeTarget] = useState(null) // { playerId, username } — clicou num nick
   const [challengeStatus, setChallengeStatus] = useState('') // mensagem de status do desafio que EU mandei
   // Só o setter importa — sempre lido via forma funcional (prev => ...) pra comparar com o
@@ -58,23 +53,12 @@ function FindMatchDeckSelect() {
   const [zoomCard, setZoomCard] = useState(null)
   const [damageRevealShown, setDamageRevealShown] = useState(null)
   const [boardScale, setBoardScale] = useState(1)
+  const [viewportWidth, setViewportWidth] = useState(window.innerWidth)
   const hoverTimerRef = useRef(null)
   const seenDamageRevealIdRef = useRef(null)
   const damageRevealTimerRef = useRef(null)
-  const logBoxRef = useRef(null)
-  const lobbyChatBoxRef = useRef(null)
   const stageRef = useRef(stage)
   useEffect(() => { stageRef.current = stage }, [stage])
-
-  useEffect(() => {
-    if (!lobbyChatError) return
-    const timer = setTimeout(() => setLobbyChatError(''), 3000)
-    return () => clearTimeout(timer)
-  }, [lobbyChatError])
-
-  useEffect(() => {
-    if (lobbyChatBoxRef.current) lobbyChatBoxRef.current.scrollTop = lobbyChatBoxRef.current.scrollHeight
-  }, [lobbyChatMessages.length])
 
   useEffect(() => {
     if (!challengeStatus) return
@@ -89,6 +73,10 @@ function FindMatchDeckSelect() {
   useEffect(() => {
     const updateScale = () => {
       setBoardScale(Math.min(window.innerWidth / BOARD_WIDTH, window.innerHeight / BOARD_HEIGHT, 1))
+      // boardLeftMargin (mais abaixo) depende da largura da janela mesmo quando a escala está
+      // travada em 1 (tela grande) — sem isso, redimensionar não recalculava a margem porque
+      // boardScale não mudava, e o painel de log ficava com largura desatualizada.
+      setViewportWidth(window.innerWidth)
     }
     updateScale()
     window.addEventListener('resize', updateScale)
@@ -150,12 +138,6 @@ function FindMatchDeckSelect() {
       setStage('opponentLeft')
     })
 
-    // Chat de lobby: global (não é por sala), mas só ouvimos os eventos enquanto essa tela
-    // estiver montada — a caixa de chat só aparece na etapa "selecting" mesmo assim.
-    socket.on('lobbyChat:history', (history) => setLobbyChatMessages(history))
-    socket.on('lobbyChat:message', (msg) => setLobbyChatMessages(prev => [...prev, msg]))
-    socket.on('lobbyChat:error', ({ message }) => setLobbyChatError(message))
-
     // Desafio direto (clicar no nick de alguém no chat)
     socket.on('lobbyChat:challengeSent', ({ challengeId, targetUsername }) => {
       setOutgoingChallengeId(challengeId)
@@ -186,9 +168,6 @@ function FindMatchDeckSelect() {
       socket.off('match:state')
       socket.off('match:error')
       socket.off('match:opponentLeft')
-      socket.off('lobbyChat:history')
-      socket.off('lobbyChat:message')
-      socket.off('lobbyChat:error')
       socket.off('lobbyChat:challengeSent')
       socket.off('lobbyChat:challengeReceived')
       socket.off('lobbyChat:challengeDenied')
@@ -204,12 +183,6 @@ function FindMatchDeckSelect() {
     if (gameState?.pendingEffect?.kind === 'cardChoice') cancelHoverZoom()
   }, [gameState?.pendingEffect?.kind])
 
-  // Autoscroll do log de jogadas — mantém a entrada mais recente sempre visível, empurrando as
-  // antigas pra cima dentro do quadro (sem precisar o jogador rolar manualmente).
-  useEffect(() => {
-    if (logBoxRef.current) logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight
-  }, [gameState?.log?.length])
-
   // ---------- ações: fila / deck ----------
   const visibleDecks = isArena ? decks.filter(d => d.mode === 'rank') : decks
 
@@ -222,13 +195,6 @@ function FindMatchDeckSelect() {
   const cancelSearch = () => {
     socket.emit('match:cancelFindMatch')
     setStage('selecting')
-  }
-
-  const sendLobbyChat = () => {
-    const text = lobbyChatInput.trim()
-    if (!text) return
-    socket.emit('lobbyChat:send', { text })
-    setLobbyChatInput('')
   }
 
   const sendChallenge = () => {
@@ -281,12 +247,15 @@ function FindMatchDeckSelect() {
     else if (card.card_type === 'Event') deployEvent(card.card_number)
   }
 
-  const handleDropOnEnemyPal = (targetIndex) => {
-    if (draggedPalIndex === null || gameState?.pendingEffect) return
-    socket.emit('match:attackPal', { attackerIndex: draggedPalIndex, targetIndex })
+  // Compartilhado pelos dois caminhos de atacar um Pal inimigo — arraste (attackerIndex vem de
+  // draggedPalIndex) e clique (attackerIndex vem de selectedPalIndex, ver clickAttackReady abaixo).
+  const attackPalAt = (attackerIndex, targetIndex) => {
+    if (attackerIndex === null || gameState?.pendingEffect) return
+    socket.emit('match:attackPal', { attackerIndex, targetIndex })
     setDraggedPalIndex(null)
     setSelectedPalIndex(null)
   }
+  const handleDropOnEnemyPal = (targetIndex) => attackPalAt(draggedPalIndex, targetIndex)
 
   const attackWithPal = (palIndex) => {
     if (gameState?.pendingEffect) return
@@ -333,12 +302,15 @@ function FindMatchDeckSelect() {
   const resolveCardChoice = (index) => socket.emit('match:resolveCardChoice', { index })
   const skipCardChoice = () => socket.emit('match:resolveCardChoice', { skip: true })
 
-  const attackStructure = (targetIndex) => {
-    if (draggedPalIndex === null || gameState?.pendingEffect || gameState?.pendingBattle) return
-    socket.emit('match:attackStructure', { attackerIndex: draggedPalIndex, targetIndex })
+  // Mesma ideia de attackPalAt: attackerIndex explícito, não fixo em draggedPalIndex — senão o
+  // caminho de clique (que usa selectedPalIndex) seria descartado em silêncio por este guard.
+  const attackStructureAt = (attackerIndex, targetIndex) => {
+    if (attackerIndex === null || gameState?.pendingEffect || gameState?.pendingBattle) return
+    socket.emit('match:attackStructure', { attackerIndex, targetIndex })
     setDraggedPalIndex(null)
     setSelectedPalIndex(null)
   }
+  const attackStructure = (targetIndex) => attackStructureAt(draggedPalIndex, targetIndex)
 
   const startHoverZoom = (imageUrl, name) => {
     clearTimeout(hoverTimerRef.current)
@@ -357,23 +329,37 @@ function FindMatchDeckSelect() {
         <h2 style={WOOD_H2}>{isArena ? t('findMatchChooseDeckArenaTitle') : t('findMatchChooseDeckNormalTitle')}</h2>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', justifyContent: 'center', marginTop: '20px' }}>
-          {visibleDecks.map(d => (
-            <button
-              key={d.id}
-              className="sign-button"
-              onClick={() => setSelectedDeckId(d.id)}
-              style={{
-                fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px',
-                outline: selectedDeckId === d.id ? '3px solid #ffd76a' : 'none'
-              }}
-            >
-              {d.name}
-              <span style={{
-                fontSize: '11px', padding: '2px 8px', borderRadius: '10px', color: '#fff3d6',
-                background: d.mode === 'rank' ? '#a5541b' : '#3f6b3f'
-              }}>{d.mode === 'rank' ? '🏆 Rank' : '🎲 Normal'}</span>
-            </button>
-          ))}
+          {visibleDecks.map(d => {
+            // Rascunho (faltam cópias) só é bloqueado na Arena — mostra desabilitado com o motivo
+            // em vez de simplesmente sumir da lista sem explicação (o backend também recusa isso
+            // em match:findMatch, essa é só a checagem espelho no cliente).
+            const blockedDraft = isArena && d.isDraft
+            return (
+              <button
+                key={d.id}
+                className="sign-button"
+                disabled={blockedDraft}
+                title={blockedDraft ? t('findMatchDraftBlocked') : undefined}
+                onClick={() => !blockedDraft && setSelectedDeckId(d.id)}
+                style={{
+                  fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px',
+                  outline: selectedDeckId === d.id ? '3px solid #ffd76a' : 'none',
+                  opacity: blockedDraft ? 0.5 : 1
+                }}
+              >
+                {d.name}
+                <span style={{
+                  fontSize: '11px', padding: '2px 8px', borderRadius: '10px', color: '#fff3d6',
+                  background: d.mode === 'rank' ? '#a5541b' : '#3f6b3f'
+                }}>{d.mode === 'rank' ? '🏆 Rank' : '🎲 Normal'}</span>
+                {blockedDraft && (
+                  <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '10px', color: '#fff3d6', background: '#888' }}>
+                    {t('draftBadge')}
+                  </span>
+                )}
+              </button>
+            )
+          })}
         </div>
 
         {visibleDecks.length === 0 && (
@@ -396,55 +382,8 @@ function FindMatchDeckSelect() {
         )}
 
         {/* ---------- CHAT ---------- */}
-        <div style={{
-          margin: '30px auto 0', maxWidth: '900px',
-          background: '#000', border: '3px solid #c99a4e', borderRadius: '20px',
-          padding: '14px', display: 'flex', flexDirection: 'column', gap: '10px'
-        }}>
-          <div ref={lobbyChatBoxRef} style={{
-            background: 'rgba(0,0,0,0.55)', border: '2px solid #c99a4e', borderRadius: '14px',
-            padding: '12px', height: '260px', overflowY: 'auto', textAlign: 'left'
-          }}>
-            {lobbyChatMessages.length === 0 ? (
-              <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '13px', margin: 0 }}>{t('lobbyChatEmpty')}</p>
-            ) : (
-              lobbyChatMessages.map((msg, i) => {
-                const isOwnMessage = msg.author === user?.username
-                return (
-                  <p key={i} style={{ color: '#f3e2b3', fontSize: '13px', margin: '4px 0' }}>
-                    <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: '11px' }}>{formatChatTime(msg.ts)}</span>{' '}
-                    {isOwnMessage ? (
-                      <strong>{msg.author}:</strong>
-                    ) : (
-                      <strong
-                        onClick={() => setChallengeTarget({ playerId: msg.playerId, username: msg.author })}
-                        title={t('challengeNickTitle')}
-                        style={{ cursor: 'pointer', textDecoration: 'underline dotted' }}
-                      >{msg.author}:</strong>
-                    )}
-                    {' '}{msg.text}
-                  </p>
-                )
-              })
-            )}
-          </div>
-          {lobbyChatError && <p style={{ color: '#ff8a8a', fontSize: '12px', margin: 0 }}>{lobbyChatError}</p>}
-          {challengeStatus && <p style={{ color: '#ffd76a', fontSize: '12px', margin: 0 }}>{challengeStatus}</p>}
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <input
-              type="text"
-              value={lobbyChatInput}
-              onChange={e => setLobbyChatInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && sendLobbyChat()}
-              placeholder={t('lobbyChatPlaceholder')}
-              style={{
-                flex: 1, padding: '10px 14px', borderRadius: '10px', border: '2px solid #8a5a2e',
-                background: '#fdf6e3', color: '#3a2410', fontSize: '13px'
-              }}
-            />
-            <button className="sign-button" onClick={sendLobbyChat}>{t('lobbyChatSend')}</button>
-          </div>
-        </div>
+        <LobbyChat onNickClick={(playerId, username) => setChallengeTarget({ playerId, username })} />
+        {challengeStatus && <p style={{ color: '#ffd76a', fontSize: '12px', margin: '10px 0 0', textAlign: 'center' }}>{challengeStatus}</p>}
 
         {challengeTarget && (
           <div onClick={() => setChallengeTarget(null)} style={{
@@ -632,10 +571,17 @@ function FindMatchDeckSelect() {
   if (!gameState) return <p style={{ padding: '2rem' }}>{t('gbLoadingMatch')}</p>
 
   // ================= TABULEIRO =================
-  const { player, opponent, hand, currentPhase, turnNumber, isYourTurn, pendingEffect, pendingBattle, log } = gameState
+  const { player, opponent, hand, currentPhase, turnNumber, isYourTurn, pendingEffect, pendingBattle, log, logTotal } = gameState
   const isValidBlocker = (i) => pendingBattle?.waitingFor === 'block' && pendingBattle.validBlockers.includes(i)
   const quickOptionFor = (cardNumber) =>
     pendingBattle?.waitingFor === 'quick' ? pendingBattle.quickOptions.find(o => o.cardNumber === cardNumber) : null
+
+  // Mesma lógica do tabuleiro vs Bot (ver GameBoard.jsx) — selecionar um Pal em pé já é o "modo de
+  // mira", sem estado extra. Arraste tem prioridade sobre seleção por clique quando os dois coexistem.
+  const canAct = !pendingEffect && !pendingBattle && isYourTurn && currentPhase === 'main'
+  const attackSourceIndex = draggedPalIndex !== null ? draggedPalIndex : selectedPalIndex
+  const attackSource = attackSourceIndex !== null ? player.basePals[attackSourceIndex] : null
+  const clickAttackReady = canAct && draggedPalIndex === null && selectedPalIndex !== null && !!attackSource?.isStanding
 
   const SoulRow = ({ standing, rested }) => (
     <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
@@ -664,7 +610,7 @@ function FindMatchDeckSelect() {
   // Margem real sobrando à esquerda do tabuleiro escalado (o próprio tabuleiro é centralizado
   // pelo flex do container). O quadro de log nunca pode passar dessa margem, senão sobrepõe o
   // tabuleiro em telas mais estreitas/baixas.
-  const boardLeftMargin = Math.max(0, (window.innerWidth - BOARD_WIDTH * boardScale) / 2)
+  const boardLeftMargin = Math.max(0, (viewportWidth - BOARD_WIDTH * boardScale) / 2)
   const logPanelWidth = Math.min(160, boardLeftMargin - 10)
 
   return (
@@ -714,25 +660,32 @@ function FindMatchDeckSelect() {
         <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', minHeight: '90px', marginTop: '6px' }}>
           {opponent.basePals.map((p, i) => {
             const isEffectTarget = isPendingTarget('bot', i)
-            // Assault (ex: Grizzbolt – Rumbling Tank) deixa atacar Pals em pé também, não só descansados.
-            const draggedPal = draggedPalIndex !== null ? player.basePals[draggedPalIndex] : null
-            const canTargetThis = !p.isStanding || !!draggedPal?.hasAssault
+            // canAttackPal (Assault etc.) já considera tanto arraste quanto seleção por clique,
+            // já que attackSource é o atacante de qualquer um dos dois caminhos.
+            const canTargetThis = canAttackPal(p, attackSource)
+            const clickTargetable = clickAttackReady && canTargetThis
             return (
               <div key={i}
                    onDragOver={e => canTargetThis && e.preventDefault()}
                    onDrop={() => canTargetThis && handleDropOnEnemyPal(i)}
-                   onClick={() => isEffectTarget && resolveEffectTarget('bot', i)}
+                   onClick={() => {
+                     if (isEffectTarget) { resolveEffectTarget('bot', i); return }
+                     if (clickTargetable) attackPalAt(selectedPalIndex, i)
+                   }}
                    style={{
-                     outline: isEffectTarget ? '2px dashed #6cf25a' : ((canTargetThis && draggedPalIndex !== null) ? '2px dashed #ffd54a' : 'none'),
-                     borderRadius: '8px', cursor: isEffectTarget ? 'pointer' : 'default'
+                     position: 'relative',
+                     outline: isEffectTarget ? '2px dashed #6cf25a' : ((canTargetThis && (draggedPalIndex !== null || clickTargetable)) ? '2px dashed #ffd54a' : 'none'),
+                     borderRadius: '8px', cursor: (isEffectTarget || clickTargetable) ? 'pointer' : 'default'
                    }}>
                 <PalCard pal={p} width="62px" onHoverStart={startHoverZoom} onHoverEnd={cancelHoverZoom} />
+                {clickTargetable && <AttackBadge onClick={() => attackPalAt(selectedPalIndex, i)} />}
               </div>
             )
           })}
           <StructureGearRow structures={opponent.baseStructures || []} gear={opponent.baseGear || []} cardWidth="62px" cardHeight="86px"
                              onHoverCard={startHoverZoom} onHoverEnd={cancelHoverZoom}
-                             onDropStructure={attackStructure} dragActive={draggedPalIndex !== null} />
+                             onDropStructure={attackStructure} dragActive={draggedPalIndex !== null}
+                             onAttackStructure={(i) => attackStructureAt(selectedPalIndex, i)} attackActive={clickAttackReady} />
         </div>
       </div>
 
@@ -995,17 +948,23 @@ function FindMatchDeckSelect() {
       </div>
 
       {/* ---------- BOTÕES DE AÇÃO (abaixo da mão) ---------- */}
-      <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '16px' }}>
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px', marginTop: '16px', flexWrap: 'wrap' }}>
         <button className="sign-button" onClick={drawWithSouls}
                 disabled={!!pendingEffect || !!pendingBattle || !isYourTurn || currentPhase !== 'main' || player.soulsStanding < 3 || player.soulDrawUsedThisTurn}
                 title={player.soulDrawUsedThisTurn ? t('gbDrawWithSoulsUsed') : undefined}
                 style={{ padding: '6px 14px', fontSize: '12px' }}>
           {t('gbDrawWithSouls')}
         </button>
-        {selectedPalIndex !== null ? (
-          <button className="sign-button" onClick={() => attackWithPal(selectedPalIndex)} disabled={!!pendingEffect || !!pendingBattle} style={{ padding: '6px 16px', fontSize: '13px' }}>
-            {t('gbAttackWithPal')}
-          </button>
+        {clickAttackReady ? (
+          <>
+            <button className="sign-button" onClick={() => attackWithPal(selectedPalIndex)} disabled={!!pendingEffect || !!pendingBattle} style={{ padding: '6px 16px', fontSize: '13px' }}>
+              {t('gbAttackWithPal')}
+            </button>
+            <span style={{ color: '#fff', fontSize: '11px', textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>{t('gbAttackTargetHint')}</span>
+            <button className="sign-button" onClick={() => setSelectedPalIndex(null)} style={{ padding: '6px 14px', fontSize: '12px' }}>
+              {t('gbCancelSelection')}
+            </button>
+          </>
         ) : (
           <button className="sign-button" onClick={advancePhase} disabled={!!pendingEffect || !!pendingBattle || !isYourTurn} style={{ padding: '6px 20px', fontSize: '13px' }}>
             {t('gbEndTurn')}
@@ -1014,21 +973,8 @@ function FindMatchDeckSelect() {
       </div>
       </div>
 
-      {/* ---------- LOG DE JOGADAS: faixa fina e alta encostada na borda esquerda real da tela
-          (fora do canvas escalado — não muda tamanho/escala de nada do tabuleiro). Rola
-          internamente, sempre mostrando a entrada mais recente no fundo. A largura é limitada pela
-          margem sobrando à esquerda do tabuleiro escalado (senão, em telas mais estreitas/baixas,
-          o quadro fixo de 160px passa a sobrepor o próprio tabuleiro). ---------- */}
-      {log && log.length > 0 && logPanelWidth >= 50 && (
-        <div ref={logBoxRef} style={{
-          position: 'absolute', left: '2px', top: '45px', bottom: '60px', width: `${logPanelWidth}px`,
-          background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(201,154,78,0.5)',
-          color: '#fff', fontSize: '10px', borderRadius: '8px', padding: '8px',
-          lineHeight: 1.5, overflowY: 'auto', pointerEvents: 'none', textAlign: 'left'
-        }}>
-          {log.map((line, i) => <div key={i}>{line}</div>)}
-        </div>
-      )}
+      {/* ---------- LOG DE JOGADAS ---------- */}
+      <MatchLogPanel log={log} logTotal={logTotal} panelWidth={logPanelWidth} t={t} />
 
       {zoomCard && (
         <div style={{

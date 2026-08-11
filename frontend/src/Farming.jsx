@@ -54,7 +54,12 @@ function Farming({ onClose } = {}) {
   const [repeatWanted, setRepeatWanted] = useState(false)
   const [status, setStatus] = useState(null)
   const [player, setPlayer] = useState(null)
-  const [now, setNow] = useState(Date.now())
+  // Contagens regressivas decrementadas localmente a partir do remainingMs que o SERVIDOR calculou
+  // (ver computeTiming em server.js) — nunca comparando readyTime com o relógio do navegador, senão
+  // um relógio do PC adiantado mostra "pronto" cedo demais e o resgate falha (o servidor não confia
+  // nisso). Farming e forno rodam em paralelo, cada um com seu próprio contador.
+  const [farmRemainingMs, setFarmRemainingMs] = useState(null)
+  const [ovenRemainingMs, setOvenRemainingMs] = useState(null)
   const [errorMsg, setErrorMsg] = useState('')
   const [kindlingPal, setKindlingPal] = useState(null)
   const [pickingKindling, setPickingKindling] = useState(false)
@@ -67,10 +72,13 @@ function Farming({ onClose } = {}) {
     loadStatus()
     loadPlayer()
     loadOvenStatus()
-    const clockInterval = setInterval(() => setNow(Date.now()), 1000)
+    const tickInterval = setInterval(() => {
+      setFarmRemainingMs(ms => (ms == null ? null : Math.max(0, ms - 1000)))
+      setOvenRemainingMs(ms => (ms == null ? null : Math.max(0, ms - 1000)))
+    }, 1000)
     const pollInterval = setInterval(() => { loadStatus(); loadPlayer(); loadOvenStatus(); loadOwnedPals() }, 4000)
     const openTimeout = setTimeout(() => setIsOpen(true), 100)
-    return () => { clearInterval(clockInterval); clearInterval(pollInterval); clearTimeout(openTimeout) }
+    return () => { clearInterval(tickInterval); clearInterval(pollInterval); clearTimeout(openTimeout) }
   }, [])
 
   function loadPlayer() {
@@ -93,11 +101,17 @@ function Farming({ onClose } = {}) {
   }
 
   function loadStatus() {
-    apiFetch('/api/farming/status').then(r => r.json()).then(setStatus)
+    apiFetch('/api/farming/status').then(r => r.json()).then(data => {
+      setStatus(data)
+      if (data.active) setFarmRemainingMs(data.remainingMs)
+    })
   }
 
   function loadOvenStatus() {
-    apiFetch('/api/farming/oven-status').then(r => r.json()).then(setOvenStatus)
+    apiFetch('/api/farming/oven-status').then(r => r.json()).then(data => {
+      setOvenStatus(data)
+      if (data.active) setOvenRemainingMs(data.remainingMs)
+    })
   }
 
   const addPal = (card) => {
@@ -187,11 +201,10 @@ function Farming({ onClose } = {}) {
       .catch(err => alert(err.message))
   }
 
-  const formatCountdown = (readyTime) => {
-    const diff = new Date(readyTime).getTime() - now
-    if (diff <= 0) return t('countdownMinSec')
-    const m = Math.floor(diff / 60000)
-    const s = Math.floor((diff % 60000) / 1000)
+  const formatCountdown = (ms) => {
+    if (ms == null || ms <= 0) return t('countdownMinSec')
+    const m = Math.floor(ms / 60000)
+    const s = Math.floor((ms % 60000) / 1000)
     return `${m}m ${s}s`
   }
 
@@ -290,7 +303,7 @@ function Farming({ onClose } = {}) {
             <>
               <h3>{t('autoHarvesting')}</h3>
               <p>{t('harvestsDone', { n: status.harvestCount })}</p>
-              <p>{t('nextIn', { time: formatCountdown(status.readyTime) })}</p>
+              <p>{t('nextIn', { time: formatCountdown(farmRemainingMs) })}</p>
               <button onClick={stopRepeat} style={{ padding: '8px 16px', fontSize: '12px' }}>{t('stopRepeat')}</button>
             </>
           ) : status.isReady ? (
@@ -301,10 +314,10 @@ function Farming({ onClose } = {}) {
           ) : (
             <>
               <h3>{t('growing')}</h3>
-              <p style={{ fontSize: '18px', fontWeight: 'bold' }}>{formatCountdown(status.readyTime)}</p>
+              <p style={{ fontSize: '18px', fontWeight: 'bold' }}>{formatCountdown(farmRemainingMs)}</p>
               <div style={{ width: '100%', maxWidth: '400px', margin: '10px auto', background: '#eee', borderRadius: '999px', height: '12px', overflow: 'hidden' }}>
                 <div style={{
-                  width: `${Math.min(100, ((now - new Date(status.startTime).getTime()) / (new Date(status.readyTime).getTime() - new Date(status.startTime).getTime())) * 100)}%`,
+                  width: `${Math.min(100, (1 - (farmRemainingMs ?? status.totalMs) / status.totalMs) * 100)}%`,
                   height: '100%', background: 'linear-gradient(90deg, #7cb342, #aed581)', transition: 'width 1s linear'
                 }} />
               </div>
@@ -346,7 +359,7 @@ function Farming({ onClose } = {}) {
             ) : (
               <>
                 <h4 style={{ margin: '8px 0' }}>{t('baking')}</h4>
-                <p style={{ fontSize: '16px', fontWeight: 'bold' }}>{formatCountdown(ovenStatus.readyTime)}</p>
+                <p style={{ fontSize: '16px', fontWeight: 'bold' }}>{formatCountdown(ovenRemainingMs)}</p>
               </>
             )}
           </div>

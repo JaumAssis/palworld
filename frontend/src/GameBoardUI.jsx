@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useLanguage } from './i18n/LanguageContext'
 
 // Componentes/estilos visuais do tabuleiro, compartilhados entre a partida contra o Bot (GameBoard)
@@ -38,6 +38,30 @@ export function AbilityBadge({ onClick }) {
   )
 }
 
+// Botão de ataque que aparece sobre um alvo legal quando o jogador selecionou um Pal em pé (ver
+// clickAttackReady nos dois tabuleiros) — a mesma seleção já habilita o contorno dourado tracejado
+// (idêntico ao do drag-and-drop); este badge é a affordance que torna a mecânica descobrível sem
+// precisar saber que o corpo da carta também é clicável. Canto oposto ao AbilityBadge (bottom-left)
+// pra nunca colidir num alvo que tenha os dois ao mesmo tempo.
+export function AttackBadge({ onClick }) {
+  const { t } = useLanguage()
+  return (
+    <button onClick={e => { e.stopPropagation(); onClick() }} title={t('gbAttackThisTarget')} style={{
+      position: 'absolute', bottom: '2px', right: '2px', width: '20px', height: '20px',
+      borderRadius: '50%', border: 'none', background: '#ffd54a', color: '#3a2a00',
+      fontSize: '10px', fontWeight: 700, cursor: 'pointer', lineHeight: '20px', padding: 0,
+      boxShadow: '0 1px 4px rgba(0,0,0,0.5)', zIndex: 2
+    }}>⚔️</button>
+  )
+}
+
+// Regra de legalidade de alvo pra Pal, extraída do que já era inline nos dois tabuleiros: Assault
+// (ex: Grizzbolt) deixa atacar Pals em pé também, sem Assault só os descansados. `attacker` pode
+// ser null (nenhum Pal selecionado/arrastando ainda) — nesse caso nada é alvo legal.
+export function canAttackPal(target, attacker) {
+  return !!attacker && (!target.isStanding || !!attacker.hasAssault)
+}
+
 export function PalCard({ pal, width = '78px', selected = false, onClick, clickable = false, onActivate, onHoverStart, onHoverEnd }) {
   return (
     <div onClick={onClick ? (e) => { e.stopPropagation(); onClick(e) } : undefined}
@@ -69,7 +93,7 @@ export function PalCard({ pal, width = '78px', selected = false, onClick, clicka
 
 export function StructureGearRow({
   structures, gear, cardWidth = '70px', cardHeight = '98px', onActivateStructure, onActivateGear,
-  onHoverCard, onHoverEnd, onDropStructure, dragActive
+  onHoverCard, onHoverEnd, onDropStructure, dragActive, onAttackStructure, attackActive
 }) {
   if (structures.length === 0 && gear.length === 0) return null
   // A arte de Structure já vem deitada no arquivo original (orientation: 'landscape') — não giramos,
@@ -83,6 +107,9 @@ export function StructureGearRow({
         // Structure pode ser atacada em qualquer estado (em pé ou descansada) — diferente de Pal, ela
         // não tem "estado de combate"; isStanding nela só importa pro custo das próprias ACTs dela.
         const isDropTarget = !!onDropStructure
+        // attackActive = seleção por clique (ver clickAttackReady nos tabuleiros); dragActive = arraste
+        // em andamento. Os dois caminhos usam o mesmo contorno — só muda como o ataque é confirmado.
+        const showAttackOutline = (isDropTarget && dragActive) || (!!onAttackStructure && attackActive)
         return (
           <div key={'s' + i} style={{ position: 'relative', width: landscapeWidth, height: landscapeHeight }}
                onMouseEnter={() => onHoverCard && onHoverCard(s.imageUrl, s.name)}
@@ -92,7 +119,7 @@ export function StructureGearRow({
             <img src={s.imageUrl} alt={s.name} title={s.name}
                  style={{
                    width: '100%', height: '100%', objectFit: 'cover', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
-                   outline: (isDropTarget && dragActive) ? '2px dashed #ffd54a' : 'none'
+                   outline: showAttackOutline ? '2px dashed #ffd54a' : 'none'
                  }} />
             {s.damageMarked > 0 && (
               <span style={{ position: 'absolute', top: '4px', right: '4px', background: 'rgba(200,0,0,0.85)', color: '#fff', fontSize: '10px', fontWeight: 700, padding: '2px 6px', borderRadius: '6px' }}>
@@ -100,6 +127,7 @@ export function StructureGearRow({
               </span>
             )}
             {onActivateStructure && s.acts?.length > 0 && <AbilityBadge onClick={() => onActivateStructure(i)} />}
+            {onAttackStructure && attackActive && <AttackBadge onClick={() => onAttackStructure(i)} />}
           </div>
         )
       })}
@@ -113,6 +141,102 @@ export function StructureGearRow({
         </div>
       ))}
     </div>
+  )
+}
+
+// Faixa fina encostada na borda esquerda da tela mostrando o log de jogadas, compartilhada pelos
+// 2 tabuleiros (bot e online). Diferente da versão antiga (inline em cada arquivo), essa:
+// - recebe log JÁ cortado (últimas MATCH_LOG_TAIL linhas, ver server.js) + logTotal SEM corte —
+//   logTotal é o que dá pro autoscroll uma dependência que nunca satura (log.length parava de
+//   mudar assim que o corte era atingido, e o efeito de rolar sozinho morria);
+// - é de fato rolável pelo usuário (a versão antiga tinha pointerEvents:'none', então nem dava
+//   pra selecionar texto nem rolar manualmente);
+// - só gruda no final enquanto o usuário não rolou pra cima "de propósito" (stickToBottomRef);
+// - sempre oferece um 📜 que abre o log inteiro em modal — tanto pra quem quer ler com calma
+//   quanto pra telas estreitas/baixas onde a faixa lateral não cabe (panelWidth < 50).
+export function MatchLogPanel({ log, logTotal, panelWidth, t }) {
+  const [modalOpen, setModalOpen] = useState(false)
+  const [stuckToBottom, setStuckToBottom] = useState(true)
+  const stickToBottomRef = useRef(true)
+  const boxRef = useRef(null)
+  const modalBoxRef = useRef(null)
+
+  const handleScroll = (ref) => {
+    const el = ref.current
+    if (!el) return
+    const atBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) < 24
+    stickToBottomRef.current = atBottom
+    setStuckToBottom(atBottom)
+  }
+
+  const jumpToLatest = (ref) => {
+    const el = ref.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    stickToBottomRef.current = true
+    setStuckToBottom(true)
+  }
+
+  useEffect(() => {
+    if (stickToBottomRef.current && boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight
+  }, [logTotal])
+
+  useEffect(() => {
+    if (modalOpen && modalBoxRef.current) modalBoxRef.current.scrollTop = modalBoxRef.current.scrollHeight
+  }, [modalOpen])
+
+  if (!log || log.length === 0) return null
+
+  return (
+    <>
+      {panelWidth >= 50 && (
+        <div ref={boxRef} onScroll={() => handleScroll(boxRef)} onClick={e => e.stopPropagation()} style={{
+          position: 'absolute', left: '2px', top: '45px', bottom: '60px', width: `${panelWidth}px`,
+          background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(201,154,78,0.5)',
+          color: '#fff', fontSize: '10px', borderRadius: '8px', padding: '8px',
+          lineHeight: 1.5, overflowY: 'auto', userSelect: 'text', cursor: 'auto', textAlign: 'left'
+        }}>
+          {log.map((line, i) => <div key={i}>{line}</div>)}
+          {!stuckToBottom && (
+            <button onClick={() => jumpToLatest(boxRef)} style={{
+              position: 'sticky', bottom: 0, width: '100%', marginTop: '4px', padding: '3px',
+              fontSize: '10px', background: '#c99a4e', color: '#2b1608', border: 'none', borderRadius: '6px', cursor: 'pointer'
+            }}>{t('gbLogJumpLatest')}</button>
+          )}
+        </div>
+      )}
+
+      <button onClick={e => { e.stopPropagation(); setModalOpen(true) }} title={t('gbLogOpen')} style={{
+        position: 'absolute', left: '2px', bottom: '4px', width: '28px', height: '28px',
+        borderRadius: '50%', border: '1px solid rgba(201,154,78,0.7)', background: 'rgba(0,0,0,0.6)',
+        color: '#fff', fontSize: '14px', cursor: 'pointer', lineHeight: '26px', padding: 0
+      }}>📜</button>
+
+      {modalOpen && (
+        <div onClick={e => { e.stopPropagation(); setModalOpen(false) }} style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            width: '480px', maxWidth: '92vw', maxHeight: '70vh', display: 'flex', flexDirection: 'column',
+            background: '#fff', borderRadius: '20px', padding: '20px', boxShadow: '0 20px 60px rgba(0,0,0,0.4)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <h2 style={{ margin: 0, color: '#222', fontSize: '15px' }}>{t('gbLogTitle')}</h2>
+              <button onClick={() => setModalOpen(false)} style={{ padding: '4px 10px' }}>✕</button>
+            </div>
+            {logTotal > log.length && (
+              <p style={{ color: '#999', fontSize: '11px', margin: '0 0 8px' }}>{t('gbLogTruncated', { shown: log.length, total: logTotal })}</p>
+            )}
+            <div ref={modalBoxRef} onScroll={() => handleScroll(modalBoxRef)} style={{
+              flex: 1, overflowY: 'auto', textAlign: 'left', fontSize: '13px', color: '#333', lineHeight: 1.6
+            }}>
+              {log.map((line, i) => <div key={i}>{line}</div>)}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 

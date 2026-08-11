@@ -28,6 +28,7 @@ function createAuthRouter(db, { onUserCreated }) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
+      is_bot INTEGER NOT NULL DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `);
@@ -44,6 +45,7 @@ function createAuthRouter(db, { onUserCreated }) {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT NOT NULL UNIQUE,
         password_hash TEXT NOT NULL,
+        is_bot INTEGER NOT NULL DEFAULT 0,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `);
@@ -51,6 +53,11 @@ function createAuthRouter(db, { onUserCreated }) {
     db.exec('DROP TABLE users');
     db.exec('ALTER TABLE users_new RENAME TO users');
   }
+  // Marca as 3 contas dos bots permanentes (ver seedBotPlayers em server.js) — elas têm um hash
+  // sintaticamente válido mas inalcançável (unusableHash), e essa flag é a 2ª camada de defesa: o
+  // /login abaixo rejeita explicitamente qualquer tentativa de logar numa conta de bot. Fica DEPOIS
+  // da migração de e-mail acima de propósito — se ela rodasse, recriaria `users` sem essa coluna.
+  try { db.exec('ALTER TABLE users ADD COLUMN is_bot INTEGER NOT NULL DEFAULT 0'); } catch (e) {}
 
   const router = express.Router();
 
@@ -107,8 +114,9 @@ function createAuthRouter(db, { onUserCreated }) {
       const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
 
       // Mesma resposta de erro tanto pra "usuário não existe" quanto "senha errada" — não
-      // dá pra um atacante distinguir as duas coisas.
-      if (!user) return res.status(401).json({ error: 'invalid_credentials' });
+      // dá pra um atacante distinguir as duas coisas. Conta de bot cai no mesmo erro genérico,
+      // de propósito: não existe combinação de usuário+senha que logue nela (ver unusableHash).
+      if (!user || user.is_bot) return res.status(401).json({ error: 'invalid_credentials' });
 
       const valid = await verifyPassword(password, user.password_hash);
       if (!valid) return res.status(401).json({ error: 'invalid_credentials' });

@@ -230,6 +230,10 @@ function DeckDetail() {
   const [crafting, setCrafting] = useState(false)
   const [craftAllMsg, setCraftAllMsg] = useState('')
   const [craftingAll, setCraftingAll] = useState(false)
+  const [copyMsg, setCopyMsg] = useState('')
+  const [copyFallbackText, setCopyFallbackText] = useState(null)
+  const [modeSwitching, setModeSwitching] = useState(false)
+  const [modeSwitchMsg, setModeSwitchMsg] = useState('')
 
   const loadOwnedCards = () => {
     apiFetch('/api/player/cards').then(res => res.json()).then(rows => {
@@ -310,6 +314,55 @@ function DeckDetail() {
       .finally(() => setCraftingAll(false))
   }
 
+  // Mesmo formato que o import do DeckBuilder entende: "<qtd> <nome> (<CARD_NUMBER>)", uma carta
+  // por linha, comentários com "#" ignorados pelo parser. Os cabeçalhos de formato/cores aqui são
+  // só informativos pra quem está lendo o texto — o import não depende deles.
+  const buildDeckText = () => {
+    const lines = [
+      `# Formato: ${deck.mode === 'rank' ? 'Rank' : 'Normal'}`,
+      `# Cores: ${deck.colors.length ? deck.colors.join(', ') : '—'}`,
+      ...mainGrouped.map(({ card, count }) => `${count} ${card.name} (${card.card_number})`),
+      ...soulGrouped.map(({ card, count }) => `${count} ${card.name} (${card.card_number})`)
+    ]
+    return lines.join('\n')
+  }
+
+  const handleCopyDeckText = () => {
+    const text = buildDeckText()
+    if (!navigator.clipboard?.writeText) { setCopyFallbackText(text); return }
+    navigator.clipboard.writeText(text)
+      .then(() => { setCopyMsg(t('deckCopiedMsg')); setTimeout(() => setCopyMsg(''), 3000) })
+      .catch(() => setCopyFallbackText(text))
+  }
+
+  // Mudar o formato recalcula "rascunho" na hora, com base nas cópias que o jogador REALMENTE
+  // tem (mesma regra usada ao salvar/editar no DeckBuilder) — reenvia o deck inteiro porque o PUT
+  // espera o payload completo, não um patch parcial.
+  const toggleDeckMode = () => {
+    if (!deck) return
+    const newMode = deck.mode === 'rank' ? 'normal' : 'rank'
+    setModeSwitching(true)
+    setModeSwitchMsg('')
+    apiFetch(`/api/decks/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        name: deck.name,
+        mainDeckCardNumbers: deck.mainDeck.map(c => c.card_number),
+        soulDeckCardNumbers: deck.soulDeck.map(c => c.card_number),
+        colors: deck.colors,
+        mode: newMode
+      })
+    })
+      .then(async res => {
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error)
+        setDeck(prev => ({ ...prev, mode: newMode, isDraft: data.isDraft }))
+        loadOwnedCards()
+      })
+      .catch(err => setModeSwitchMsg(err.message || t('saveDeckError')))
+      .finally(() => setModeSwitching(false))
+  }
+
   const CardTile = ({ card, count }) => {
     const missing = missingCount(card, count)
     return (
@@ -361,6 +414,17 @@ function DeckDetail() {
             fontSize: '11px', fontWeight: 700, padding: '4px 10px', borderRadius: '999px', color: '#fff', background: '#555'
           }}>{t('draftBadge')}</span>
         )}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '20px' }}>
+        <button onClick={handleCopyDeckText} style={{ padding: '6px 14px', fontSize: '13px' }}>
+          {t('copyDeckButton')}
+        </button>
+        <button onClick={toggleDeckMode} disabled={modeSwitching} style={{ padding: '6px 14px', fontSize: '13px', opacity: modeSwitching ? 0.6 : 1 }}>
+          {deck.mode === 'rank' ? t('switchToNormalButton') : t('switchToRankButton')}
+        </button>
+        {copyMsg && <span style={{ color: '#6cf25a', fontSize: '12px' }}>{copyMsg}</span>}
+        {modeSwitchMsg && <span style={{ color: '#e57373', fontSize: '12px' }}>{modeSwitchMsg}</span>}
       </div>
 
       <h3 style={{ marginBottom: '10px', color: '#f3e2b3', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>{t('mainDeckCount', { n: deck.mainDeck.length })}</h3>
@@ -455,6 +519,32 @@ function DeckDetail() {
           </div>
         )
       })()}
+
+      {copyFallbackText && (
+        <div onClick={() => setCopyFallbackText(null)} style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: '#2b1a10', border: '3px solid #c99a4e', borderRadius: '14px',
+            padding: '20px', width: '420px', maxWidth: '90vw', boxShadow: '0 12px 36px rgba(0,0,0,0.6)'
+          }}>
+            <p style={{ color: '#f3e2b3', fontSize: '13px', marginBottom: '10px' }}>{t('deckCopyFallbackHint')}</p>
+            <textarea
+              readOnly
+              value={copyFallbackText}
+              onFocus={e => e.target.select()}
+              style={{
+                width: '100%', height: '220px', fontFamily: 'monospace', fontSize: '12px',
+                padding: '8px', borderRadius: '8px', border: '2px solid #8a5a2e', resize: 'vertical'
+              }}
+            />
+            <div style={{ textAlign: 'right', marginTop: '10px' }}>
+              <button onClick={() => setCopyFallbackText(null)} style={{ padding: '8px 18px' }}>{t('close')}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

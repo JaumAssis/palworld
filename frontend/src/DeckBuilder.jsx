@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { validateMainDeck, validateSoulDeck, countCopies, MAIN_DECK_SIZE, SOUL_DECK_SIZE, MAX_COPIES_PER_NAME, MAX_LUCKY_PALS, MAX_COLORS } from './deckValidator'
 import { useLanguage } from './i18n/LanguageContext'
 import { apiFetch } from './api'
+import { cardMatchesSearch } from './cardSearch'
 
 // Mantém o tamanho compacto que os filtros de tipo já tinham antes de virarem sign-button.
 const FILTER_BTN_STYLE = { padding: '4px 10px', fontSize: '12px' }
@@ -270,7 +271,7 @@ function DeckBuilder() {
   const filteredCollection = allCards.filter(c =>
     (filterType === 'Todos' || c.card_type === filterType) &&
     (filterColor === 'Todos' || (c.colors || []).includes(filterColor)) &&
-    c.name.toLowerCase().includes(search.toLowerCase()) &&
+    cardMatchesSearch(c, search) &&
     (deckMode !== 'rank' || c.card_type === 'Soul' ||
       (showOnlyNotOwned ? getAvailable(c.card_number) === 0 : getAvailable(c.card_number) > 0))
   )
@@ -399,7 +400,10 @@ function DeckBuilder() {
         )}
       </div>
 
-      <div style={{ background: '#f5f5f5', borderRadius: '10px', padding: '12px' }}>
+      <div style={{
+        background: '#f5f5f5', borderRadius: '10px', padding: '12px',
+        position: 'sticky', top: '1rem', maxHeight: 'calc(100vh - 2rem)', overflowY: 'auto'
+      }}>
         <p><strong>{t('mainDeckLabel')}</strong> {mainDeck.length} / {MAIN_DECK_SIZE}</p>
         <p><strong>{t('soulDeckLabel')}</strong> {soulDeck.length} / {SOUL_DECK_SIZE}</p>
         <p><strong>{t('luckyPalsLabel')}</strong> {luckyCount} / {MAX_LUCKY_PALS}</p>

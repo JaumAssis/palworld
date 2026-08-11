@@ -5,8 +5,9 @@ const path = require('path');
 const db = new Database(path.join(__dirname, 'palworld.db'));
 
 const bp01Variants = JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'bp01_variants.json'), 'utf-8'));
+const td01Variants = JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'td01_variants.json'), 'utf-8'));
 const td02Variants = JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'td02_variants.json'), 'utf-8'));
-const allVariants = [...bp01Variants, ...td02Variants];
+const allVariants = [...bp01Variants, ...td01Variants, ...td02Variants];
 
 const insert = db.prepare(`
   INSERT OR REPLACE INTO cards
@@ -36,7 +37,7 @@ const insertMany = db.transaction((cards) => {
 });
 
 insertMany(allVariants);
-console.log(`Concluído: ${allVariants.length} variantes Altered Art inseridas (${bp01Variants.length} do BP01, ${td02Variants.length} do TD02).`);
+console.log(`Concluído: ${allVariants.length} variantes Altered Art inseridas (${bp01Variants.length} do BP01, ${td01Variants.length} do TD01, ${td02Variants.length} do TD02).`);
 console.log('Lembre-se de baixar as imagens dessas variantes pra Assets/CardArt (ou public/cardart) usando o mesmo padrão de nome: CARD_NUMBER.png');
 
 db.close();

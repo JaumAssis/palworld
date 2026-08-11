@@ -5,7 +5,7 @@ import { apiFetch } from './api'
 import { socket } from './socket'
 import {
   CardSlot, PalCard, StructureGearRow, CardChoiceModal, DamageRevealModal, GraveyardModal,
-  Overlay, THEMED_H2, THEMED_P, THEMED_RESULT_WIN, THEMED_RESULT_LOSE, THEMED_RESULT_NEUTRAL,
+  MatchLogPanel, Overlay, AttackBadge, canAttackPal, THEMED_H2, THEMED_P, THEMED_RESULT_WIN, THEMED_RESULT_LOSE, THEMED_RESULT_NEUTRAL,
   WOOD_H2, WOOD_P, WOOD_PAGE_BACKGROUND, BOARD_WIDTH, BOARD_HEIGHT
 } from './GameBoardUI'
 
@@ -27,10 +27,10 @@ function GameBoard() {
   const [zoomCard, setZoomCard] = useState(null)
   const [damageRevealShown, setDamageRevealShown] = useState(null)
   const [boardScale, setBoardScale] = useState(1)
+  const [viewportWidth, setViewportWidth] = useState(window.innerWidth)
   const hoverTimerRef = useRef(null)
   const seenDamageRevealIdRef = useRef(null)
   const damageRevealTimerRef = useRef(null)
-  const logBoxRef = useRef(null)
 
   // Encaixe exato (sem multiplicador de "aumento") — é a única forma de garantir que nada corte
   // nas bordas em NENHUMA resolução. Qualquer multiplicador > 1 aplicado aqui sobra pra fora do
@@ -39,6 +39,10 @@ function GameBoard() {
   useEffect(() => {
     const updateScale = () => {
       setBoardScale(Math.min(window.innerWidth / BOARD_WIDTH, window.innerHeight / BOARD_HEIGHT, 1))
+      // boardLeftMargin (mais abaixo) depende da largura da janela mesmo quando a escala está
+      // travada em 1 (tela grande) — sem isso, redimensionar não recalculava a margem porque
+      // boardScale não mudava, e o painel de log ficava com largura desatualizada.
+      setViewportWidth(window.innerWidth)
     }
     updateScale()
     window.addEventListener('resize', updateScale)
@@ -100,12 +104,6 @@ function GameBoard() {
     if (gameState?.pendingEffect?.kind === 'cardChoice') cancelHoverZoom()
   }, [gameState?.pendingEffect?.kind])
 
-  // Autoscroll do log de jogadas — mantém a entrada mais recente sempre visível, empurrando as
-  // antigas pra cima dentro do quadro (sem precisar o jogador rolar manualmente).
-  useEffect(() => {
-    if (logBoxRef.current) logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight
-  }, [gameState?.log?.length])
-
   const startMatch = (deckId) => {
     socket.emit('bot:start', { deckId })
   }
@@ -138,12 +136,15 @@ function GameBoard() {
     else if (card.card_type === 'Event') deployEvent(card.card_number)
   }
 
-  const handleDropOnEnemyPal = (targetIndex) => {
-    if (draggedPalIndex === null || gameState?.pendingEffect) return
-    socket.emit('bot:attackPal', { attackerIndex: draggedPalIndex, targetIndex })
+  // Compartilhado pelos dois caminhos de atacar um Pal inimigo — arraste (attackerIndex vem de
+  // draggedPalIndex) e clique (attackerIndex vem de selectedPalIndex, ver clickAttackReady abaixo).
+  const attackPalAt = (attackerIndex, targetIndex) => {
+    if (attackerIndex === null || gameState?.pendingEffect) return
+    socket.emit('bot:attackPal', { attackerIndex, targetIndex })
     setDraggedPalIndex(null)
     setSelectedPalIndex(null)
   }
+  const handleDropOnEnemyPal = (targetIndex) => attackPalAt(draggedPalIndex, targetIndex)
 
   const attackWithPal = (palIndex) => {
     if (gameState?.pendingEffect) return
@@ -189,12 +190,15 @@ function GameBoard() {
   const resolveCardChoice = (index) => socket.emit('bot:resolveCardChoice', { index })
   const skipCardChoice = () => socket.emit('bot:resolveCardChoice', { skip: true })
 
-  const attackStructure = (targetIndex) => {
-    if (draggedPalIndex === null || gameState?.pendingEffect || gameState?.pendingBattle) return
-    socket.emit('bot:attackStructure', { attackerIndex: draggedPalIndex, targetIndex })
+  // Mesma ideia de attackPalAt: attackerIndex explícito, não fixo em draggedPalIndex — senão o
+  // caminho de clique (que usa selectedPalIndex) seria descartado em silêncio por este guard.
+  const attackStructureAt = (attackerIndex, targetIndex) => {
+    if (attackerIndex === null || gameState?.pendingEffect || gameState?.pendingBattle) return
+    socket.emit('bot:attackStructure', { attackerIndex, targetIndex })
     setDraggedPalIndex(null)
     setSelectedPalIndex(null)
   }
+  const attackStructure = (targetIndex) => attackStructureAt(draggedPalIndex, targetIndex)
 
   const startHoverZoom = (imageUrl, name) => {
     clearTimeout(hoverTimerRef.current)
@@ -308,10 +312,19 @@ function GameBoard() {
 
   if (!gameState) return <p style={{ padding: '2rem' }}>{t('gbLoadingMatch')}</p>
 
-  const { player, bot, hand, currentPhase, turnNumber, isPlayerTurn, pendingEffect, pendingBattle, log } = gameState
+  const { player, bot, hand, currentPhase, turnNumber, isPlayerTurn, pendingEffect, pendingBattle, log, logTotal } = gameState
   const isValidBlocker = (i) => pendingBattle?.waitingFor === 'block' && pendingBattle.validBlockers.includes(i)
   const quickOptionFor = (cardNumber) =>
     pendingBattle?.waitingFor === 'quick' ? pendingBattle.quickOptions.find(o => o.cardNumber === cardNumber) : null
+
+  // Selecionar um Pal em pé (clique) já É o "modo de mira" — sem estado extra. Enquanto um arraste
+  // está em andamento (draggedPalIndex) ele manda em quem é o atacante; clique só assume quando não
+  // há arraste ativo. clickAttackReady é o que decide se os alvos ganham contorno/badge de ataque
+  // e se o botão do rodapé vira "atacar" em vez de "encerrar turno".
+  const canAct = !pendingEffect && !pendingBattle && isPlayerTurn && currentPhase === 'main'
+  const attackSourceIndex = draggedPalIndex !== null ? draggedPalIndex : selectedPalIndex
+  const attackSource = attackSourceIndex !== null ? player.basePals[attackSourceIndex] : null
+  const clickAttackReady = canAct && draggedPalIndex === null && selectedPalIndex !== null && !!attackSource?.isStanding
 
   const SoulRow = ({ standing, rested }) => (
     <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
@@ -340,7 +353,7 @@ function GameBoard() {
   // Margem real sobrando à esquerda do tabuleiro escalado (o próprio tabuleiro é centralizado
   // pelo flex do container). O quadro de log nunca pode passar dessa margem, senão sobrepõe o
   // tabuleiro em telas mais estreitas/baixas.
-  const boardLeftMargin = Math.max(0, (window.innerWidth - BOARD_WIDTH * boardScale) / 2)
+  const boardLeftMargin = Math.max(0, (viewportWidth - BOARD_WIDTH * boardScale) / 2)
   const logPanelWidth = Math.min(160, boardLeftMargin - 10)
 
   return (
@@ -375,7 +388,7 @@ function GameBoard() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Link to="/"><button className="sign-button" style={{ fontSize: '12px' }}>{t('gbExitMatch')}</button></Link>
         <div style={{ color: '#fff', fontWeight: 600, fontSize: '13px', textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>
-          {t('gbTurn', { n: turnNumber, whoseTurn: isPlayerTurn ? t('gbYourTurn') : t('gbBotTurn') })}
+          {t('gbTurn', { n: turnNumber, whoseTurn: isPlayerTurn ? t('gbYourTurn') : t('gbOpponentTurnNamed', { name: bot.playerName }) })}
         </div>
       </div>
 
@@ -400,25 +413,32 @@ function GameBoard() {
         <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', minHeight: '90px', marginTop: '6px' }}>
           {bot.basePals.map((p, i) => {
             const isEffectTarget = isPendingTarget('bot', i)
-            // Assault (ex: Grizzbolt – Rumbling Tank) deixa atacar Pals em pé também, não só descansados.
-            const draggedPal = draggedPalIndex !== null ? player.basePals[draggedPalIndex] : null
-            const canTargetThis = !p.isStanding || !!draggedPal?.hasAssault
+            // canAttackPal (Assault etc.) já considera tanto arraste quanto seleção por clique,
+            // já que attackSource é o atacante de qualquer um dos dois caminhos.
+            const canTargetThis = canAttackPal(p, attackSource)
+            const clickTargetable = clickAttackReady && canTargetThis
             return (
               <div key={i}
                    onDragOver={e => canTargetThis && e.preventDefault()}
                    onDrop={() => canTargetThis && handleDropOnEnemyPal(i)}
-                   onClick={() => isEffectTarget && resolveEffectTarget('bot', i)}
+                   onClick={() => {
+                     if (isEffectTarget) { resolveEffectTarget('bot', i); return }
+                     if (clickTargetable) attackPalAt(selectedPalIndex, i)
+                   }}
                    style={{
-                     outline: isEffectTarget ? '2px dashed #6cf25a' : ((canTargetThis && draggedPalIndex !== null) ? '2px dashed #ffd54a' : 'none'),
-                     borderRadius: '8px', cursor: isEffectTarget ? 'pointer' : 'default'
+                     position: 'relative',
+                     outline: isEffectTarget ? '2px dashed #6cf25a' : ((canTargetThis && (draggedPalIndex !== null || clickTargetable)) ? '2px dashed #ffd54a' : 'none'),
+                     borderRadius: '8px', cursor: (isEffectTarget || clickTargetable) ? 'pointer' : 'default'
                    }}>
                 <PalCard pal={p} width="62px" onHoverStart={startHoverZoom} onHoverEnd={cancelHoverZoom} />
+                {clickTargetable && <AttackBadge onClick={() => attackPalAt(selectedPalIndex, i)} />}
               </div>
             )
           })}
           <StructureGearRow structures={bot.baseStructures || []} gear={bot.baseGear || []} cardWidth="62px" cardHeight="86px"
                              onHoverCard={startHoverZoom} onHoverEnd={cancelHoverZoom}
-                             onDropStructure={attackStructure} dragActive={draggedPalIndex !== null} />
+                             onDropStructure={attackStructure} dragActive={draggedPalIndex !== null}
+                             onAttackStructure={(i) => attackStructureAt(selectedPalIndex, i)} attackActive={clickAttackReady} />
         </div>
       </div>
 
@@ -638,17 +658,23 @@ function GameBoard() {
       </div>
 
       {/* ---------- BOTÕES DE AÇÃO (abaixo da mão) ---------- */}
-      <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '16px' }}>
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px', marginTop: '16px', flexWrap: 'wrap' }}>
         <button className="sign-button" onClick={drawWithSouls}
                 disabled={!!pendingEffect || !!pendingBattle || !isPlayerTurn || currentPhase !== 'main' || player.soulsStanding < 3 || player.soulDrawUsedThisTurn}
                 title={player.soulDrawUsedThisTurn ? t('gbDrawWithSoulsUsed') : undefined}
                 style={{ padding: '6px 14px', fontSize: '12px' }}>
           {t('gbDrawWithSouls')}
         </button>
-        {selectedPalIndex !== null ? (
-          <button className="sign-button" onClick={() => attackWithPal(selectedPalIndex)} disabled={!!pendingEffect || !!pendingBattle} style={{ padding: '6px 16px', fontSize: '13px' }}>
-            {t('gbAttackWithPal')}
-          </button>
+        {clickAttackReady ? (
+          <>
+            <button className="sign-button" onClick={() => attackWithPal(selectedPalIndex)} disabled={!!pendingEffect || !!pendingBattle} style={{ padding: '6px 16px', fontSize: '13px' }}>
+              {t('gbAttackWithPal')}
+            </button>
+            <span style={{ color: '#fff', fontSize: '11px', textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>{t('gbAttackTargetHint')}</span>
+            <button className="sign-button" onClick={() => setSelectedPalIndex(null)} style={{ padding: '6px 14px', fontSize: '12px' }}>
+              {t('gbCancelSelection')}
+            </button>
+          </>
         ) : (
           <button className="sign-button" onClick={advancePhase} disabled={!!pendingEffect || !!pendingBattle || !isPlayerTurn} style={{ padding: '6px 20px', fontSize: '13px' }}>
             {t('gbEndTurn')}
@@ -657,21 +683,8 @@ function GameBoard() {
       </div>
       </div>
 
-      {/* ---------- LOG DE JOGADAS: faixa fina e alta encostada na borda esquerda real da tela
-          (fora do canvas escalado — não muda tamanho/escala de nada do tabuleiro). Rola
-          internamente, sempre mostrando a entrada mais recente no fundo. A largura é limitada pela
-          margem sobrando à esquerda do tabuleiro escalado (senão, em telas mais estreitas/baixas,
-          o quadro fixo de 160px passa a sobrepor o próprio tabuleiro). ---------- */}
-      {log && log.length > 0 && logPanelWidth >= 50 && (
-        <div ref={logBoxRef} style={{
-          position: 'absolute', left: '2px', top: '45px', bottom: '60px', width: `${logPanelWidth}px`,
-          background: 'rgba(0,0,0,0.6)', border: '1px solid rgba(201,154,78,0.5)',
-          color: '#fff', fontSize: '10px', borderRadius: '8px', padding: '8px',
-          lineHeight: 1.5, overflowY: 'auto', pointerEvents: 'none', textAlign: 'left'
-        }}>
-          {log.map((line, i) => <div key={i}>{line}</div>)}
-        </div>
-      )}
+      {/* ---------- LOG DE JOGADAS ---------- */}
+      <MatchLogPanel log={log} logTotal={logTotal} panelWidth={logPanelWidth} t={t} />
 
       {/* Zoom ao passar o mouse por 0.5s numa carta — zIndex abaixo dos popups (1200) de propósito:
           se um efeito abrir uma escolha enquanto o zoom de outra carta ainda está de pé (o mouse não
