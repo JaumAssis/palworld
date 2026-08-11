@@ -109,7 +109,6 @@ const pt = {
   // ---------- DeckBuilder ----------
   importDeck: '📥 Importar Deck',
   changeMode: '🔁 Trocar modo',
-  colorFilterButton: 'Cor',
   notOwnedFilterButton: 'Não possuído',
   availableTitle: ({ n }) => `Disponível: ${n}`,
   availLabel: ({ n }) => `disp.: ${n}`,
@@ -570,7 +569,6 @@ const en = {
   // ---------- DeckBuilder ----------
   importDeck: '📥 Import Deck',
   changeMode: '🔁 Change mode',
-  colorFilterButton: 'Color',
   notOwnedFilterButton: 'Not owned',
   availableTitle: ({ n }) => `Available: ${n}`,
   availLabel: ({ n }) => `avail.: ${n}`,

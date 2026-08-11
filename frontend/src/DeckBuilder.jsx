@@ -7,9 +7,19 @@ import { cardMatchesSearch } from './cardSearch'
 
 // Mantém o tamanho compacto que os filtros de tipo já tinham antes de virarem sign-button.
 const FILTER_BTN_STYLE = { padding: '4px 10px', fontSize: '12px' }
+const ACTIVE_FILTER_STYLE = { outline: '2px solid #ffcf7a', outlineOffset: '2px' }
 
 const COLOR_SWATCH = {
   Red: '#c62828', Blue: '#1565c0', Green: '#2e7d32', Purple: '#6a1b9a', Colorless: '#888'
+}
+
+// Alterna um valor dentro de um Set (multi-seleção dos subfiltros de custo/cor) sem mutar o
+// original — mesmo padrão do Catálogo (CardGrid.jsx).
+function toggleInSet(set, value) {
+  const next = new Set(set)
+  if (next.has(value)) next.delete(value)
+  else next.add(value)
+  return next
 }
 
 function DeckBuilder() {
@@ -21,8 +31,10 @@ function DeckBuilder() {
   const [soulDeck, setSoulDeck] = useState([])
   const [chosenColors, setChosenColors] = useState(new Set())
   const [filterType, setFilterType] = useState('Todos')
-  const [filterColor, setFilterColor] = useState('Todos')
-  const [showColorMenu, setShowColorMenu] = useState(false)
+  // Subfiltros de custo/cor só aparecem com um tipo específico selecionado (não em "Todos") — ver
+  // changeType, que os reseta ao trocar de tipo (mesmo padrão do Catálogo, CardGrid.jsx).
+  const [selectedCosts, setSelectedCosts] = useState(new Set())
+  const [selectedColors, setSelectedColors] = useState(new Set())
   const [search, setSearch] = useState('')
   const [validationMsg, setValidationMsg] = useState('')
   const [hoveredCard, setHoveredCard] = useState(null)
@@ -264,13 +276,23 @@ function DeckBuilder() {
     proceedToSave()
   }
 
+  const changeType = (type) => {
+    setFilterType(type)
+    setSelectedCosts(new Set())
+    setSelectedColors(new Set())
+  }
+
+  const cardsOfType = filterType === 'Todos' ? allCards : allCards.filter(c => c.card_type === filterType)
+  const availableCosts = [...new Set(cardsOfType.map(c => c.cost).filter(c => c !== null && c !== undefined))].sort((a, b) => a - b)
+
   // Modo Rank não escolhe mais entre esconder ou mostrar quem falta — mostra sempre (cinza,
   // igual a Coleção), e o filtro "Não possuído" é só mais um filtro que soma aos outros.
   // Modo Rank: por padrão só mostra o que o jogador tem (igual antes); o toggle "Não possuído"
   // inverte pra mostrar só o que falta na coleção — as duas visões são exclusivas, não somam.
   const filteredCollection = allCards.filter(c =>
     (filterType === 'Todos' || c.card_type === filterType) &&
-    (filterColor === 'Todos' || (c.colors || []).includes(filterColor)) &&
+    (selectedCosts.size === 0 || selectedCosts.has(c.cost)) &&
+    (selectedColors.size === 0 || (c.colors || []).some(col => selectedColors.has(col))) &&
     cardMatchesSearch(c, search) &&
     (deckMode !== 'rank' || c.card_type === 'Soul' ||
       (showOnlyNotOwned ? getAvailable(c.card_number) === 0 : getAvailable(c.card_number) > 0))
@@ -292,65 +314,17 @@ function DeckBuilder() {
     }}>
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '16px', padding: '1rem', width: '100%', alignItems: 'start', boxSizing: 'border-box' }}>
       <div style={{ textAlign: 'left' }}>
-        <Link to="/"><button className="sign-button" style={{ marginBottom: '12px' }}>{t('backToMenu')}</button></Link>
-        <button className="sign-button" onClick={() => setShowImport(true)} style={{ marginBottom: '12px', marginLeft: '8px' }}>
-          {t('importDeck')}
-        </button>
-        <span style={{
-          marginLeft: '8px', fontSize: '12px', fontWeight: 700, padding: '6px 10px', borderRadius: '6px',
-          background: deckMode === 'rank' ? '#a5541b' : '#3f6b3f', color: '#fff3d6'
-        }}>
-          {deckMode === 'rank' ? '🏆 Rank' : '🎲 Normal'}
-        </span>
-        <button className="sign-button" onClick={() => setShowModeModal(true)} style={{ marginBottom: '12px', marginLeft: '8px' }}>
-          {t('changeMode')}
-        </button>
-        {editId && (
+        {/* Linha 1: navegação/modo + busca ao lado do "Trocar modo" */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+          <Link to="/"><button className="sign-button">{t('backToMenu')}</button></Link>
+          <button className="sign-button" onClick={() => setShowImport(true)}>{t('importDeck')}</button>
           <span style={{
-            marginLeft: '8px', fontSize: '12px', fontWeight: 700, padding: '6px 10px', borderRadius: '6px',
-            background: '#3a4a6b', color: '#e0e8ff'
+            fontSize: '12px', fontWeight: 700, padding: '6px 10px', borderRadius: '6px',
+            background: deckMode === 'rank' ? '#a5541b' : '#3f6b3f', color: '#fff3d6'
           }}>
-            {t('editingDeckBadge', { name: editedDeckName })}
+            {deckMode === 'rank' ? '🏆 Rank' : '🎲 Normal'}
           </span>
-        )}
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap', position: 'relative' }}>
-          {['Todos', 'Pal', 'Structure', 'Gear', 'Event', 'Soul'].map(type => (
-            <button key={type} className="sign-button" style={FILTER_BTN_STYLE} onClick={() => setFilterType(type)}>{type === 'Todos' ? t('filterAll') : type}</button>
-          ))}
-          <button className="sign-button" style={FILTER_BTN_STYLE} onClick={() => setShowColorMenu(v => !v)}>
-            {t('colorFilterButton')}{filterColor !== 'Todos' ? `: ${filterColor}` : ''}
-          </button>
-          <button
-            className="sign-button"
-            style={{
-              ...FILTER_BTN_STYLE,
-              ...(showOnlyNotOwned ? { outline: '2px solid #ffcf7a', outlineOffset: '2px' } : {})
-            }}
-            onClick={() => setShowOnlyNotOwned(v => !v)}
-          >
-            {t('notOwnedFilterButton')}
-          </button>
-          {showColorMenu && (
-            <div style={{
-              position: 'absolute', top: '110%', left: 0, zIndex: 20,
-              background: '#2b1a10', border: '2px solid #c99a4e', borderRadius: '8px',
-              padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px'
-            }}>
-              {['Todos', 'Red', 'Blue', 'Green', 'Purple', 'Colorless'].map(color => (
-                <button
-                  key={color}
-                  className="sign-button"
-                  style={{ ...FILTER_BTN_STYLE, display: 'flex', alignItems: 'center', gap: '6px' }}
-                  onClick={() => { setFilterColor(color); setShowColorMenu(false) }}
-                >
-                  {color !== 'Todos' && (
-                    <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: COLOR_SWATCH[color], display: 'inline-block' }} />
-                  )}
-                  {color === 'Todos' ? t('filterAll') : color}
-                </button>
-              ))}
-            </div>
-          )}
+          <button className="sign-button" onClick={() => setShowModeModal(true)}>{t('changeMode')}</button>
           <input
             type="text"
             placeholder={t('searchCard')}
@@ -358,7 +332,73 @@ function DeckBuilder() {
             onChange={e => setSearch(e.target.value)}
             style={{ flex: 1, minWidth: '150px', padding: '6px' }}
           />
+          {editId && (
+            <span style={{
+              fontSize: '12px', fontWeight: 700, padding: '6px 10px', borderRadius: '6px',
+              background: '#3a4a6b', color: '#e0e8ff'
+            }}>
+              {t('editingDeckBadge', { name: editedDeckName })}
+            </span>
+          )}
         </div>
+
+        {/* Linha 2: filtros de tipo + "Não possuído" (sem cor aqui — virou subfiltro condicional) */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
+          {['Todos', 'Pal', 'Structure', 'Gear', 'Event', 'Soul'].map(type => (
+            <button
+              key={type}
+              className="sign-button"
+              onClick={() => changeType(type)}
+              style={{ ...FILTER_BTN_STYLE, ...(filterType === type ? ACTIVE_FILTER_STYLE : {}) }}
+            >
+              {type === 'Todos' ? t('filterAll') : type}
+            </button>
+          ))}
+          <button
+            className="sign-button"
+            style={{ ...FILTER_BTN_STYLE, ...(showOnlyNotOwned ? ACTIVE_FILTER_STYLE : {}) }}
+            onClick={() => setShowOnlyNotOwned(v => !v)}
+          >
+            {t('notOwnedFilterButton')}
+          </button>
+        </div>
+
+        {/* Linha 3, condicional: subfiltros de Custo e Cor — só com um tipo específico selecionado.
+            Multi-seleção dentro de cada grupo; os dois grupos se combinam em E (mesmo padrão do
+            Catálogo, CardGrid.jsx). */}
+        {filterType !== 'Todos' && (
+          <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '12px' }}>
+            {availableCosts.length > 0 && (
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ color: '#d9c4a3', fontSize: '11px' }}>{t('costFilterLabel')}</span>
+                {availableCosts.map(cost => (
+                  <button
+                    key={cost}
+                    className="sign-button"
+                    onClick={() => setSelectedCosts(prev => toggleInSet(prev, cost))}
+                    style={{ ...FILTER_BTN_STYLE, ...(selectedCosts.has(cost) ? ACTIVE_FILTER_STYLE : {}) }}
+                  >
+                    {cost}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ color: '#d9c4a3', fontSize: '11px' }}>{t('colorFilterLabel')}</span>
+              {['Red', 'Blue', 'Green', 'Purple', 'Colorless'].map(color => (
+                <button
+                  key={color}
+                  className="sign-button"
+                  onClick={() => setSelectedColors(prev => toggleInSet(prev, color))}
+                  style={{ ...FILTER_BTN_STYLE, ...(selectedColors.has(color) ? ACTIVE_FILTER_STYLE : {}), display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: COLOR_SWATCH[color], display: 'inline-block' }} />
+                  {color}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: '10px' }}>
           {filteredCollection.map(card => {
