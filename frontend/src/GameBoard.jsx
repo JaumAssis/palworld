@@ -670,10 +670,12 @@ function GameBoard() {
             <button className="sign-button" onClick={() => attackWithPal(selectedPalIndex)} disabled={!!pendingEffect || !!pendingBattle} style={{ padding: '6px 16px', fontSize: '13px' }}>
               {t('gbAttackWithPal')}
             </button>
-            <span style={{ color: '#fff', fontSize: '11px', textShadow: '0 1px 3px rgba(0,0,0,0.7)' }}>{t('gbAttackTargetHint')}</span>
             <button className="sign-button" onClick={() => setSelectedPalIndex(null)} style={{ padding: '6px 14px', fontSize: '12px' }}>
               {t('gbCancelSelection')}
             </button>
+            <span className="sign-button" style={{ padding: '6px 14px', fontSize: '12px', pointerEvents: 'none', cursor: 'default' }}>
+              {t('gbAttackTargetHint')}
+            </span>
           </>
         ) : (
           <button className="sign-button" onClick={advancePhase} disabled={!!pendingEffect || !!pendingBattle || !isPlayerTurn} style={{ padding: '6px 20px', fontSize: '13px' }}>
