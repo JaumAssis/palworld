@@ -3128,7 +3128,10 @@ io.on('connection', (socket) => {
     const botSoulCards = shuffle(getCardsByNumbers(JSON.parse(botDeckRow.soul_deck)));
 
     const playerState = new PlayerState('Você', mainCards, soulCards);
-    const botState = new PlayerState(bot.username, botMainCards, botSoulCards);
+    // Nome exibido genérico de propósito: na partida direta vs Bot (diferente da fila Normal
+    // online, onde o bot substitui um humano de forma invisível), o jogador já sabe que está
+    // contra a IA — mas o nick real (dudu07/kaiozin/bibs22) não deve aparecer aqui, só nos Ranks.
+    const botState = new PlayerState('Bot', botMainCards, botSoulCards);
 
     match = { playerState, botState, turnManager: null, botPlayerId: bot.playerId };
     winCounted = false;

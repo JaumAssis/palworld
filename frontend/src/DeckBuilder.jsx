@@ -312,7 +312,7 @@ function DeckBuilder() {
       minHeight: '100vh', boxSizing: 'border-box', overflowX: 'hidden',
       background: 'radial-gradient(circle at 50% 40%, rgba(255,255,255,0.05), transparent 60%), #2b1a10'
     }}>
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '16px', padding: '1rem', width: '100%', alignItems: 'start', boxSizing: 'border-box' }}>
+    <div style={{ padding: '1rem', paddingRight: 'calc(300px + 16px + 1rem)', width: '100%', boxSizing: 'border-box' }}>
       <div style={{ textAlign: 'left' }}>
         {/* Linha 1: navegação/modo + busca ao lado do "Trocar modo" */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
@@ -439,10 +439,16 @@ function DeckBuilder() {
           </div>
         )}
       </div>
+      </div>
 
+      {/* position: fixed em vez de sticky — o wrapper da página tem overflowX: hidden, que por
+          spec força overflow-y a virar 'auto' e cria um contexto de rolagem próprio, quebrando
+          o sticky contra o scroll real da janela. Fixed contorna isso de vez, no mesmo padrão
+          já usado por AuthPanel/OnlineBadge/RankBoard. */}
       <div style={{
         background: '#f5f5f5', borderRadius: '10px', padding: '12px',
-        position: 'sticky', top: '1rem', maxHeight: 'calc(100vh - 2rem)', overflowY: 'auto'
+        position: 'fixed', top: '1rem', right: '1rem', width: '300px',
+        maxHeight: 'calc(100vh - 2rem)', overflowY: 'auto', zIndex: 50
       }}>
         <p><strong>{t('mainDeckLabel')}</strong> {mainDeck.length} / {MAIN_DECK_SIZE}</p>
         <p><strong>{t('soulDeckLabel')}</strong> {soulDeck.length} / {SOUL_DECK_SIZE}</p>
@@ -578,7 +584,6 @@ function DeckBuilder() {
           </div>
         </div>
       )}
-    </div>
     </div>
   )
 }
