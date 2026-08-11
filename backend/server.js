@@ -440,6 +440,10 @@ function emitMatchState(session) {
       pendingBattle: battle ? {
         waitingFor: battle.waitingFor,
         attackerName: battle.attackerInstance.data.name,
+        // Sem isso, o defensor via só "X está atacando!" sem saber SE é a própria cara dele, um
+        // Pal ou uma Structure — o prompt de bloqueio/Quick Step precisa dizer o alvo de verdade.
+        targetType: battle.target.type,
+        targetName: battle.target.type === 'player' ? null : battle.target.instance.data.name,
         isDefender,
         // Quem ataca não decide bloqueio/quick step do outro lado — só o defensor vê as opções.
         validBlockers: isDefender ? (battle.validBlockers || []).map(p => self.basePals.indexOf(p)) : [],
@@ -3082,6 +3086,10 @@ io.on('connection', (socket) => {
       pendingBattle: battle ? {
         waitingFor: battle.waitingFor,
         attackerName: battle.attackerInstance.data.name,
+        // Sem isso, o jogador via só "X está atacando!" sem saber SE é a própria cara dele, um
+        // Pal ou uma Structure — o prompt de bloqueio/Quick Step precisa dizer o alvo de verdade.
+        targetType: battle.target.type,
+        targetName: battle.target.type === 'player' ? null : battle.target.instance.data.name,
         validBlockers: (battle.validBlockers || []).map(p => match.playerState.basePals.indexOf(p)),
         quickOptions: (battle.quickOptions || []).map(o => ({
           cardNumber: o.card.card_number, name: o.card.name, imageUrl: o.card.image_url, kind: o.kind

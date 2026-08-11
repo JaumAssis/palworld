@@ -337,9 +337,15 @@ const pt = {
   gbAmountPrompt: ({ name }) => `${name}: escolha a quantidade`,
   gbConfirm: 'Confirmar',
   gbModalPrompt: 'Escolha um dos efeitos de:',
-  gbBlockPrompt: ({ name }) => `${name} está atacando! Bloquear com um Pal em pé?`,
+  gbBlockPrompt: ({ name, targetType, targetName }) => {
+    const alvo = targetType === 'player' ? 'você diretamente' : targetType === 'structure' ? `sua Structure ${targetName}` : `seu Pal ${targetName}`
+    return `${name} está atacando ${alvo}! Bloquear com um Pal em pé?`
+  },
   gbNoBlock: 'Não bloquear',
-  gbQuickStepPrompt: 'Janela de resposta — jogue uma carta Quick/Interrupt ou passe.',
+  gbQuickStepPrompt: ({ attackerName, targetType, targetName }) => {
+    const alvo = targetType === 'player' ? 'você diretamente' : targetType === 'structure' ? `sua Structure ${targetName}` : `seu Pal ${targetName}`
+    return `${attackerName} está atacando ${alvo} — janela de resposta: jogue uma carta Quick/Interrupt ou passe.`
+  },
   gbPass: 'Passar',
   gbInterruptCostPrompt: ({ name }) => `${name}: como pagar o custo do Interrupt?`,
   gbInterruptCostSoul: 'Suspender 1 Soul',
@@ -792,9 +798,15 @@ const en = {
   gbAmountPrompt: ({ name }) => `${name}: choose the amount`,
   gbConfirm: 'Confirm',
   gbModalPrompt: 'Choose one of the effects of:',
-  gbBlockPrompt: ({ name }) => `${name} is attacking! Block with a standing Pal?`,
+  gbBlockPrompt: ({ name, targetType, targetName }) => {
+    const target = targetType === 'player' ? 'you directly' : targetType === 'structure' ? `your Structure ${targetName}` : `your Pal ${targetName}`
+    return `${name} is attacking ${target}! Block with a standing Pal?`
+  },
   gbNoBlock: "Don't block",
-  gbQuickStepPrompt: 'Response window — play a Quick/Interrupt card or pass.',
+  gbQuickStepPrompt: ({ attackerName, targetType, targetName }) => {
+    const target = targetType === 'player' ? 'you directly' : targetType === 'structure' ? `your Structure ${targetName}` : `your Pal ${targetName}`
+    return `${attackerName} is attacking ${target} — response window: play a Quick/Interrupt card or pass.`
+  },
   gbPass: 'Pass',
   gbInterruptCostPrompt: ({ name }) => `${name}: how do you want to pay the Interrupt cost?`,
   gbInterruptCostSoul: 'Suspend 1 Soul',

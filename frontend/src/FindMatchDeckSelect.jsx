@@ -848,7 +848,7 @@ function FindMatchDeckSelect() {
         }}>
           {pendingBattle.isDefender ? (
             <>
-              <span>{t('gbBlockPrompt', { name: pendingBattle.attackerName })}</span>
+              <span>{t('gbBlockPrompt', { name: pendingBattle.attackerName, targetType: pendingBattle.targetType, targetName: pendingBattle.targetName })}</span>
               <button onClick={resolveNoBlock} style={{ padding: '4px 10px', fontSize: '11px' }}>{t('gbNoBlock')}</button>
             </>
           ) : (
@@ -865,7 +865,7 @@ function FindMatchDeckSelect() {
         }}>
           {pendingBattle.isDefender ? (
             <>
-              <span>{t('gbQuickStepPrompt')}</span>
+              <span>{t('gbQuickStepPrompt', { attackerName: pendingBattle.attackerName, targetType: pendingBattle.targetType, targetName: pendingBattle.targetName })}</span>
               <button onClick={passQuickStep} style={{ padding: '4px 10px', fontSize: '11px' }}>{t('gbPass')}</button>
             </>
           ) : (
