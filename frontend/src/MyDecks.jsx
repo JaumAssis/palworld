@@ -31,7 +31,7 @@ function ColorChip({ color }) {
   return (
     <span style={{
       background: style.bg, color: style.text,
-      fontSize: '11px', fontWeight: 600, padding: '3px 10px',
+      fontSize: 'var(--fs-2xs)', fontWeight: 600, padding: 'var(--sp-2xs) var(--sp-sm)',
       borderRadius: '999px'
     }}>{color}</span>
   )
@@ -69,12 +69,12 @@ function DeckList() {
       minHeight: '100vh', boxSizing: 'border-box',
       background: 'radial-gradient(circle at 50% 40%, rgba(255,255,255,0.05), transparent 60%), #2b1a10'
     }}>
-    <div style={{ padding: '2rem', maxWidth: '1000px', margin: '0 auto' }}>
-      <Link to="/" style={{ position: 'fixed', top: '20px', left: '20px' }}>
-        <button className="sign-button">{t('backToMenu')}</button>
+    <div style={{ padding: 'var(--sp-xl)', maxWidth: 'min(94vw, 1000px)', margin: '0 auto' }}>
+      <Link to="/" style={{ position: 'fixed', top: 'var(--sp-lg)', left: 'var(--sp-lg)' }}>
+        <button className="sign-button sign-button-fluid">{t('backToMenu')}</button>
       </Link>
       <h1 style={{
-        marginBottom: '20px', fontFamily: "'Rye', Georgia, serif", fontSize: '30px',
+        marginBottom: '20px', fontFamily: "'Rye', Georgia, serif", fontSize: 'var(--fs-xl)',
         color: '#f3e2b3', WebkitTextStroke: '1px #2b160a',
         textShadow: '2px 2px 0 #000, 0 0 14px rgba(0,0,0,0.6)'
       }}>{t('myDecksTitle')}</h1>
@@ -85,8 +85,8 @@ function DeckList() {
 
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-        gap: '20px'
+        gridTemplateColumns: 'repeat(auto-fill, minmax(clamp(180px, 16vw, 260px), 1fr))',
+        gap: 'var(--sp-lg)'
       }}>
         {decks.map(deck => {
           const gradient = deck.colors.length === 2
@@ -151,27 +151,27 @@ function DeckList() {
                   {deck.colors.map(c => <ColorChip key={c} color={c} />)}
                 </div>
                 <span style={{
-                  position: 'absolute', top: '8px', right: '8px', fontSize: '10px', fontWeight: 700,
-                  padding: '3px 8px', borderRadius: '999px', color: '#fff',
+                  position: 'absolute', top: '8px', right: '8px', fontSize: 'var(--fs-2xs)', fontWeight: 700,
+                  padding: 'var(--sp-2xs) var(--sp-xs)', borderRadius: '999px', color: '#fff',
                   background: deck.mode === 'rank' ? '#a5541b' : '#3f6b3f'
                 }}>{deck.mode === 'rank' ? '🏆 Rank' : '🎲 Normal'}</span>
                 {deck.isDraft && (
                   <span style={{
-                    position: 'absolute', top: '8px', left: '8px', fontSize: '10px', fontWeight: 700,
-                    padding: '3px 8px', borderRadius: '999px', color: '#fff', background: '#555'
+                    position: 'absolute', top: '8px', left: '8px', fontSize: 'var(--fs-2xs)', fontWeight: 700,
+                    padding: 'var(--sp-2xs) var(--sp-xs)', borderRadius: '999px', color: '#fff', background: '#555'
                   }}>{t('draftBadge')}</span>
                 )}
               </div>
-              <div style={{ padding: '14px', position: 'relative' }}>
-                <h3 style={{ margin: '0 0 4px', fontSize: '16px' }}>{deck.name}</h3>
-                <p style={{ margin: 0, fontSize: '12px', color: '#999' }}>
+              <div style={{ padding: 'var(--sp-md)', position: 'relative' }}>
+                <h3 style={{ margin: '0 0 4px', fontSize: 'var(--fs-md)' }}>{deck.name}</h3>
+                <p style={{ margin: 0, fontSize: 'var(--fs-2xs)', color: '#999' }}>
                   {t('createdAt', { date: new Date(deck.created_at).toLocaleDateString(lang === 'pt' ? 'pt-BR' : 'en-US') })}
                 </p>
                 <span
                   onClick={e => { e.stopPropagation(); navigate(`/deckbuilder/${deck.id}`) }}
                   title={t('editDeckTitle', { name: deck.name })}
                   style={{
-                    position: 'absolute', bottom: '10px', left: '10px', fontSize: '18px',
+                    position: 'absolute', bottom: '10px', left: '10px', fontSize: 'var(--fs-lg)',
                     cursor: 'pointer', lineHeight: 1
                   }}
                 >📝</span>
@@ -179,7 +179,7 @@ function DeckList() {
                   onClick={e => { e.stopPropagation(); setDeleteError(''); setDeckToDelete(deck) }}
                   title={t('deleteDeckConfirm', { name: deck.name })}
                   style={{
-                    position: 'absolute', bottom: '10px', right: '10px', fontSize: '18px',
+                    position: 'absolute', bottom: '10px', right: '10px', fontSize: 'var(--fs-lg)',
                     cursor: 'pointer', lineHeight: 1
                   }}
                 >🗑️</span>
@@ -197,18 +197,18 @@ function DeckList() {
         }}>
           <div onClick={e => e.stopPropagation()} style={{
             background: '#2b1a10', border: '3px solid #c99a4e', borderRadius: '14px',
-            padding: '24px', maxWidth: '360px', textAlign: 'center',
+            padding: 'var(--sp-xl)', maxWidth: 'var(--panel-w-xs)', textAlign: 'center',
             boxShadow: '0 12px 36px rgba(0,0,0,0.6)'
           }}>
-            <p style={{ color: '#f3e2b3', fontSize: '16px', marginBottom: deleteError ? '8px' : '20px' }}>
+            <p style={{ color: '#f3e2b3', fontSize: 'var(--fs-md)', marginBottom: deleteError ? '8px' : '20px' }}>
               {t('deleteDeckConfirm', { name: deckToDelete.name })}
             </p>
             {deleteError && (
-              <p style={{ color: '#e57373', fontSize: '13px', marginBottom: '16px' }}>{deleteError}</p>
+              <p style={{ color: '#e57373', fontSize: 'var(--fs-sm)', marginBottom: '16px' }}>{deleteError}</p>
             )}
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
-              <button onClick={confirmDelete} style={{ padding: '8px 20px' }}>{t('deleteDeckYes')}</button>
-              <button onClick={() => setDeckToDelete(null)} style={{ padding: '8px 20px' }}>{t('deleteDeckNo')}</button>
+              <button onClick={confirmDelete} style={{ padding: 'var(--sp-xs) var(--sp-lg)', fontSize: 'var(--fs-sm)' }}>{t('deleteDeckYes')}</button>
+              <button onClick={() => setDeckToDelete(null)} style={{ padding: 'var(--sp-xs) var(--sp-lg)', fontSize: 'var(--fs-sm)' }}>{t('deleteDeckNo')}</button>
             </div>
           </div>
         </div>
@@ -380,10 +380,10 @@ function DeckDetail() {
           <span style={{
             position: 'absolute', bottom: '4px', right: '4px',
             background: 'rgba(0,0,0,0.75)', color: '#fff',
-            fontSize: '11px', fontWeight: 700, padding: '2px 6px', borderRadius: '6px'
+            fontSize: 'var(--fs-2xs)', fontWeight: 700, padding: 'var(--sp-2xs) var(--sp-xs)', borderRadius: '6px'
           }}>x{count}</span>
         </div>
-        <p style={{ fontSize: '11px', margin: '4px 0 0', color: '#d9c4a3', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>{card.name}</p>
+        <p style={{ fontSize: 'var(--fs-2xs)', margin: '4px 0 0', color: '#d9c4a3', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>{card.name}</p>
       </div>
     )
   }
@@ -393,12 +393,12 @@ function DeckDetail() {
       minHeight: '100vh', boxSizing: 'border-box',
       background: 'radial-gradient(circle at 50% 40%, rgba(255,255,255,0.05), transparent 60%), #2b1a10'
     }}>
-    <div style={{ padding: '2rem', maxWidth: '1100px', margin: '0 auto' }}>
-      <Link to="/mydecks"><button style={{ marginBottom: '16px' }}>{t('backToDecks')}</button></Link>
+    <div style={{ padding: 'var(--sp-xl)', maxWidth: 'min(94vw, 1100px)', margin: '0 auto' }}>
+      <Link to="/mydecks"><button style={{ marginBottom: '16px', fontSize: 'var(--fs-sm)' }}>{t('backToDecks')}</button></Link>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-sm)', marginBottom: '20px' }}>
         <h1 style={{
-          margin: 0, fontFamily: "'Rye', Georgia, serif", fontSize: '28px',
+          margin: 0, fontFamily: "'Rye', Georgia, serif", fontSize: 'var(--fs-xl)',
           color: '#f3e2b3', WebkitTextStroke: '1px #2b160a',
           textShadow: '2px 2px 0 #000, 0 0 14px rgba(0,0,0,0.6)'
         }}>{deck.name}</h1>
@@ -406,33 +406,33 @@ function DeckDetail() {
           {deck.colors.map(c => <ColorChip key={c} color={c} />)}
         </div>
         <span style={{
-          fontSize: '11px', fontWeight: 700, padding: '4px 10px', borderRadius: '999px', color: '#fff',
+          fontSize: 'var(--fs-2xs)', fontWeight: 700, padding: 'var(--sp-2xs) var(--sp-sm)', borderRadius: '999px', color: '#fff',
           background: deck.mode === 'rank' ? '#a5541b' : '#3f6b3f'
         }}>{deck.mode === 'rank' ? '🏆 Rank' : '🎲 Normal'}</span>
         {deck.isDraft && (
           <span style={{
-            fontSize: '11px', fontWeight: 700, padding: '4px 10px', borderRadius: '999px', color: '#fff', background: '#555'
+            fontSize: 'var(--fs-2xs)', fontWeight: 700, padding: 'var(--sp-2xs) var(--sp-sm)', borderRadius: '999px', color: '#fff', background: '#555'
           }}>{t('draftBadge')}</span>
         )}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '20px' }}>
-        <button onClick={handleCopyDeckText} style={{ padding: '6px 14px', fontSize: '13px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-sm)', flexWrap: 'wrap', marginBottom: '20px' }}>
+        <button onClick={handleCopyDeckText} style={{ padding: 'var(--sp-xs) var(--sp-md)', fontSize: 'var(--fs-sm)' }}>
           {t('copyDeckButton')}
         </button>
-        <button onClick={toggleDeckMode} disabled={modeSwitching} style={{ padding: '6px 14px', fontSize: '13px', opacity: modeSwitching ? 0.6 : 1 }}>
+        <button onClick={toggleDeckMode} disabled={modeSwitching} style={{ padding: 'var(--sp-xs) var(--sp-md)', fontSize: 'var(--fs-sm)', opacity: modeSwitching ? 0.6 : 1 }}>
           {deck.mode === 'rank' ? t('switchToNormalButton') : t('switchToRankButton')}
         </button>
-        {copyMsg && <span style={{ color: '#6cf25a', fontSize: '12px' }}>{copyMsg}</span>}
-        {modeSwitchMsg && <span style={{ color: '#e57373', fontSize: '12px' }}>{modeSwitchMsg}</span>}
+        {copyMsg && <span style={{ color: '#6cf25a', fontSize: 'var(--fs-2xs)' }}>{copyMsg}</span>}
+        {modeSwitchMsg && <span style={{ color: '#e57373', fontSize: 'var(--fs-2xs)' }}>{modeSwitchMsg}</span>}
       </div>
 
       <h3 style={{ marginBottom: '10px', color: '#f3e2b3', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>{t('mainDeckCount', { n: deck.mainDeck.length })}</h3>
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
-        gap: '12px',
-        marginBottom: '30px'
+        gridTemplateColumns: 'repeat(auto-fill, minmax(clamp(100px, 10vw, 160px), 1fr))',
+        gap: 'var(--sp-sm)',
+        marginBottom: 'var(--sp-xl)'
       }}>
         {mainGrouped.map(({ card, count }) => (
           <CardTile key={card.card_number} card={card} count={count} />
@@ -442,8 +442,8 @@ function DeckDetail() {
       <h3 style={{ marginBottom: '10px', color: '#f3e2b3', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>{t('soulDeckCount', { n: deck.soulDeck.length })}</h3>
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))',
-        gap: '12px'
+        gridTemplateColumns: 'repeat(auto-fill, minmax(clamp(100px, 10vw, 160px), 1fr))',
+        gap: 'var(--sp-sm)'
       }}>
         {soulGrouped.map(({ card, count }) => (
           <CardTile key={card.card_number} card={card} count={count} />
@@ -457,15 +457,15 @@ function DeckDetail() {
               <button
                 onClick={handleCraftAll}
                 disabled={craftingAll || palFluid < totalMissingCost()}
-                className="sign-button"
+                className="sign-button sign-button-fluid"
                 style={{ opacity: (craftingAll || palFluid < totalMissingCost()) ? 0.5 : 1 }}
               >
                 {t('craftAllButton', { cost: totalMissingCost() })}
               </button>
-              {craftAllMsg && <p style={{ color: '#e57373', fontSize: '12px', marginTop: '8px' }}>{craftAllMsg}</p>}
+              {craftAllMsg && <p style={{ color: '#e57373', fontSize: 'var(--fs-2xs)', marginTop: '8px' }}>{craftAllMsg}</p>}
             </>
           ) : (
-            <p style={{ color: '#6cf25a', fontSize: '13px' }}>{t('deckCompleteMsg')}</p>
+            <p style={{ color: '#6cf25a', fontSize: 'var(--fs-sm)' }}>{t('deckCompleteMsg')}</p>
           )}
         </div>
       )}
@@ -490,31 +490,31 @@ function DeckDetail() {
                      filter: missing > 0 ? 'grayscale(100%)' : 'none', opacity: missing > 0 ? 0.6 : 1
                    }} />
               <p style={{
-                marginTop: '12px', color: '#f3e2b3', fontSize: '16px',
+                marginTop: '12px', color: '#f3e2b3', fontSize: 'var(--fs-md)',
                 textShadow: '2px 2px 0 #000'
               }}>{zoomCard.name}</p>
 
               {missing > 0 && (
                 <div style={{ marginTop: '10px' }}>
-                  <p style={{ color: '#ffcf7a', fontSize: '13px' }}>{t('missingCopiesMsg', { missing })}</p>
+                  <p style={{ color: '#ffcf7a', fontSize: 'var(--fs-sm)' }}>{t('missingCopiesMsg', { missing })}</p>
                   {cost ? (
                     <>
-                      <p style={{ color: '#d9c4a3', fontSize: '12px' }}>{t('yourPalFluid')} <strong>{palFluid}</strong>{t('costSuffix', { cost })}</p>
+                      <p style={{ color: '#d9c4a3', fontSize: 'var(--fs-2xs)' }}>{t('yourPalFluid')} <strong>{palFluid}</strong>{t('costSuffix', { cost })}</p>
                       <button
                         onClick={() => handleCraft(zoomCard)}
                         disabled={crafting || !canAfford}
-                        style={{ padding: '10px 20px', fontWeight: 600, opacity: (crafting || !canAfford) ? 0.5 : 1 }}>
+                        style={{ padding: 'var(--sp-sm) var(--sp-lg)', fontSize: 'var(--fs-sm)', fontWeight: 600, opacity: (crafting || !canAfford) ? 0.5 : 1 }}>
                         {t('craftBtn', { cost })}
                       </button>
                     </>
                   ) : (
-                    <p style={{ color: '#d9c4a3', fontSize: '12px' }}>{t('cannotCraftRarity')}</p>
+                    <p style={{ color: '#d9c4a3', fontSize: 'var(--fs-2xs)' }}>{t('cannotCraftRarity')}</p>
                   )}
-                  {craftMsg && <p style={{ color: '#e57373', fontSize: '12px', marginTop: '6px' }}>{craftMsg}</p>}
+                  {craftMsg && <p style={{ color: '#e57373', fontSize: 'var(--fs-2xs)', marginTop: '6px' }}>{craftMsg}</p>}
                 </div>
               )}
 
-              <button onClick={() => setZoomCard(null)} style={{ marginTop: '10px', padding: '8px 18px' }}>{t('close')}</button>
+              <button onClick={() => setZoomCard(null)} style={{ marginTop: '10px', padding: 'var(--sp-xs) var(--sp-md)', fontSize: 'var(--fs-sm)' }}>{t('close')}</button>
             </div>
           </div>
         )
@@ -527,20 +527,20 @@ function DeckDetail() {
         }}>
           <div onClick={e => e.stopPropagation()} style={{
             background: '#2b1a10', border: '3px solid #c99a4e', borderRadius: '14px',
-            padding: '20px', width: '420px', maxWidth: '90vw', boxShadow: '0 12px 36px rgba(0,0,0,0.6)'
+            padding: 'var(--sp-lg)', width: 'var(--panel-w-sm)', maxWidth: '90vw', boxShadow: '0 12px 36px rgba(0,0,0,0.6)'
           }}>
-            <p style={{ color: '#f3e2b3', fontSize: '13px', marginBottom: '10px' }}>{t('deckCopyFallbackHint')}</p>
+            <p style={{ color: '#f3e2b3', fontSize: 'var(--fs-sm)', marginBottom: '10px' }}>{t('deckCopyFallbackHint')}</p>
             <textarea
               readOnly
               value={copyFallbackText}
               onFocus={e => e.target.select()}
               style={{
-                width: '100%', height: '220px', fontFamily: 'monospace', fontSize: '12px',
-                padding: '8px', borderRadius: '8px', border: '2px solid #8a5a2e', resize: 'vertical'
+                width: '100%', height: 'clamp(180px, 22vh, 320px)', fontFamily: 'monospace', fontSize: 'var(--fs-2xs)',
+                padding: 'var(--sp-xs)', borderRadius: '8px', border: '2px solid #8a5a2e', resize: 'vertical'
               }}
             />
             <div style={{ textAlign: 'right', marginTop: '10px' }}>
-              <button onClick={() => setCopyFallbackText(null)} style={{ padding: '8px 18px' }}>{t('close')}</button>
+              <button onClick={() => setCopyFallbackText(null)} style={{ padding: 'var(--sp-xs) var(--sp-md)', fontSize: 'var(--fs-sm)' }}>{t('close')}</button>
             </div>
           </div>
         </div>

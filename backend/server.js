@@ -429,7 +429,7 @@ function emitMatchState(session) {
         description: pending.description,
         optional: pending.optional,
         isYours: pending.casterState === self,
-        validTargets: pending.validTargets ? pending.validTargets.map(t => ({ owner: mapOwner(t.owner), index: t.index })) : null,
+        validTargets: pending.validTargets ? pending.validTargets.map(t => ({ owner: mapOwner(t.owner), index: t.index, zone: t.zone })) : null,
         min: pending.min,
         max: pending.max,
         options: pending.options ? pending.options.map(o => o.description) : null,
@@ -2884,7 +2884,7 @@ io.on('connection', (socket) => {
     emitMatchState(session);
   });
 
-  socket.on('match:resolveEffectTarget', ({ owner, index, skip }) => {
+  socket.on('match:resolveEffectTarget', ({ owner, index, skip, zone }) => {
     const ctx = matchContext(socket);
     if (!ctx) return;
     const { session, tm, self } = ctx;
@@ -2894,12 +2894,14 @@ io.on('connection', (socket) => {
     const selfIsPlayer1 = self === tm.player1;
     const absoluteOwner = selfIsPlayer1 ? owner : (owner === 'player' ? 'bot' : 'player');
     if (!skip) {
-      const valid = (tm.pendingEffect.validTargets || []).some(t => t.owner === absoluteOwner && t.index === index);
+      // zone diferencia alvo em Structure/Gear de alvo em Pal (ex: Lily's Strategy) — default
+      // 'basePals' cobre o formato antigo (cliente que nem manda zone == alvo sempre era Pal).
+      const valid = (tm.pendingEffect.validTargets || []).some(t => t.owner === absoluteOwner && t.index === index && (t.zone || 'basePals') === (zone || 'basePals'));
       if (!valid) return;
     } else if (!tm.pendingEffect.optional) {
       return;
     }
-    EffectEngine.continuePendingEffect(tm, { owner: absoluteOwner, index, skip });
+    EffectEngine.continuePendingEffect(tm, { owner: absoluteOwner, index, skip, zone });
     emitMatchState(session);
   });
 
@@ -3375,19 +3377,21 @@ io.on('connection', (socket) => {
   });
 
   // 6f. Jogador escolhe o alvo de um efeito pendente (ou pula, se opcional)
-  socket.on('bot:resolveEffectTarget', ({ owner, index, skip }) => {
+  socket.on('bot:resolveEffectTarget', ({ owner, index, skip, zone }) => {
     if (!match || match.turnManager.gameOver || !match.turnManager.pendingEffect) return;
     // Sem essa checagem, uma vez que o bot pudesse abrir um pendingEffect (Events modais, ACT com
     // custo de escolha), o cliente conseguia resolver as escolhas do BOT por esse handler — o
     // gêmeo match:* já tinha essa guarda (casterState !== self), aqui faltava.
     if (match.turnManager.pendingEffect.casterState !== match.playerState) return;
     if (!skip) {
-      const valid = match.turnManager.pendingEffect.validTargets.some(t => t.owner === owner && t.index === index);
+      // zone diferencia alvo em Structure/Gear de alvo em Pal (ex: Lily's Strategy) — default
+      // 'basePals' cobre o formato antigo (cliente que nem manda zone == alvo sempre era Pal).
+      const valid = match.turnManager.pendingEffect.validTargets.some(t => t.owner === owner && t.index === index && (t.zone || 'basePals') === (zone || 'basePals'));
       if (!valid) return;
     } else if (!match.turnManager.pendingEffect.optional) {
       return;
     }
-    EffectEngine.continuePendingEffect(match.turnManager, { owner, index, skip });
+    EffectEngine.continuePendingEffect(match.turnManager, { owner, index, skip, zone });
     emitState();
     maybeRunBotTurn(); // resolver essa escolha pode ter sido o que faltava pra "AUTO At the end of your
     // turn" (ex: Shadowbeak) terminar e só ENTÃO passar a vez — se foi isso, o bot precisa começar a agir.

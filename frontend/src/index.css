@@ -1,4 +1,32 @@
 :root {
+  /* Escala fluida de fonte/espaçamento: cresce com a largura da tela (clamp entre um piso legível
+     e um teto que evita texto gigante em monitores ultrawide), em vez de px fixos por elemento.
+     Não é usada pelo tabuleiro de partida (GameBoard/FindMatchDeckSelect/GameBoardUI/TutorialMatch),
+     que tem sua própria lógica de escala (boardScale) calculada a partir da janela. */
+  --fs-2xs: clamp(0.65rem, 0.58rem + 0.35vw, 0.85rem);
+  --fs-xs: clamp(0.75rem, 0.66rem + 0.4vw, 0.95rem);
+  --fs-sm: clamp(0.85rem, 0.74rem + 0.5vw, 1.05rem);
+  --fs-base: clamp(0.95rem, 0.82rem + 0.6vw, 1.2rem);
+  --fs-md: clamp(1.05rem, 0.88rem + 0.8vw, 1.4rem);
+  --fs-lg: clamp(1.25rem, 1rem + 1.1vw, 1.75rem);
+  --fs-xl: clamp(1.6rem, 1.2rem + 1.8vw, 2.4rem);
+  --fs-2xl: clamp(2rem, 1.4rem + 2.8vw, 3.2rem);
+
+  --sp-2xs: clamp(3px, 0.25vw, 6px);
+  --sp-xs: clamp(6px, 0.45vw, 10px);
+  --sp-sm: clamp(9px, 0.7vw, 14px);
+  --sp-md: clamp(12px, 1vw, 20px);
+  --sp-lg: clamp(18px, 1.6vw, 30px);
+  --sp-xl: clamp(24px, 2.4vw, 44px);
+
+  /* Larguras de painel/modal fluidas: encolhem em telas estreitas e crescem em telas largas até um
+     teto, em vez de um px fixo que sobra em monitor grande e estoura em tela pequena. */
+  --panel-w-xs: min(90vw, 22rem);
+  --panel-w-sm: min(92vw, 32rem);
+  --panel-w-md: min(94vw, 44rem);
+  --panel-w-lg: min(96vw, 60rem);
+  --page-max-w: min(98vw, 92rem);
+
   --text: #6b6375;
   --text-h: #08060d;
   --bg: #fff;
@@ -71,22 +99,15 @@ h2 {
 }
 
 h1 {
-  font-size: 56px;
+  font-size: var(--fs-2xl);
   letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
+  margin: var(--sp-xl) 0;
 }
 h2 {
-  font-size: 24px;
+  font-size: var(--fs-xl);
   line-height: 118%;
   letter-spacing: -0.24px;
   margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
 }
 p {
   margin: 0;

@@ -265,11 +265,11 @@ function FindMatchDeckSelect() {
 
   // owner chega/sai relativo a quem está vendo ('player'=eu / 'bot'=oponente) — o servidor já
   // traduz isso pra cada lado, então essa lógica é idêntica à da partida contra o Bot.
-  const isPendingTarget = (owner, index) =>
+  const isPendingTarget = (owner, index, zone = 'basePals') =>
     !!gameState?.pendingEffect?.isYours &&
-    !!gameState?.pendingEffect?.validTargets?.some(t => t.owner === owner && t.index === index)
+    !!gameState?.pendingEffect?.validTargets?.some(t => t.owner === owner && t.index === index && (t.zone || 'basePals') === zone)
 
-  const resolveEffectTarget = (owner, index) => socket.emit('match:resolveEffectTarget', { owner, index })
+  const resolveEffectTarget = (owner, index, zone) => socket.emit('match:resolveEffectTarget', { owner, index, zone })
   const skipEffectTarget = () => socket.emit('match:resolveEffectTarget', { skip: true })
 
   const activateAbility = (zone, index, actIndex = 0) => {
@@ -573,8 +573,11 @@ function FindMatchDeckSelect() {
   // ================= TABULEIRO =================
   const { player, opponent, hand, currentPhase, turnNumber, isYourTurn, pendingEffect, pendingBattle, log, logTotal } = gameState
   const isValidBlocker = (i) => pendingBattle?.waitingFor === 'block' && pendingBattle.validBlockers.includes(i)
+  // Se um Quick Card já jogado abriu uma escolha de alvo por baixo (ex: Dark Cannon), a mão não pode
+  // continuar oferecendo outra carta Quick clicável até essa escolha ser resolvida (senão o jogador
+  // conseguia disparar 2 Quick Cards ao mesmo tempo, um por cima do outro).
   const quickOptionFor = (cardNumber) =>
-    pendingBattle?.waitingFor === 'quick' ? pendingBattle.quickOptions.find(o => o.cardNumber === cardNumber) : null
+    !pendingEffect && pendingBattle?.waitingFor === 'quick' ? pendingBattle.quickOptions.find(o => o.cardNumber === cardNumber) : null
 
   // Mesma lógica do tabuleiro vs Bot (ver GameBoard.jsx) — selecionar um Pal em pé já é o "modo de
   // mira", sem estado extra. Arraste tem prioridade sobre seleção por clique quando os dois coexistem.
@@ -685,7 +688,11 @@ function FindMatchDeckSelect() {
           <StructureGearRow structures={opponent.baseStructures || []} gear={opponent.baseGear || []} cardWidth="62px" cardHeight="86px"
                              onHoverCard={startHoverZoom} onHoverEnd={cancelHoverZoom}
                              onDropStructure={attackStructure} dragActive={draggedPalIndex !== null}
-                             onAttackStructure={(i) => attackStructureAt(selectedPalIndex, i)} attackActive={clickAttackReady} />
+                             onAttackStructure={(i) => attackStructureAt(selectedPalIndex, i)} attackActive={clickAttackReady}
+                             isEffectTargetStructure={(i) => isPendingTarget('bot', i, 'baseStructures')}
+                             onEffectTargetStructure={(i) => resolveEffectTarget('bot', i, 'baseStructures')}
+                             isEffectTargetGear={(i) => isPendingTarget('bot', i, 'baseGear')}
+                             onEffectTargetGear={(i) => resolveEffectTarget('bot', i, 'baseGear')} />
         </div>
       </div>
 
@@ -718,7 +725,11 @@ function FindMatchDeckSelect() {
           <StructureGearRow structures={player.baseStructures || []} gear={player.baseGear || []}
                              onActivateStructure={(!pendingEffect && isYourTurn && currentPhase === 'main') ? (i) => handleActivateClick('baseStructures', i, player.baseStructures[i].acts) : undefined}
                              onActivateGear={(!pendingEffect && isYourTurn && currentPhase === 'main') ? (i) => handleActivateClick('baseGear', i, player.baseGear[i].acts) : undefined}
-                             onHoverCard={startHoverZoom} onHoverEnd={cancelHoverZoom} />
+                             onHoverCard={startHoverZoom} onHoverEnd={cancelHoverZoom}
+                             isEffectTargetStructure={(i) => isPendingTarget('player', i, 'baseStructures')}
+                             onEffectTargetStructure={(i) => resolveEffectTarget('player', i, 'baseStructures')}
+                             isEffectTargetGear={(i) => isPendingTarget('player', i, 'baseGear')}
+                             onEffectTargetGear={(i) => resolveEffectTarget('player', i, 'baseGear')} />
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginTop: '6px' }}>

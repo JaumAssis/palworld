@@ -41,6 +41,12 @@ const TARGET_PATTERNS = [
     }
   },
   {
+    // "Choose 1 structure or gear, and put it into the graveyard." (Lily's Strategy) — alvo em campo
+    // que NÃO é Pal; ver fieldPoolFor/computeValidTargets (lê filter.cardTypes pra escolher as zonas).
+    re: /Choose 1 structure or gear,?\s*and\s+/i,
+    build: () => ({ mode: 'choose', upTo: false, count: 1, side: 'any', filter: { cardTypes: ['Structure', 'Gear'] } })
+  },
+  {
     re: /Choose all of your main name 《([^》]+)》 Pals?,? and /i,
     build: m => ({ mode: 'all', side: 'own', filter: { palName: m[1] } })
   },

@@ -274,6 +274,16 @@ class TurnManager {
       if (!result.paused && !this.pendingEffect) this._resumeAttackAfterTrigger()
       return
     }
+    // Dark Cannon (Quick com escolha de alvo) — depois que essa escolha resolve, volta pro Quick Step
+    // de verdade (recomputa quickOptions), em vez de deixar o jogador preso sem poder seguir a batalha.
+    const quickStepCont = this._pendingQuickStepContinuation
+    if (quickStepCont) {
+      this._pendingQuickStepContinuation = null
+      const battle = quickStepCont.battle
+      battle.quickOptions = EffectEngine.getPlayableQuickCards(battle.defenderState)
+      this.pendingBattle = battle
+      return
+    }
     const endTurnCont = this._pendingEndTurnContinuation
     if (endTurnCont) {
       this._pendingEndTurnContinuation = null
@@ -394,9 +404,17 @@ class TurnManager {
       return this._startInterruptPayment(battle, option.card, canSoul ? 'soul' : 'discard')
     }
 
-    // kind === 'quick': joga o Event (pode abrir um pendingEffect de escolha de alvo por baixo,
-    // que resolve normalmente — o Quick Step continua aberto depois, pra jogar outra carta ou passar)
-    EffectEngine.playQuickCard(this, option.card, battle.defenderState, battle.attackerState)
+    // kind === 'quick': joga o Event. Se ele abrir um pendingEffect de escolha de alvo por baixo (ex:
+    // Dark Cannon — "Choose 1 ◇5 or less Pal, and put it into the graveyard"), NÃO recomputa
+    // quickOptions/reabre o Quick Step ainda — isso só pode acontecer DEPOIS que essa escolha for
+    // resolvida (guarda a continuação, ver _resumeAttackAfterTrigger). Sem isso, o pendingEffect da
+    // escolha ficava pendurado junto com o próprio Quick Step, e a carta nunca terminava de resolver.
+    const result = EffectEngine.playQuickCard(this, option.card, battle.defenderState, battle.attackerState)
+    if (result.paused) {
+      this._pendingQuickStepContinuation = { battle }
+      this.pendingBattle = battle
+      return { success: true, paused: true }
+    }
     battle.quickOptions = EffectEngine.getPlayableQuickCards(battle.defenderState)
     this.pendingBattle = battle
     return { success: true, paused: true }

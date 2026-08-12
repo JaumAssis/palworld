@@ -29,22 +29,22 @@ export default function LobbyChat({ onNickClick }) {
 
   return (
     <div style={{
-      margin: '30px auto 0', maxWidth: '900px',
+      margin: '30px auto 0', maxWidth: 'var(--panel-w-lg)',
       background: '#000', border: '3px solid #c99a4e', borderRadius: '20px',
-      padding: '14px', display: 'flex', flexDirection: 'column', gap: '10px'
+      padding: 'var(--sp-md)', display: 'flex', flexDirection: 'column', gap: '10px'
     }}>
       <div ref={boxRef} style={{
         background: 'rgba(0,0,0,0.55)', border: '2px solid #c99a4e', borderRadius: '14px',
-        padding: '12px', height: '260px', overflowY: 'auto', textAlign: 'left'
+        padding: 'var(--sp-sm)', height: 'clamp(200px, 26vh, 340px)', overflowY: 'auto', textAlign: 'left'
       }}>
         {messages.length === 0 ? (
-          <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '13px', margin: 0 }}>{t('lobbyChatEmpty')}</p>
+          <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 'var(--fs-sm)', margin: 0 }}>{t('lobbyChatEmpty')}</p>
         ) : (
           messages.map((msg, i) => {
             const isOwnMessage = msg.author === user?.username
             return (
-              <p key={i} style={{ color: '#f3e2b3', fontSize: '13px', margin: '4px 0' }}>
-                <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: '11px' }}>{formatChatTime(msg.ts)}</span>{' '}
+              <p key={i} style={{ color: '#f3e2b3', fontSize: 'var(--fs-sm)', margin: '4px 0' }}>
+                <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 'var(--fs-2xs)' }}>{formatChatTime(msg.ts)}</span>{' '}
                 {isOwnMessage ? (
                   <strong>{msg.author}:</strong>
                 ) : (
@@ -60,7 +60,7 @@ export default function LobbyChat({ onNickClick }) {
           })
         )}
       </div>
-      {chatError && <p style={{ color: '#ff8a8a', fontSize: '12px', margin: 0 }}>{chatError}</p>}
+      {chatError && <p style={{ color: '#ff8a8a', fontSize: 'var(--fs-2xs)', margin: 0 }}>{chatError}</p>}
       <div style={{ display: 'flex', gap: '8px' }}>
         <input
           ref={inputRef}
@@ -68,11 +68,11 @@ export default function LobbyChat({ onNickClick }) {
           onKeyDown={e => e.key === 'Enter' && handleSend()}
           placeholder={t('lobbyChatPlaceholder')}
           style={{
-            flex: 1, padding: '10px 14px', borderRadius: '10px', border: '2px solid #8a5a2e',
-            background: '#fdf6e3', color: '#3a2410', fontSize: '13px'
+            flex: 1, padding: 'var(--sp-sm) var(--sp-md)', borderRadius: '10px', border: '2px solid #8a5a2e',
+            background: '#fdf6e3', color: '#3a2410', fontSize: 'var(--fs-sm)'
           }}
         />
-        <button className="sign-button" onClick={handleSend}>{t('lobbyChatSend')}</button>
+        <button className="sign-button sign-button-fluid" onClick={handleSend}>{t('lobbyChatSend')}</button>
       </div>
     </div>
   )

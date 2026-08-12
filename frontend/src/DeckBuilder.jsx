@@ -6,7 +6,7 @@ import { apiFetch } from './api'
 import { cardMatchesSearch } from './cardSearch'
 
 // Mantém o tamanho compacto que os filtros de tipo já tinham antes de virarem sign-button.
-const FILTER_BTN_STYLE = { padding: '4px 10px', fontSize: '12px' }
+const FILTER_BTN_STYLE = { padding: 'var(--sp-2xs) var(--sp-sm)', fontSize: 'var(--fs-2xs)' }
 const ACTIVE_FILTER_STYLE = { outline: '2px solid #ffcf7a', outlineOffset: '2px' }
 
 const COLOR_SWATCH = {
@@ -312,29 +312,29 @@ function DeckBuilder() {
       minHeight: '100vh', boxSizing: 'border-box', overflowX: 'hidden',
       background: 'radial-gradient(circle at 50% 40%, rgba(255,255,255,0.05), transparent 60%), #2b1a10'
     }}>
-    <div style={{ padding: '1rem', paddingRight: 'calc(300px + 16px + 1rem)', width: '100%', boxSizing: 'border-box' }}>
+    <div style={{ padding: 'var(--sp-lg)', paddingRight: 'calc(var(--panel-w-xs) + 16px + var(--sp-lg))', width: '100%', boxSizing: 'border-box' }}>
       <div style={{ textAlign: 'left' }}>
         {/* Linha 1: navegação/modo + busca ao lado do "Trocar modo" */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
-          <Link to="/"><button className="sign-button">{t('backToMenu')}</button></Link>
-          <button className="sign-button" onClick={() => setShowImport(true)}>{t('importDeck')}</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-xs)', flexWrap: 'wrap', marginBottom: '12px' }}>
+          <Link to="/"><button className="sign-button sign-button-fluid">{t('backToMenu')}</button></Link>
+          <button className="sign-button sign-button-fluid" onClick={() => setShowImport(true)}>{t('importDeck')}</button>
           <span style={{
-            fontSize: '12px', fontWeight: 700, padding: '6px 10px', borderRadius: '6px',
+            fontSize: 'var(--fs-2xs)', fontWeight: 700, padding: 'var(--sp-2xs) var(--sp-sm)', borderRadius: '6px',
             background: deckMode === 'rank' ? '#a5541b' : '#3f6b3f', color: '#fff3d6'
           }}>
             {deckMode === 'rank' ? '🏆 Rank' : '🎲 Normal'}
           </span>
-          <button className="sign-button" onClick={() => setShowModeModal(true)}>{t('changeMode')}</button>
+          <button className="sign-button sign-button-fluid" onClick={() => setShowModeModal(true)}>{t('changeMode')}</button>
           <input
             type="text"
             placeholder={t('searchCard')}
             value={search}
             onChange={e => setSearch(e.target.value)}
-            style={{ flex: 1, minWidth: '150px', padding: '6px' }}
+            style={{ flex: 1, minWidth: '150px', padding: 'var(--sp-xs)', fontSize: 'var(--fs-sm)' }}
           />
           {editId && (
             <span style={{
-              fontSize: '12px', fontWeight: 700, padding: '6px 10px', borderRadius: '6px',
+              fontSize: 'var(--fs-2xs)', fontWeight: 700, padding: 'var(--sp-2xs) var(--sp-sm)', borderRadius: '6px',
               background: '#3a4a6b', color: '#e0e8ff'
             }}>
               {t('editingDeckBadge', { name: editedDeckName })}
@@ -343,7 +343,7 @@ function DeckBuilder() {
         </div>
 
         {/* Linha 2: filtros de tipo + "Não possuído" (sem cor aqui — virou subfiltro condicional) */}
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 'var(--sp-xs)', marginBottom: '8px', flexWrap: 'wrap' }}>
           {['Todos', 'Pal', 'Structure', 'Gear', 'Event', 'Soul'].map(type => (
             <button
               key={type}
@@ -367,10 +367,10 @@ function DeckBuilder() {
             Multi-seleção dentro de cada grupo; os dois grupos se combinam em E (mesmo padrão do
             Catálogo, CardGrid.jsx). */}
         {filterType !== 'Todos' && (
-          <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '12px' }}>
+          <div style={{ display: 'flex', gap: 'var(--sp-lg)', flexWrap: 'wrap', alignItems: 'center', marginBottom: '12px' }}>
             {availableCosts.length > 0 && (
               <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-                <span style={{ color: '#d9c4a3', fontSize: '11px' }}>{t('costFilterLabel')}</span>
+                <span style={{ color: '#d9c4a3', fontSize: 'var(--fs-2xs)' }}>{t('costFilterLabel')}</span>
                 {availableCosts.map(cost => (
                   <button
                     key={cost}
@@ -384,7 +384,7 @@ function DeckBuilder() {
               </div>
             )}
             <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <span style={{ color: '#d9c4a3', fontSize: '11px' }}>{t('colorFilterLabel')}</span>
+              <span style={{ color: '#d9c4a3', fontSize: 'var(--fs-2xs)' }}>{t('colorFilterLabel')}</span>
               {['Red', 'Blue', 'Green', 'Purple', 'Colorless'].map(color => (
                 <button
                   key={color}
@@ -400,7 +400,7 @@ function DeckBuilder() {
           </div>
         )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: '10px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(clamp(95px, 9vw, 150px), 1fr))', gap: 'var(--sp-sm)' }}>
           {filteredCollection.map(card => {
             const isSoul = card.card_type === 'Soul'
             const copies = countCopies(isSoul ? soulDeck : mainDeck, card)
@@ -412,7 +412,7 @@ function DeckBuilder() {
                    onMouseEnter={() => setHoveredCard(card)}
                    onMouseLeave={() => setHoveredCard(null)}
                    title={!isSoul && deckMode === 'rank' ? t('availableTitle', { n: getAvailable(card.card_number) }) : undefined}
-                   style={{ cursor: maxed ? 'not-allowed' : 'pointer', opacity: maxed ? 0.4 : 1, textAlign: 'center', border: '1px solid #ccc', borderRadius: '8px', padding: '6px', position: 'relative' }}>
+                   style={{ cursor: maxed ? 'not-allowed' : 'pointer', opacity: maxed ? 0.4 : 1, textAlign: 'center', border: '1px solid #ccc', borderRadius: '8px', padding: 'var(--sp-2xs)', position: 'relative' }}>
                 <img src={card.image_url} alt={card.name}
                      style={{
                        width: '100%', borderRadius: '4px',
@@ -420,9 +420,9 @@ function DeckBuilder() {
                        opacity: notOwned ? 0.35 : 1
                      }}
                      onError={e => e.target.style.display = 'none'} />
-                <p style={{ fontSize: '11px', margin: '4px 0 0' }}>{card.name} {copies > 0 && `x${copies}`}</p>
+                <p style={{ fontSize: 'var(--fs-2xs)', margin: '4px 0 0' }}>{card.name} {copies > 0 && `x${copies}`}</p>
                 {!isSoul && deckMode === 'rank' && (
-                  <p style={{ fontSize: '9px', margin: 0, color: '#8a5a2b' }}>{t('availLabel', { n: getAvailable(card.card_number) })}</p>
+                  <p style={{ fontSize: 'var(--fs-2xs)', margin: 0, color: '#8a5a2b' }}>{t('availLabel', { n: getAvailable(card.card_number) })}</p>
                 )}
               </div>
             )
@@ -431,11 +431,11 @@ function DeckBuilder() {
 
         {hoveredCard && (
           <div style={{
-            position: 'fixed', top: '50%', right: '320px', transform: 'translateY(-50%)',
+            position: 'fixed', top: '50%', right: 'calc(var(--panel-w-xs) + 16px)', transform: 'translateY(-50%)',
             zIndex: 1000, pointerEvents: 'none',
             boxShadow: '0 8px 24px rgba(0,0,0,0.4)', borderRadius: '10px'
           }}>
-            <img src={hoveredCard.image_url} alt={hoveredCard.name} style={{ width: '320px', borderRadius: '10px' }} />
+            <img src={hoveredCard.image_url} alt={hoveredCard.name} style={{ width: 'clamp(240px, 22vw, 340px)', borderRadius: '10px' }} />
           </div>
         )}
       </div>
@@ -446,19 +446,19 @@ function DeckBuilder() {
           o sticky contra o scroll real da janela. Fixed contorna isso de vez, no mesmo padrão
           já usado por AuthPanel/OnlineBadge/RankBoard. */}
       <div style={{
-        background: '#f5f5f5', borderRadius: '10px', padding: '12px',
-        position: 'fixed', top: '1rem', right: '1rem', width: '300px',
-        maxHeight: 'calc(100vh - 2rem)', overflowY: 'auto', zIndex: 50
+        background: '#f5f5f5', borderRadius: '10px', padding: 'var(--sp-md)',
+        position: 'fixed', top: '1rem', right: '1rem', width: 'var(--panel-w-xs)',
+        maxHeight: 'calc(100vh - 2rem)', overflowY: 'auto', zIndex: 50, fontSize: 'var(--fs-sm)'
       }}>
         <p><strong>{t('mainDeckLabel')}</strong> {mainDeck.length} / {MAIN_DECK_SIZE}</p>
         <p><strong>{t('soulDeckLabel')}</strong> {soulDeck.length} / {SOUL_DECK_SIZE}</p>
         <p><strong>{t('luckyPalsLabel')}</strong> {luckyCount} / {MAX_LUCKY_PALS}</p>
         <p><strong>{t('colorsLabel')}</strong> {[...chosenColors].join(', ') || t('colorsNone')}</p>
 
-        <div style={{ maxHeight: '250px', overflowY: 'auto', margin: '10px 0' }}>
+        <div style={{ maxHeight: 'clamp(200px, 26vh, 340px)', overflowY: 'auto', margin: '10px 0' }}>
           {groupedDeck.map(({ card, count }) => (
             <div key={card.card_number}
-                 style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', padding: '4px' }}>
+                 style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 'var(--fs-xs)', padding: '4px' }}>
               <span>{card.name}</span>
               <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 x{count}
@@ -466,9 +466,10 @@ function DeckBuilder() {
                   onClick={() => removeCard(card)}
                   title={t('removeCopyTitle')}
                   style={{
-                    width: '20px', height: '20px', lineHeight: '18px', padding: 0,
+                    width: 'clamp(18px, 1.6vw, 26px)', height: 'clamp(18px, 1.6vw, 26px)', padding: 0,
                     borderRadius: '50%', border: '1px solid #999', background: '#fff',
-                    cursor: 'pointer', fontWeight: 'bold'
+                    cursor: 'pointer', fontWeight: 'bold', fontSize: 'var(--fs-2xs)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center'
                   }}
                 >−</button>
               </span>
@@ -476,15 +477,15 @@ function DeckBuilder() {
           ))}
         </div>
 
-        <button onClick={handleSave} style={{ width: '100%', padding: '10px' }}>{t('saveDeck')}</button>
+        <button onClick={handleSave} style={{ width: '100%', padding: 'var(--sp-sm)', fontSize: 'var(--fs-sm)' }}>{t('saveDeck')}</button>
         {editId && (
           <Link to="/mydecks">
-            <button style={{ width: '100%', padding: '10px', marginTop: '8px', background: '#888', color: '#fff' }}>
+            <button style={{ width: '100%', padding: 'var(--sp-sm)', fontSize: 'var(--fs-sm)', marginTop: '8px', background: '#888', color: '#fff' }}>
               {t('cancelEdit')}
             </button>
           </Link>
         )}
-        {validationMsg && <p style={{ fontSize: '12px', color: 'red', marginTop: '8px' }}>{validationMsg}</p>}
+        {validationMsg && <p style={{ fontSize: 'var(--fs-xs)', color: 'red', marginTop: '8px' }}>{validationMsg}</p>}
       </div>
 
       {showImport && (
@@ -493,23 +494,23 @@ function DeckBuilder() {
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
         }} onClick={() => setShowImport(false)}>
           <div onClick={e => e.stopPropagation()} style={{
-            width: '500px', maxWidth: '90vw', background: '#fff', borderRadius: '14px',
-            padding: '20px', boxShadow: '0 20px 60px rgba(0,0,0,0.4)'
+            width: 'var(--panel-w-sm)', maxWidth: '90vw', background: '#fff', borderRadius: '14px',
+            padding: 'var(--sp-lg)', boxShadow: '0 20px 60px rgba(0,0,0,0.4)'
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-              <h3 style={{ margin: 0 }}>{t('importDeck')}</h3>
-              <button onClick={() => setShowImport(false)} style={{ padding: '4px 10px' }}>✕</button>
+              <h3 style={{ margin: 0, fontSize: 'var(--fs-lg)' }}>{t('importDeck')}</h3>
+              <button onClick={() => setShowImport(false)} style={{ padding: '4px 10px', fontSize: 'var(--fs-sm)' }}>✕</button>
             </div>
-            <p style={{ fontSize: '12px', color: '#777', marginTop: 0 }}>
+            <p style={{ fontSize: 'var(--fs-2xs)', color: '#777', marginTop: 0 }}>
               {t('pasteInstructions')}
             </p>
             <textarea
               value={importText}
               onChange={e => setImportText(e.target.value)}
               placeholder={`# Colors: Red, Blue\n4 Lamball – My First Pal (TD01-023)\n...\n10 Soul (SOUL-001)`}
-              style={{ width: '100%', height: '220px', fontFamily: 'monospace', fontSize: '12px', padding: '8px', boxSizing: 'border-box' }}
+              style={{ width: '100%', height: 'clamp(180px, 22vh, 320px)', fontFamily: 'monospace', fontSize: 'var(--fs-2xs)', padding: 'var(--sp-xs)', boxSizing: 'border-box' }}
             />
-            <button onClick={handleImportDeck} style={{ width: '100%', padding: '10px', marginTop: '10px' }}>
+            <button onClick={handleImportDeck} style={{ width: '100%', padding: 'var(--sp-sm)', fontSize: 'var(--fs-sm)', marginTop: '10px' }}>
               {t('buildDeckFromText')}
             </button>
           </div>
@@ -522,18 +523,18 @@ function DeckBuilder() {
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100
         }} onClick={() => deckMode && setShowModeModal(false)}>
           <div onClick={e => e.stopPropagation()} style={{
-            width: '460px', maxWidth: '90vw', background: '#fff', borderRadius: '14px',
-            padding: '24px', boxShadow: '0 20px 60px rgba(0,0,0,0.5)', textAlign: 'center'
+            width: 'var(--panel-w-sm)', maxWidth: '90vw', background: '#fff', borderRadius: '14px',
+            padding: 'var(--sp-xl)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)', textAlign: 'center'
           }}>
-            <h3 style={{ marginTop: 0, color: '#222' }}>{t('modeQuestion')}</h3>
+            <h3 style={{ marginTop: 0, color: '#222', fontSize: 'var(--fs-lg)' }}>{t('modeQuestion')}</h3>
             <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
-              <button onClick={() => selectMode('normal')} style={{ flex: 1, padding: '16px 10px', fontSize: '14px', background: '#fff', color: '#222', border: '1px solid #ccc', borderRadius: '8px', cursor: 'pointer' }}>
+              <button onClick={() => selectMode('normal')} style={{ flex: 1, padding: 'var(--sp-md) var(--sp-sm)', fontSize: 'var(--fs-sm)', background: '#fff', color: '#222', border: '1px solid #ccc', borderRadius: '8px', cursor: 'pointer' }}>
                 🎲 <strong>Normal</strong>
-                <p style={{ fontSize: '11px', color: '#555', margin: '6px 0 0' }}>{t('modeNormalDesc')}</p>
+                <p style={{ fontSize: 'var(--fs-2xs)', color: '#555', margin: '6px 0 0' }}>{t('modeNormalDesc')}</p>
               </button>
-              <button onClick={() => selectMode('rank')} style={{ flex: 1, padding: '16px 10px', fontSize: '14px', background: '#fff', color: '#222', border: '1px solid #ccc', borderRadius: '8px', cursor: 'pointer' }}>
+              <button onClick={() => selectMode('rank')} style={{ flex: 1, padding: 'var(--sp-md) var(--sp-sm)', fontSize: 'var(--fs-sm)', background: '#fff', color: '#222', border: '1px solid #ccc', borderRadius: '8px', cursor: 'pointer' }}>
                 🏆 <strong>Rank</strong>
-                <p style={{ fontSize: '11px', color: '#555', margin: '6px 0 0' }}>{t('modeRankDesc')}</p>
+                <p style={{ fontSize: 'var(--fs-2xs)', color: '#555', margin: '6px 0 0' }}>{t('modeRankDesc')}</p>
               </button>
             </div>
           </div>
@@ -546,15 +547,15 @@ function DeckBuilder() {
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100
         }} onClick={() => setShowRenameChoice(false)}>
           <div onClick={e => e.stopPropagation()} style={{
-            width: '420px', maxWidth: '90vw', background: '#fff', borderRadius: '14px',
-            padding: '24px', boxShadow: '0 20px 60px rgba(0,0,0,0.5)', textAlign: 'center'
+            width: 'var(--panel-w-sm)', maxWidth: '90vw', background: '#fff', borderRadius: '14px',
+            padding: 'var(--sp-xl)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)', textAlign: 'center'
           }}>
-            <h3 style={{ marginTop: 0, color: '#222' }}>{t('renameChoiceQuestion', { name: editedDeckName })}</h3>
+            <h3 style={{ marginTop: 0, color: '#222', fontSize: 'var(--fs-lg)' }}>{t('renameChoiceQuestion', { name: editedDeckName })}</h3>
             <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
-              <button onClick={handleKeepName} style={{ flex: 1, padding: '14px 10px', fontSize: '13px', background: '#3f6b3f', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
+              <button onClick={handleKeepName} style={{ flex: 1, padding: 'var(--sp-sm) var(--sp-sm)', fontSize: 'var(--fs-sm)', background: '#3f6b3f', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
                 {t('renameChoiceKeep')}
               </button>
-              <button onClick={handleChangeName} style={{ flex: 1, padding: '14px 10px', fontSize: '13px', background: '#a5541b', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
+              <button onClick={handleChangeName} style={{ flex: 1, padding: 'var(--sp-sm) var(--sp-sm)', fontSize: 'var(--fs-sm)', background: '#a5541b', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
                 {t('renameChoiceChange')}
               </button>
             </div>
@@ -568,16 +569,16 @@ function DeckBuilder() {
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100
         }} onClick={() => setShowDraftWarning(false)}>
           <div onClick={e => e.stopPropagation()} style={{
-            width: '420px', maxWidth: '90vw', background: '#fff', borderRadius: '14px',
-            padding: '24px', boxShadow: '0 20px 60px rgba(0,0,0,0.5)', textAlign: 'center'
+            width: 'var(--panel-w-sm)', maxWidth: '90vw', background: '#fff', borderRadius: '14px',
+            padding: 'var(--sp-xl)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)', textAlign: 'center'
           }}>
-            <h3 style={{ marginTop: 0, color: '#222' }}>{t('draftWarningTitle')}</h3>
-            <p style={{ fontSize: '13px', color: '#555' }}>{t('draftWarningBody', { missing: missingCount() })}</p>
+            <h3 style={{ marginTop: 0, color: '#222', fontSize: 'var(--fs-lg)' }}>{t('draftWarningTitle')}</h3>
+            <p style={{ fontSize: 'var(--fs-sm)', color: '#555' }}>{t('draftWarningBody', { missing: missingCount() })}</p>
             <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
-              <button onClick={() => { setShowDraftWarning(false); proceedToSave() }} style={{ flex: 1, padding: '14px 10px', fontSize: '13px', background: '#a5541b', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
+              <button onClick={() => { setShowDraftWarning(false); proceedToSave() }} style={{ flex: 1, padding: 'var(--sp-sm) var(--sp-sm)', fontSize: 'var(--fs-sm)', background: '#a5541b', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
                 {t('draftWarningConfirm')}
               </button>
-              <button onClick={() => setShowDraftWarning(false)} style={{ flex: 1, padding: '14px 10px', fontSize: '13px', background: '#888', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
+              <button onClick={() => setShowDraftWarning(false)} style={{ flex: 1, padding: 'var(--sp-sm) var(--sp-sm)', fontSize: 'var(--fs-sm)', background: '#888', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }}>
                 {t('draftWarningCancel')}
               </button>
             </div>

@@ -152,10 +152,12 @@ function GameBoard() {
     setSelectedPalIndex(null)
   }
 
-  const isPendingTarget = (owner, index) =>
-    !!gameState?.pendingEffect?.validTargets?.some(t => t.owner === owner && t.index === index)
+  // zone default 'basePals' — Pal é o alvo mais comum de longe, então os chamadores existentes não
+  // precisam passar nada; só quem mira Structure/Gear (ex: Lily's Strategy) passa a zone explícita.
+  const isPendingTarget = (owner, index, zone = 'basePals') =>
+    !!gameState?.pendingEffect?.validTargets?.some(t => t.owner === owner && t.index === index && (t.zone || 'basePals') === zone)
 
-  const resolveEffectTarget = (owner, index) => socket.emit('bot:resolveEffectTarget', { owner, index })
+  const resolveEffectTarget = (owner, index, zone) => socket.emit('bot:resolveEffectTarget', { owner, index, zone })
   const skipEffectTarget = () => socket.emit('bot:resolveEffectTarget', { skip: true })
 
   const activateAbility = (zone, index, actIndex = 0) => {
@@ -314,8 +316,11 @@ function GameBoard() {
 
   const { player, bot, hand, currentPhase, turnNumber, isPlayerTurn, pendingEffect, pendingBattle, log, logTotal } = gameState
   const isValidBlocker = (i) => pendingBattle?.waitingFor === 'block' && pendingBattle.validBlockers.includes(i)
+  // Se um Quick Card já jogado abriu uma escolha de alvo por baixo (ex: Dark Cannon), a mão não pode
+  // continuar oferecendo outra carta Quick clicável até essa escolha ser resolvida (senão o jogador
+  // conseguia disparar 2 Quick Cards ao mesmo tempo, um por cima do outro).
   const quickOptionFor = (cardNumber) =>
-    pendingBattle?.waitingFor === 'quick' ? pendingBattle.quickOptions.find(o => o.cardNumber === cardNumber) : null
+    !pendingEffect && pendingBattle?.waitingFor === 'quick' ? pendingBattle.quickOptions.find(o => o.cardNumber === cardNumber) : null
 
   // Selecionar um Pal em pé (clique) já É o "modo de mira" — sem estado extra. Enquanto um arraste
   // está em andamento (draggedPalIndex) ele manda em quem é o atacante; clique só assume quando não
@@ -438,7 +443,11 @@ function GameBoard() {
           <StructureGearRow structures={bot.baseStructures || []} gear={bot.baseGear || []} cardWidth="62px" cardHeight="86px"
                              onHoverCard={startHoverZoom} onHoverEnd={cancelHoverZoom}
                              onDropStructure={attackStructure} dragActive={draggedPalIndex !== null}
-                             onAttackStructure={(i) => attackStructureAt(selectedPalIndex, i)} attackActive={clickAttackReady} />
+                             onAttackStructure={(i) => attackStructureAt(selectedPalIndex, i)} attackActive={clickAttackReady}
+                             isEffectTargetStructure={(i) => isPendingTarget('bot', i, 'baseStructures')}
+                             onEffectTargetStructure={(i) => resolveEffectTarget('bot', i, 'baseStructures')}
+                             isEffectTargetGear={(i) => isPendingTarget('bot', i, 'baseGear')}
+                             onEffectTargetGear={(i) => resolveEffectTarget('bot', i, 'baseGear')} />
         </div>
       </div>
 
@@ -471,7 +480,11 @@ function GameBoard() {
           <StructureGearRow structures={player.baseStructures || []} gear={player.baseGear || []}
                              onActivateStructure={(!pendingEffect && isPlayerTurn && currentPhase === 'main') ? (i) => handleActivateClick('baseStructures', i, player.baseStructures[i].acts) : undefined}
                              onActivateGear={(!pendingEffect && isPlayerTurn && currentPhase === 'main') ? (i) => handleActivateClick('baseGear', i, player.baseGear[i].acts) : undefined}
-                             onHoverCard={startHoverZoom} onHoverEnd={cancelHoverZoom} />
+                             onHoverCard={startHoverZoom} onHoverEnd={cancelHoverZoom}
+                             isEffectTargetStructure={(i) => isPendingTarget('player', i, 'baseStructures')}
+                             onEffectTargetStructure={(i) => resolveEffectTarget('player', i, 'baseStructures')}
+                             isEffectTargetGear={(i) => isPendingTarget('player', i, 'baseGear')}
+                             onEffectTargetGear={(i) => resolveEffectTarget('player', i, 'baseGear')} />
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginTop: '6px' }}>

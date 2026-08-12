@@ -137,21 +137,21 @@ function BlackMarket({ onExit }) {
       boxSizing: 'border-box', backgroundImage: 'url(/lamp.png)', backgroundSize: 'cover', backgroundPosition: 'center'
     }}>
       <div style={{ padding: '14px 16px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2 style={{ margin: 0, fontSize: '17px', color: '#f3e2b3', textShadow: '0 1px 3px rgba(0,0,0,0.8)' }}>
+        <h2 style={{ margin: 0, fontSize: 'var(--fs-lg)', color: '#f3e2b3', textShadow: '0 1px 3px rgba(0,0,0,0.8)' }}>
           {t('blackMarketTitle')}
         </h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           {player && (
             <>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#ffcf7a', fontSize: '12px', fontWeight: 700 }}>
-                {player.gold_coins} <img src="/gold-coin.png" alt="" style={{ width: '14px' }} />
+              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#ffcf7a', fontSize: 'var(--fs-2xs)', fontWeight: 700 }}>
+                {player.gold_coins} <img src="/gold-coin.png" alt="" style={{ width: 'clamp(12px, 1.3vw, 17px)' }} />
               </span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#7ad0ff', fontSize: '12px', fontWeight: 700 }}>
-                {player.pal_fluid} <img src="/pal-fluid.png" alt="" style={{ width: '14px' }} />
+              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#7ad0ff', fontSize: 'var(--fs-2xs)', fontWeight: 700 }}>
+                {player.pal_fluid} <img src="/pal-fluid.png" alt="" style={{ width: 'clamp(12px, 1.3vw, 17px)' }} />
               </span>
             </>
           )}
-          <button onClick={onExit} style={{ fontSize: '13px', color: '#ffcf7a', background: 'none', border: 'none', cursor: 'pointer' }}>
+          <button onClick={onExit} style={{ fontSize: 'var(--fs-sm)', color: '#ffcf7a', background: 'none', border: 'none', cursor: 'pointer' }}>
             {t('exit')}
           </button>
         </div>
@@ -159,15 +159,15 @@ function BlackMarket({ onExit }) {
 
       <div style={{ padding: '0 16px 10px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
         <img src="/comerciante_ilegal.png" alt={t('blackMarketNpcAlt')}
-             style={{ width: '78px', height: '78px', objectFit: 'cover', borderRadius: '12px', border: '2px solid #c99a4e', flexShrink: 0 }} />
-        <div className="market-dark-box" style={{ flex: 1, padding: '10px 12px', color: '#f3e2b3', fontSize: '12px', lineHeight: 1.4 }}>
+             style={{ width: 'clamp(65px, 7vw, 95px)', height: 'clamp(65px, 7vw, 95px)', objectFit: 'cover', borderRadius: '12px', border: '2px solid #c99a4e', flexShrink: 0 }} />
+        <div className="market-dark-box" style={{ flex: 1, padding: 'var(--sp-xs) var(--sp-sm)', color: '#f3e2b3', fontSize: 'var(--fs-2xs)', lineHeight: 1.4 }}>
           {t('blackMarketGreeting')}
         </div>
       </div>
 
       <div style={{ padding: '0 16px 10px', display: 'flex', gap: '8px' }}>
         <button onClick={openNewListing} className="market-dark-box" style={{
-          color: '#ffcf7a', border: 'none', padding: '8px 14px', fontSize: '13px', fontWeight: 600, cursor: 'pointer'
+          color: '#ffcf7a', border: 'none', padding: 'var(--sp-xs) var(--sp-md)', fontSize: 'var(--fs-sm)', fontWeight: 600, cursor: 'pointer'
         }}>
           {t('blackMarketNewListing')}
         </button>
@@ -176,7 +176,7 @@ function BlackMarket({ onExit }) {
           className="market-dark-box"
           style={{
             color: onlyMine ? '#1a1410' : '#ffcf7a', background: onlyMine ? '#ffcf7a' : undefined,
-            border: 'none', padding: '8px 14px', fontSize: '13px', fontWeight: 600, cursor: 'pointer'
+            border: 'none', padding: 'var(--sp-xs) var(--sp-md)', fontSize: 'var(--fs-sm)', fontWeight: 600, cursor: 'pointer'
           }}>
           {t('blackMarketMyItemsFilter')}
         </button>
@@ -189,34 +189,34 @@ function BlackMarket({ onExit }) {
           value={search}
           onChange={e => setSearch(e.target.value)}
           className="market-dark-box"
-          style={{ width: '100%', boxSizing: 'border-box', padding: '8px 12px', color: '#f3e2b3', border: 'none', fontSize: '13px' }}
+          style={{ width: '100%', boxSizing: 'border-box', padding: 'var(--sp-xs) var(--sp-sm)', color: '#f3e2b3', border: 'none', fontSize: 'var(--fs-sm)' }}
         />
       </div>
 
       {buyError && (
-        <p style={{ color: '#ff8a8a', fontSize: '12px', textAlign: 'center', margin: '0 16px 8px' }}>{buyError}</p>
+        <p style={{ color: '#ff8a8a', fontSize: 'var(--fs-2xs)', textAlign: 'center', margin: '0 16px 8px' }}>{buyError}</p>
       )}
 
-      <div className="market-dark-box" style={{ flex: 1, margin: '0 16px 16px', padding: '10px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      <div className="market-dark-box" style={{ flex: 1, margin: '0 16px 16px', padding: 'var(--sp-sm)', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {filteredListings.length === 0 && (
-          <p style={{ color: '#d9c4a3', fontSize: '12px', textAlign: 'center', marginTop: '20px' }}>{t('blackMarketEmpty')}</p>
+          <p style={{ color: '#d9c4a3', fontSize: 'var(--fs-2xs)', textAlign: 'center', marginTop: '20px' }}>{t('blackMarketEmpty')}</p>
         )}
         {filteredListings.map(l => (
           <div key={l.id} style={{
             display: 'flex', flexDirection: 'column', gap: '6px', background: 'rgba(255,255,255,0.06)',
-            border: '1px solid #c99a4e', borderRadius: '10px', padding: '8px'
+            border: '1px solid #c99a4e', borderRadius: '10px', padding: 'var(--sp-xs)'
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <img src={l.card.image_url} alt={l.card.name}
-                   style={{ width: '40px', height: '56px', objectFit: 'cover', borderRadius: '4px' }}
+                   style={{ width: 'clamp(34px, 3.7vw, 48px)', height: 'clamp(48px, 5.2vw, 68px)', objectFit: 'cover', borderRadius: '4px' }}
                    onError={e => { e.target.style.display = 'none' }} />
               <div style={{ flex: 1, color: '#f3e2b3' }}>
-                <p style={{ margin: 0, fontSize: '12px', fontWeight: 600 }}>{l.card.name}</p>
+                <p style={{ margin: 0, fontSize: 'var(--fs-2xs)', fontWeight: 600 }}>{l.card.name}</p>
                 <button
                   onClick={() => setZoomCard(l.card)}
                   title={t('blackMarketViewCard')}
                   style={{
-                    marginTop: '2px', padding: '1px 8px', borderRadius: '999px', fontSize: '10px', fontWeight: 700,
+                    marginTop: '2px', padding: '1px 8px', borderRadius: '999px', fontSize: 'var(--fs-2xs)', fontWeight: 700,
                     background: 'rgba(201,154,78,0.25)', border: '1px solid #c99a4e', color: '#d9c4a3', cursor: 'pointer'
                   }}>
                   {l.card.rarity}
@@ -224,13 +224,13 @@ function BlackMarket({ onExit }) {
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '3px' }}>
                 {l.priceGold > 0 && (
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#ffcf7a', fontWeight: 700, fontSize: '12px' }}>
-                    {l.priceGold} <img src="/gold-coin.png" alt="" style={{ width: '13px' }} />
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#ffcf7a', fontWeight: 700, fontSize: 'var(--fs-2xs)' }}>
+                    {l.priceGold} <img src="/gold-coin.png" alt="" style={{ width: 'clamp(11px, 1.2vw, 16px)' }} />
                   </span>
                 )}
                 {l.priceFluid > 0 && (
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#7ad0ff', fontWeight: 700, fontSize: '12px' }}>
-                    {l.priceFluid} <img src="/pal-fluid.png" alt="" style={{ width: '13px' }} />
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#7ad0ff', fontWeight: 700, fontSize: 'var(--fs-2xs)' }}>
+                    {l.priceFluid} <img src="/pal-fluid.png" alt="" style={{ width: 'clamp(11px, 1.2vw, 16px)' }} />
                   </span>
                 )}
               </div>
@@ -240,14 +240,14 @@ function BlackMarket({ onExit }) {
                 <span
                   onClick={() => { setDeleteError(''); setListingToDelete(l) }}
                   title={t('blackMarketDeleteConfirm', { name: l.card.name })}
-                  style={{ cursor: 'pointer', fontSize: '15px' }}
+                  style={{ cursor: 'pointer', fontSize: 'var(--fs-md)' }}
                 >🗑️</span>
               ) : (
                 <button
                   onClick={() => buyListing(l)}
                   disabled={!canBuy(l) || buyingId === l.id}
                   style={{
-                    padding: '5px 12px', borderRadius: '8px', border: 'none', fontSize: '11px', fontWeight: 700,
+                    padding: 'var(--sp-2xs) var(--sp-sm)', borderRadius: '8px', border: 'none', fontSize: 'var(--fs-2xs)', fontWeight: 700,
                     background: '#34c759', color: '#fff', cursor: (!canBuy(l) || buyingId === l.id) ? 'default' : 'pointer',
                     opacity: (!canBuy(l) || buyingId === l.id) ? 0.5 : 1
                   }}>
@@ -266,14 +266,14 @@ function BlackMarket({ onExit }) {
         }}>
           <div onClick={e => e.stopPropagation()} style={{
             width: '85%', maxHeight: '80%', background: '#1a1410', border: '2px solid #c99a4e', borderRadius: '14px',
-            padding: '16px', overflowY: 'auto', color: '#f3e2b3', boxSizing: 'border-box'
+            padding: 'var(--sp-md)', overflowY: 'auto', color: '#f3e2b3', boxSizing: 'border-box'
           }}>
-            <h3 style={{ margin: '0 0 10px', fontSize: '15px' }}>{t('blackMarketChooseCardTitle')}</h3>
+            <h3 style={{ margin: '0 0 10px', fontSize: 'var(--fs-md)' }}>{t('blackMarketChooseCardTitle')}</h3>
 
             {eligibleCards.length === 0 ? (
-              <p style={{ fontSize: '12px', color: '#d9c4a3' }}>{t('blackMarketNoEligibleCards')}</p>
+              <p style={{ fontSize: 'var(--fs-2xs)', color: '#d9c4a3' }}>{t('blackMarketNoEligibleCards')}</p>
             ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(70px, 1fr))', gap: '8px', marginBottom: '12px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(clamp(58px, 6.3vw, 85px), 1fr))', gap: '8px', marginBottom: '12px' }}>
                 {eligibleCards.map(c => (
                   <div key={c.card_number} onClick={() => setSelectedCard(c)}
                        onMouseEnter={() => setHoveredCard(c)}
@@ -284,7 +284,7 @@ function BlackMarket({ onExit }) {
                        }}>
                     <img src={c.image_url} alt={c.name} style={{ width: '100%', borderRadius: '4px' }}
                          onError={e => { e.target.style.display = 'none' }} />
-                    <p style={{ fontSize: '9px', margin: '4px 0 0' }}>{c.name}</p>
+                    <p style={{ fontSize: 'var(--fs-2xs)', margin: '4px 0 0' }}>{c.name}</p>
                   </div>
                 ))}
               </div>
@@ -292,20 +292,20 @@ function BlackMarket({ onExit }) {
 
             {selectedCard && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <label style={{ fontSize: '12px' }}>{t('blackMarketPriceGoldLabel')}</label>
+                <label style={{ fontSize: 'var(--fs-2xs)' }}>{t('blackMarketPriceGoldLabel')}</label>
                 <input
                   type="number" min="0" value={priceGold}
                   onChange={e => setPriceGold(e.target.value)}
-                  style={{ padding: '8px', borderRadius: '8px', border: 'none', fontSize: '13px' }}
+                  style={{ padding: 'var(--sp-xs)', borderRadius: '8px', border: 'none', fontSize: 'var(--fs-sm)' }}
                 />
-                <label style={{ fontSize: '12px' }}>{t('blackMarketPriceFluidLabel')}</label>
+                <label style={{ fontSize: 'var(--fs-2xs)' }}>{t('blackMarketPriceFluidLabel')}</label>
                 <input
                   type="number" min="0" value={priceFluid}
                   onChange={e => setPriceFluid(e.target.value)}
-                  style={{ padding: '8px', borderRadius: '8px', border: 'none', fontSize: '13px' }}
+                  style={{ padding: 'var(--sp-xs)', borderRadius: '8px', border: 'none', fontSize: 'var(--fs-sm)' }}
                 />
                 <button onClick={submitListing} disabled={submitting} style={{
-                  padding: '10px', borderRadius: '8px', border: 'none', background: '#a5541b', color: '#fff3d6',
+                  padding: 'var(--sp-sm)', fontSize: 'var(--fs-sm)', borderRadius: '8px', border: 'none', background: '#a5541b', color: '#fff3d6',
                   fontWeight: 700, cursor: submitting ? 'default' : 'pointer', opacity: submitting ? 0.6 : 1
                 }}>
                   {submitting ? t('blackMarketListing') : t('blackMarketListButton')}
@@ -313,7 +313,7 @@ function BlackMarket({ onExit }) {
               </div>
             )}
 
-            {formError && <p style={{ color: '#ff8a8a', fontSize: '12px', marginTop: '8px' }}>{formError}</p>}
+            {formError && <p style={{ color: '#ff8a8a', fontSize: 'var(--fs-2xs)', marginTop: '8px' }}>{formError}</p>}
           </div>
 
           {hoveredCard && (
@@ -322,8 +322,8 @@ function BlackMarket({ onExit }) {
               zIndex: 1000, pointerEvents: 'none', textAlign: 'center'
             }}>
               <img src={hoveredCard.image_url} alt={hoveredCard.name}
-                   style={{ width: '220px', borderRadius: '10px', border: '3px solid #c99a4e', boxShadow: '0 8px 24px rgba(0,0,0,0.6)' }} />
-              <p style={{ marginTop: '8px', color: '#f3e2b3', fontSize: '13px', textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>{hoveredCard.name}</p>
+                   style={{ width: 'clamp(170px, 18vw, 260px)', borderRadius: '10px', border: '3px solid #c99a4e', boxShadow: '0 8px 24px rgba(0,0,0,0.6)' }} />
+              <p style={{ marginTop: '8px', color: '#f3e2b3', fontSize: 'var(--fs-sm)', textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>{hoveredCard.name}</p>
             </div>
           )}
         </div>
@@ -336,17 +336,17 @@ function BlackMarket({ onExit }) {
         }}>
           <div onClick={e => e.stopPropagation()} style={{
             background: '#1a1410', border: '2px solid #c99a4e', borderRadius: '14px',
-            padding: '20px', maxWidth: '80%', textAlign: 'center', color: '#f3e2b3'
+            padding: 'var(--sp-lg)', maxWidth: '80%', textAlign: 'center', color: '#f3e2b3'
           }}>
-            <p style={{ fontSize: '13px', marginBottom: deleteError ? '8px' : '16px' }}>
+            <p style={{ fontSize: 'var(--fs-sm)', marginBottom: deleteError ? '8px' : '16px' }}>
               {t('blackMarketDeleteConfirm', { name: listingToDelete.card.name })}
             </p>
-            {deleteError && <p style={{ color: '#ff8a8a', fontSize: '12px', marginBottom: '12px' }}>{deleteError}</p>}
+            {deleteError && <p style={{ color: '#ff8a8a', fontSize: 'var(--fs-2xs)', marginBottom: '12px' }}>{deleteError}</p>}
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
-              <button onClick={confirmDeleteListing} style={{ padding: '8px 18px', borderRadius: '8px', border: 'none', background: '#a5541b', color: '#fff3d6', fontWeight: 700, cursor: 'pointer' }}>
+              <button onClick={confirmDeleteListing} style={{ padding: 'var(--sp-xs) var(--sp-lg)', fontSize: 'var(--fs-sm)', borderRadius: '8px', border: 'none', background: '#a5541b', color: '#fff3d6', fontWeight: 700, cursor: 'pointer' }}>
                 {t('blackMarketDeleteYes')}
               </button>
-              <button onClick={() => setListingToDelete(null)} style={{ padding: '8px 18px', borderRadius: '8px', border: 'none', background: '#555', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>
+              <button onClick={() => setListingToDelete(null)} style={{ padding: 'var(--sp-xs) var(--sp-lg)', fontSize: 'var(--fs-sm)', borderRadius: '8px', border: 'none', background: '#555', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>
                 {t('blackMarketDeleteNo')}
               </button>
             </div>
@@ -363,8 +363,8 @@ function BlackMarket({ onExit }) {
             <img src={zoomCard.image_url} alt={zoomCard.name}
                  style={{ maxWidth: '80vw', maxHeight: '70vh', borderRadius: '14px', border: '4px solid #c99a4e', boxShadow: '0 12px 36px rgba(0,0,0,0.6)' }}
                  onError={e => { e.target.style.display = 'none' }} />
-            <p style={{ marginTop: '10px', color: '#f3e2b3', fontSize: '15px', textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>{zoomCard.name}</p>
-            <button onClick={() => setZoomCard(null)} style={{ marginTop: '8px', padding: '8px 18px', borderRadius: '8px', border: 'none', background: '#a5541b', color: '#fff3d6', fontWeight: 700, cursor: 'pointer' }}>
+            <p style={{ marginTop: '10px', color: '#f3e2b3', fontSize: 'var(--fs-lg)', textShadow: '0 2px 4px rgba(0,0,0,0.8)' }}>{zoomCard.name}</p>
+            <button onClick={() => setZoomCard(null)} style={{ marginTop: '8px', padding: 'var(--sp-xs) var(--sp-lg)', fontSize: 'var(--fs-sm)', borderRadius: '8px', border: 'none', background: '#a5541b', color: '#fff3d6', fontWeight: 700, cursor: 'pointer' }}>
               {t('close')}
             </button>
           </div>

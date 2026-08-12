@@ -14,15 +14,15 @@ function CardPicker({ onSelect, onClose, ownedPals, selectedNumbers, requiredKey
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={onClose}>
       <div onClick={e => e.stopPropagation()} style={{
-        background: '#fff', borderRadius: '14px', width: '520px', maxWidth: '90vw', maxHeight: '80vh',
+        background: '#fff', borderRadius: '14px', width: 'var(--panel-w-sm)', maxWidth: '90vw', maxHeight: '80vh',
         display: 'flex', flexDirection: 'column', overflow: 'hidden'
       }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px 8px', flexShrink: 0 }}>
-          <h3 style={{ margin: 0 }}>{t('choosePalKeywordsTitle')}</h3>
-          <button onClick={onClose} title={t('close')} style={{ background: 'none', border: 'none', fontSize: '20px', lineHeight: 1, color: '#666', cursor: 'pointer', padding: '4px' }}>✕</button>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 'var(--sp-md) var(--sp-lg) var(--sp-xs)', flexShrink: 0 }}>
+          <h3 style={{ margin: 0, fontSize: 'var(--fs-lg)' }}>{t('choosePalKeywordsTitle')}</h3>
+          <button onClick={onClose} title={t('close')} style={{ background: 'none', border: 'none', fontSize: 'var(--fs-lg)', lineHeight: 1, color: '#666', cursor: 'pointer', padding: '4px' }}>✕</button>
         </div>
         <div style={{ padding: '0 20px 20px', overflowY: 'auto' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: '10px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(clamp(85px, 9vw, 120px), 1fr))', gap: 'var(--sp-sm)' }}>
             {filtered.map(card => {
               const already = selectedNumbers.includes(card.card_number)
               return (
@@ -32,13 +32,13 @@ function CardPicker({ onSelect, onClose, ownedPals, selectedNumbers, requiredKey
                     <img src={card.image_url} alt={card.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                          onError={e => { e.target.style.visibility = 'hidden' }} />
                   </div>
-                  <p style={{ fontSize: '10px', margin: '4px 0 0', fontWeight: 600 }}>{card.name}</p>
-                  <p style={{ fontSize: '9px', margin: 0, color: '#777' }}>{(card.workKeywords || []).join(', ') || '—'}</p>
+                  <p style={{ fontSize: 'var(--fs-2xs)', margin: '4px 0 0', fontWeight: 600 }}>{card.name}</p>
+                  <p style={{ fontSize: 'var(--fs-2xs)', margin: 0, color: '#777' }}>{(card.workKeywords || []).join(', ') || '—'}</p>
                 </div>
               )
             })}
           </div>
-          {filtered.length === 0 && <p style={{ color: '#999' }}>{t('noPalsWithSkill')}</p>}
+          {filtered.length === 0 && <p style={{ color: '#999', fontSize: 'var(--fs-sm)' }}>{t('noPalsWithSkill')}</p>}
         </div>
       </div>
     </div>
@@ -215,7 +215,7 @@ function Farming({ onClose } = {}) {
       boxSizing: 'border-box', overflow: 'auto'
     }}>
       <div style={{
-        width: 'min(360px, 92vw)', height: 'min(720px, 92vh)', background: '#000', borderRadius: '36px',
+        width: 'min(420px, 92vw)', height: 'min(840px, 92vh)', background: '#000', borderRadius: '36px',
         padding: '10px', boxShadow: '0 20px 60px rgba(0,0,0,0.6)', position: 'relative', flexShrink: 0
       }}>
         <div style={{
@@ -228,17 +228,17 @@ function Farming({ onClose } = {}) {
           display: 'flex', flexDirection: 'column'
         }}>
           <div style={{ padding: '14px 16px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ margin: 0, fontSize: '20px', color: '#3a2410', textShadow: '0 1px 2px rgba(255,255,255,0.5)' }}>🌱 Farming</h2>
+            <h2 style={{ margin: 0, fontSize: 'var(--fs-lg)', color: '#3a2410', textShadow: '0 1px 2px rgba(255,255,255,0.5)' }}>🌱 Farming</h2>
             {onClose
-              ? <button onClick={onClose} style={{ fontSize: '13px', color: '#5c3418', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, textShadow: '0 1px 2px rgba(255,255,255,0.5)' }}>{t('exit')}</button>
-              : <Link to="/" style={{ fontSize: '13px', color: '#5c3418', textDecoration: 'none', fontWeight: 600, textShadow: '0 1px 2px rgba(255,255,255,0.5)' }}>{t('exit')}</Link>}
+              ? <button onClick={onClose} style={{ fontSize: 'var(--fs-sm)', color: '#5c3418', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, textShadow: '0 1px 2px rgba(255,255,255,0.5)' }}>{t('exit')}</button>
+              : <Link to="/" style={{ fontSize: 'var(--fs-sm)', color: '#5c3418', textDecoration: 'none', fontWeight: 600, textShadow: '0 1px 2px rgba(255,255,255,0.5)' }}>{t('exit')}</Link>}
           </div>
           <div style={{ padding: '0 16px 16px', overflowY: 'auto', flex: 1, textAlign: 'center' }}>
-      <div style={{ background: 'rgba(255,255,255,0.85)', borderRadius: '16px', padding: '14px', marginBottom: '16px' }}>
-      <p style={{ color: '#777' }}>{t('farmingIntro')}</p>
+      <div style={{ background: 'rgba(255,255,255,0.85)', borderRadius: '16px', padding: 'var(--sp-md)', marginBottom: '16px' }}>
+      <p style={{ color: '#777', fontSize: 'var(--fs-sm)' }}>{t('farmingIntro')}</p>
 
       {player && (
-        <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', marginBottom: '20px', fontSize: '14px' }}>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 'var(--sp-lg)', marginBottom: '20px', fontSize: 'var(--fs-sm)' }}>
           <span>{t('wheatLabel')} <strong>{player.wheat}</strong></span>
           <span>{t('lettuceLabel')} <strong>{player.lettuce}</strong></span>
           <span>{t('tomatoLabel')} <strong>{player.tomato}</strong></span>
@@ -249,24 +249,24 @@ function Farming({ onClose } = {}) {
         <>
           <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', flexWrap: 'wrap', margin: '20px 0' }}>
             {selected.map(card => (
-              <div key={card.card_number} onClick={() => removePal(card.card_number)} style={{ cursor: 'pointer', width: '90px' }} title={t('clickToRemove')}>
+              <div key={card.card_number} onClick={() => removePal(card.card_number)} style={{ cursor: 'pointer', width: 'clamp(75px, 8vw, 110px)' }} title={t('clickToRemove')}>
                 <img src={card.image_url} alt={card.name} style={{ width: '100%', borderRadius: '8px' }} />
-                <p style={{ fontSize: '9px', margin: '2px 0 0' }}>{(card.workKeywords || []).join(', ')}</p>
+                <p style={{ fontSize: 'var(--fs-2xs)', margin: '2px 0 0' }}>{(card.workKeywords || []).join(', ')}</p>
               </div>
             ))}
             {selected.length < 3 && (
-              <div onClick={() => setPicking(true)} style={{ cursor: 'pointer', width: '90px', height: '126px', border: '2px dashed #ccc', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999' }}>
+              <div onClick={() => setPicking(true)} style={{ cursor: 'pointer', width: 'clamp(75px, 8vw, 110px)', height: 'clamp(105px, 11.5vw, 155px)', border: '2px dashed #ccc', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', fontSize: 'var(--fs-2xs)' }}>
                 {t('addPalPlaceholder')}
               </div>
             )}
           </div>
 
-          <p style={{ fontSize: '12px' }}>
+          <p style={{ fontSize: 'var(--fs-2xs)' }}>
             {t('keywordStatus', { farming: hasFarming ? '✅' : '❌', harvesting: hasHarvesting ? '✅' : '❌', collecting: hasCollecting ? '✅' : '❌' })}
           </p>
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', margin: '10px 0' }}>
-            <span style={{ fontSize: '13px', color: hasCollecting ? '#3a2410' : '#aaa' }}>{t('repeatCheckbox')}</span>
+            <span style={{ fontSize: 'var(--fs-sm)', color: hasCollecting ? '#3a2410' : '#aaa' }}>{t('repeatCheckbox')}</span>
             <button
               type="button"
               onClick={() => setRepeatWanted(v => !v)}
@@ -286,17 +286,17 @@ function Farming({ onClose } = {}) {
             </button>
           </div>
 
-          <button onClick={startFarming} disabled={!canStart} style={{ padding: '12px 30px', opacity: canStart ? 1 : 0.5 }}>
+          <button onClick={startFarming} disabled={!canStart} style={{ padding: 'var(--sp-sm) var(--sp-xl)', fontSize: 'var(--fs-sm)', opacity: canStart ? 1 : 0.5 }}>
             {t('startFarming')}
           </button>
-          {errorMsg && <p style={{ color: 'red', fontSize: '12px', marginTop: '8px' }}>{errorMsg}</p>}
+          {errorMsg && <p style={{ color: 'red', fontSize: 'var(--fs-2xs)', marginTop: '8px' }}>{errorMsg}</p>}
         </>
       )}
 
       {status && status.active && (
         <div style={{ marginTop: '20px' }}>
           <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginBottom: '12px' }}>
-            {status.pals.map(p => <img key={p.card_number} src={p.image_url} alt="" style={{ width: '70px', borderRadius: '6px' }} />)}
+            {status.pals.map(p => <img key={p.card_number} src={p.image_url} alt="" style={{ width: 'clamp(60px, 6.5vw, 90px)', borderRadius: '6px' }} />)}
           </div>
 
           {status.repeat ? (
@@ -304,17 +304,17 @@ function Farming({ onClose } = {}) {
               <h3>{t('autoHarvesting')}</h3>
               <p>{t('harvestsDone', { n: status.harvestCount })}</p>
               <p>{t('nextIn', { time: formatCountdown(farmRemainingMs) })}</p>
-              <button onClick={stopRepeat} style={{ padding: '8px 16px', fontSize: '12px' }}>{t('stopRepeat')}</button>
+              <button onClick={stopRepeat} style={{ padding: 'var(--sp-xs) var(--sp-md)', fontSize: 'var(--fs-2xs)' }}>{t('stopRepeat')}</button>
             </>
           ) : status.isReady ? (
             <>
               <h3>{t('readyToHarvest')}</h3>
-              <button onClick={claim} style={{ padding: '12px 30px' }}>{t('harvest')}</button>
+              <button onClick={claim} style={{ padding: 'var(--sp-sm) var(--sp-xl)', fontSize: 'var(--fs-sm)' }}>{t('harvest')}</button>
             </>
           ) : (
             <>
               <h3>{t('growing')}</h3>
-              <p style={{ fontSize: '18px', fontWeight: 'bold' }}>{formatCountdown(farmRemainingMs)}</p>
+              <p style={{ fontSize: 'var(--fs-lg)', fontWeight: 'bold' }}>{formatCountdown(farmRemainingMs)}</p>
               <div style={{ width: '100%', maxWidth: '400px', margin: '10px auto', background: '#eee', borderRadius: '999px', height: '12px', overflow: 'hidden' }}>
                 <div style={{
                   width: `${Math.min(100, (1 - (farmRemainingMs ?? status.totalMs) / status.totalMs) * 100)}%`,
@@ -328,38 +328,38 @@ function Farming({ onClose } = {}) {
       </div>
 
       <div style={{
-        marginTop: '24px', borderRadius: '16px', padding: '16px',
+        marginTop: '24px', borderRadius: '16px', padding: 'var(--sp-lg)',
         backgroundImage: 'url(/fire.png)', backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat',
         borderTop: '3px solid #2b160a'
       }}>
-        <div style={{ background: 'rgba(255,255,255,0.88)', borderRadius: '12px', padding: '14px' }}>
+        <div style={{ background: 'rgba(255,255,255,0.88)', borderRadius: '12px', padding: 'var(--sp-md)' }}>
         <h3 style={{ marginTop: 0 }}>{t('ovenTitle')}</h3>
 
         {ovenStatus && ovenStatus.active ? (
           <div>
             <div style={{ marginBottom: '10px' }}>
               {ovenStatus.kindlingPal && (
-                <img src={ovenStatus.kindlingPal.image_url} alt={ovenStatus.kindlingPal.name} style={{ width: '60px', borderRadius: '6px' }} />
+                <img src={ovenStatus.kindlingPal.image_url} alt={ovenStatus.kindlingPal.name} style={{ width: 'clamp(50px, 5.5vw, 75px)', borderRadius: '6px' }} />
               )}
             </div>
             <div style={{ position: 'relative', display: 'inline-block' }}>
-              <img src={ovenStatus.type === 'special_cake' ? '/Special_Cake_icon.webp' : '/Cake_icon.webp'} alt="" style={{ width: '50px' }} />
+              <img src={ovenStatus.type === 'special_cake' ? '/Special_Cake_icon.webp' : '/Cake_icon.webp'} alt="" style={{ width: 'clamp(42px, 4.5vw, 62px)' }} />
               {ovenStatus.quantity > 1 && (
                 <span style={{
                   position: 'absolute', bottom: '-4px', right: '-10px', background: '#3a2410', color: '#fff',
-                  fontSize: '11px', fontWeight: 700, borderRadius: '10px', padding: '1px 6px'
+                  fontSize: 'var(--fs-2xs)', fontWeight: 700, borderRadius: '10px', padding: '1px 6px'
                 }}>{t('bakeQuantityTimes', { qty: ovenStatus.quantity })}</span>
               )}
             </div>
             {ovenStatus.isReady ? (
               <>
                 <h4 style={{ margin: '8px 0' }}>{t('ovenReady')}</h4>
-                <button onClick={claimOven} style={{ padding: '10px 24px' }}>{t('takeFromOven')}</button>
+                <button onClick={claimOven} style={{ padding: 'var(--sp-xs) var(--sp-lg)', fontSize: 'var(--fs-sm)' }}>{t('takeFromOven')}</button>
               </>
             ) : (
               <>
                 <h4 style={{ margin: '8px 0' }}>{t('baking')}</h4>
-                <p style={{ fontSize: '16px', fontWeight: 'bold' }}>{formatCountdown(ovenRemainingMs)}</p>
+                <p style={{ fontSize: 'var(--fs-md)', fontWeight: 'bold' }}>{formatCountdown(ovenRemainingMs)}</p>
               </>
             )}
           </div>
@@ -368,11 +368,11 @@ function Farming({ onClose } = {}) {
             <div style={{ marginBottom: '16px' }}>
               {kindlingPal ? (
                 <div onClick={() => setPickingKindling(true)} style={{ cursor: 'pointer', display: 'inline-block' }} title={t('clickToSwap')}>
-                  <img src={kindlingPal.image_url} alt={kindlingPal.name} style={{ width: '60px', borderRadius: '6px' }} />
-                  <p style={{ fontSize: '10px', margin: '2px 0 0' }}>{t('kindlingSuffix', { name: kindlingPal.name })}</p>
+                  <img src={kindlingPal.image_url} alt={kindlingPal.name} style={{ width: 'clamp(50px, 5.5vw, 75px)', borderRadius: '6px' }} />
+                  <p style={{ fontSize: 'var(--fs-2xs)', margin: '2px 0 0' }}>{t('kindlingSuffix', { name: kindlingPal.name })}</p>
                 </div>
               ) : (
-                <div onClick={() => setPickingKindling(true)} style={{ cursor: 'pointer', width: '60px', height: '84px', border: '2px dashed #ccc', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', margin: '0 auto', fontSize: '10px', textAlign: 'center' }}>
+                <div onClick={() => setPickingKindling(true)} style={{ cursor: 'pointer', width: 'clamp(50px, 5.5vw, 75px)', height: 'clamp(70px, 7.5vw, 105px)', border: '2px dashed #ccc', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', margin: '0 auto', fontSize: 'var(--fs-2xs)', textAlign: 'center' }}>
                   {t('addKindlingPlaceholder')}
                 </div>
               )}
@@ -387,23 +387,23 @@ function Farming({ onClose } = {}) {
                 const amount = OVEN_RECIPE_AMOUNTS[type]
                 return (
                   <div key={type} style={{ textAlign: 'center' }}>
-                    <img src={img} alt={alt} style={{ width: '50px' }} />
-                    <p style={{ fontSize: '12px' }}>{t(ingredientsKey, { qty })}</p>
+                    <img src={img} alt={alt} style={{ width: 'clamp(42px, 4.5vw, 62px)' }} />
+                    <p style={{ fontSize: 'var(--fs-2xs)' }}>{t(ingredientsKey, { qty })}</p>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginBottom: '6px' }}>
                       <button type="button" onClick={() => changeBakeQty(type, -1)} disabled={qty <= 1}
-                              style={{ width: '26px', height: '26px', padding: 0, fontSize: '14px' }}>−</button>
-                      <strong style={{ fontSize: '14px', minWidth: '18px' }}>{qty}</strong>
+                              style={{ width: 'clamp(24px, 2.4vw, 32px)', height: 'clamp(24px, 2.4vw, 32px)', padding: 0, fontSize: 'var(--fs-sm)' }}>−</button>
+                      <strong style={{ fontSize: 'var(--fs-sm)', minWidth: '18px' }}>{qty}</strong>
                       <button type="button" onClick={() => changeBakeQty(type, 1)} disabled={qty >= maxQty}
-                              style={{ width: '26px', height: '26px', padding: 0, fontSize: '14px' }}>+</button>
+                              style={{ width: 'clamp(24px, 2.4vw, 32px)', height: 'clamp(24px, 2.4vw, 32px)', padding: 0, fontSize: 'var(--fs-sm)' }}>+</button>
                     </div>
-                    <button onClick={() => bake(type)} disabled={!player || !kindlingPal || player.wheat < amount * qty || player.lettuce < amount * qty || player.tomato < amount * qty}>
+                    <button onClick={() => bake(type)} disabled={!player || !kindlingPal || player.wheat < amount * qty || player.lettuce < amount * qty || player.tomato < amount * qty} style={{ fontSize: 'var(--fs-sm)' }}>
                       {t(bakeKey)}
                     </button>
                   </div>
                 )
               })}
             </div>
-            {ovenError && <p style={{ color: 'red', fontSize: '12px', marginTop: '8px' }}>{ovenError}</p>}
+            {ovenError && <p style={{ color: 'red', fontSize: 'var(--fs-2xs)', marginTop: '8px' }}>{ovenError}</p>}
           </>
         )}
         </div>

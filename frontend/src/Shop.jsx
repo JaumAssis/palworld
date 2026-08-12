@@ -89,7 +89,7 @@ function Shop({ onClose } = {}) {
       boxSizing: 'border-box', overflow: 'auto'
     }}>
       <div style={{
-        width: 'min(360px, 92vw)', height: 'min(720px, 92vh)', background: '#000', borderRadius: '36px',
+        width: 'min(420px, 92vw)', height: 'min(840px, 92vh)', background: '#000', borderRadius: '36px',
         padding: '10px', boxShadow: '0 20px 60px rgba(0,0,0,0.6)', position: 'relative', flexShrink: 0,
         perspective: '1200px'
       }}>
@@ -106,28 +106,28 @@ function Shop({ onClose } = {}) {
           ) : (
           <>
           <div style={{ padding: '14px 16px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ margin: 0, fontSize: '20px' }}>{t('shopTitle')}</h2>
+            <h2 style={{ margin: 0, fontSize: 'var(--fs-lg)' }}>{t('shopTitle')}</h2>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <button className="shop-flag-button" type="button" onClick={toggleMarket}>🏴‍☠️</button>
               {onClose
-                ? <button onClick={onClose} style={{ fontSize: '13px', color: '#007aff', background: 'none', border: 'none', cursor: 'pointer' }}>{t('exit')}</button>
-                : <Link to="/" style={{ fontSize: '13px', color: '#007aff', textDecoration: 'none' }}>{t('exit')}</Link>}
+                ? <button onClick={onClose} style={{ fontSize: 'var(--fs-sm)', color: '#007aff', background: 'none', border: 'none', cursor: 'pointer' }}>{t('exit')}</button>
+                : <Link to="/" style={{ fontSize: 'var(--fs-sm)', color: '#007aff', textDecoration: 'none' }}>{t('exit')}</Link>}
             </div>
           </div>
 
           {player && (
             <div style={{ display: 'flex', gap: '10px', padding: '0 16px 12px', alignItems: 'center' }}>
-              <div style={{ background: '#fff', borderRadius: '10px', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-                <img src="/gold-coin.png" alt="Gold" style={{ width: '18px', height: '18px' }} />
-                <strong style={{ fontSize: '14px' }}>{player.gold_coins}</strong>
+              <div style={{ background: '#fff', borderRadius: '10px', padding: 'var(--sp-xs) var(--sp-md)', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+                <img src="/gold-coin.png" alt="Gold" style={{ width: 'clamp(16px, 1.7vw, 22px)', height: 'clamp(16px, 1.7vw, 22px)' }} />
+                <strong style={{ fontSize: 'var(--fs-sm)' }}>{player.gold_coins}</strong>
               </div>
-              <div style={{ background: '#fff', borderRadius: '10px', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
-                <img src="/pal-fluid.png" alt={t('palFluidAlt')} style={{ width: '18px', height: '18px' }} />
-                <strong style={{ fontSize: '14px' }}>{player.pal_fluid}</strong>
+              <div style={{ background: '#fff', borderRadius: '10px', padding: 'var(--sp-xs) var(--sp-md)', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+                <img src="/pal-fluid.png" alt={t('palFluidAlt')} style={{ width: 'clamp(16px, 1.7vw, 22px)', height: 'clamp(16px, 1.7vw, 22px)' }} />
+                <strong style={{ fontSize: 'var(--fs-sm)' }}>{player.pal_fluid}</strong>
               </div>
               <button
                 onClick={() => setView(v => v === 'boosters' ? 'items' : 'boosters')}
-                style={{ marginLeft: 'auto', padding: '6px 12px', borderRadius: '10px', border: 'none', background: '#333', color: '#fff', fontSize: '12px', fontWeight: 600 }}>
+                style={{ marginLeft: 'auto', padding: 'var(--sp-xs) var(--sp-md)', borderRadius: '10px', border: 'none', background: '#333', color: '#fff', fontSize: 'var(--fs-2xs)', fontWeight: 600 }}>
                 {view === 'boosters' ? t('viewItems') : t('viewBoosters')}
               </button>
             </div>
@@ -140,42 +140,42 @@ function Shop({ onClose } = {}) {
                 { key: 'cake', name: 'Cake', img: '/Cake_icon.webp', desc: t('cakeDesc'), price: 15 },
                 { key: 'special_cake', name: 'Special Cake', img: '/Special_Cake_icon.webp', desc: t('specialCakeDesc'), price: 30 }
               ].map(item => (
-                <div key={item.key} style={{ background: '#fff', borderRadius: '14px', padding: '12px', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
-                  <img src={item.img} alt={item.name} style={{ width: '50px', height: '50px' }} />
+                <div key={item.key} style={{ background: '#fff', borderRadius: '14px', padding: 'var(--sp-sm)', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
+                  <img src={item.img} alt={item.name} style={{ width: 'clamp(42px, 4.5vw, 62px)', height: 'clamp(42px, 4.5vw, 62px)' }} />
                   <div style={{ flex: 1, textAlign: 'left' }}>
-                    <p style={{ margin: 0, fontWeight: 600, fontSize: '13px' }}>{item.name}</p>
-                    <p style={{ margin: 0, fontSize: '11px', color: '#777' }}>{item.desc}</p>
+                    <p style={{ margin: 0, fontWeight: 600, fontSize: 'var(--fs-sm)' }}>{item.name}</p>
+                    <p style={{ margin: 0, fontSize: 'var(--fs-2xs)', color: '#777' }}>{item.desc}</p>
                   </div>
                   <button
                     onClick={() => buyItem(item.key)}
                     disabled={!player || player.pal_fluid < item.price}
-                    style={{ padding: '8px 12px', borderRadius: '8px', border: 'none', background: '#007aff', color: '#fff', fontWeight: 600, fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    {item.price} <img src="/pal-fluid.png" alt="" style={{ width: '13px' }} />
+                    style={{ padding: 'var(--sp-xs) var(--sp-sm)', borderRadius: '8px', border: 'none', background: '#007aff', color: '#fff', fontWeight: 600, fontSize: 'var(--fs-2xs)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    {item.price} <img src="/pal-fluid.png" alt="" style={{ width: 'clamp(11px, 1.2vw, 16px)' }} />
                   </button>
                 </div>
               ))}
             </div>
           ) : (
             <>
-            <div style={{ background: '#fff', borderRadius: '16px', padding: '16px', textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
+            <div style={{ background: '#fff', borderRadius: '16px', padding: 'var(--sp-lg)', textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
               <img src="/booster-bp01.png" alt="Dawn of Palpagos Booster Pack"
-                   style={{ width: '140px', margin: '0 auto 12px', display: 'block' }} />
-              <h3 style={{ margin: '0 0 4px' }}>Dawn of Palpagos</h3>
-              <p style={{ fontSize: '12px', color: '#777', margin: '0 0 12px' }}>{t('boosterPackDesc')}</p>
+                   style={{ width: 'clamp(115px, 13vw, 170px)', margin: '0 auto 12px', display: 'block' }} />
+              <h3 style={{ margin: '0 0 4px', fontSize: 'var(--fs-md)' }}>Dawn of Palpagos</h3>
+              <p style={{ fontSize: 'var(--fs-2xs)', color: '#777', margin: '0 0 12px' }}>{t('boosterPackDesc')}</p>
 
               <button
                 onClick={buyBooster}
                 disabled={buying || !player || player.gold_coins < 100}
                 style={{
-                  width: '100%', padding: '12px', borderRadius: '10px', border: 'none',
-                  background: '#007aff', color: '#fff', fontWeight: 600, fontSize: '14px',
+                  width: '100%', padding: 'var(--sp-sm)', borderRadius: '10px', border: 'none',
+                  background: '#007aff', color: '#fff', fontWeight: 600, fontSize: 'var(--fs-sm)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
                   cursor: 'pointer', opacity: (buying || (player && player.gold_coins < 100)) ? 0.5 : 1
                 }}>
-                {buying ? t('opening') : <>{t('buyFor100')} <img src="/gold-coin.png" alt="" style={{ width: '16px' }} /></>}
+                {buying ? t('opening') : <>{t('buyFor100')} <img src="/gold-coin.png" alt="" style={{ width: 'clamp(14px, 1.5vw, 20px)' }} /></>}
               </button>
 
-              {error && <p style={{ color: 'red', fontSize: '12px', marginTop: '8px' }}>{error}</p>}
+              {error && <p style={{ color: 'red', fontSize: 'var(--fs-2xs)', marginTop: '8px' }}>{error}</p>}
             </div>
 
             {/* ---------- TRIAL DECKS ---------- */}
@@ -184,18 +184,18 @@ function Shop({ onClose } = {}) {
                 { code: 'TD01', name: 'Red・Blue', img: '/trialdeck-red-blue.png', bought: player?.bought_td01 },
                 { code: 'TD02', name: 'Green・Purple', img: '/trialdeck-green-purple.png', bought: player?.bought_td02 }
               ].map(td => (
-                <div key={td.code} style={{ flex: 1, background: '#fff', borderRadius: '14px', padding: '10px', textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
+                <div key={td.code} style={{ flex: 1, background: '#fff', borderRadius: '14px', padding: 'var(--sp-xs)', textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
                   <img src={td.img} alt={td.name} style={{ width: '100%', borderRadius: '8px', marginBottom: '8px' }} />
-                  <p style={{ fontSize: '12px', fontWeight: 600, margin: '0 0 8px' }}>{td.name}</p>
+                  <p style={{ fontSize: 'var(--fs-2xs)', fontWeight: 600, margin: '0 0 8px' }}>{td.name}</p>
                   <button
                     onClick={() => buyTrialDeck(td.code)}
                     disabled={td.bought || buyingTD === td.code || !player || player.gold_coins < 500}
                     style={{
-                      width: '100%', padding: '8px', borderRadius: '8px', border: 'none',
-                      background: td.bought ? '#ccc' : '#34c759', color: '#fff', fontWeight: 600, fontSize: '11px',
+                      width: '100%', padding: 'var(--sp-xs)', borderRadius: '8px', border: 'none',
+                      background: td.bought ? '#ccc' : '#34c759', color: '#fff', fontWeight: 600, fontSize: 'var(--fs-2xs)',
                       display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', cursor: td.bought ? 'default' : 'pointer'
                     }}>
-                    {td.bought ? t('alreadyBought') : buyingTD === td.code ? t('opening') : <>500 <img src="/gold-coin.png" alt="" style={{ width: '13px' }} /></>}
+                    {td.bought ? t('alreadyBought') : buyingTD === td.code ? t('opening') : <>500 <img src="/gold-coin.png" alt="" style={{ width: 'clamp(11px, 1.2vw, 16px)' }} /></>}
                   </button>
                 </div>
               ))}
@@ -215,19 +215,19 @@ function Shop({ onClose } = {}) {
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000
         }}>
           <div style={{
-            background: '#fff', borderRadius: '16px', padding: '24px', maxWidth: '480px', maxHeight: '85vh',
+            background: '#fff', borderRadius: '16px', padding: 'var(--sp-xl)', maxWidth: 'var(--panel-w-md)', maxHeight: '85vh',
             overflowY: 'auto', textAlign: 'center', boxSizing: 'border-box'
           }}>
-            <h3 style={{ marginTop: 0 }}>{t('cardsObtained')}</h3>
+            <h3 style={{ marginTop: 0, fontSize: 'var(--fs-lg)' }}>{t('cardsObtained')}</h3>
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center', marginBottom: '16px' }}>
               {revealedCards.map((c, i) => (
-                <div key={i} style={{ width: '80px' }}>
+                <div key={i} style={{ width: 'clamp(68px, 7.5vw, 100px)' }}>
                   <img src={c.image_url} alt={c.name} style={{ width: '100%', borderRadius: '6px' }} />
-                  <p style={{ fontSize: '10px', margin: '4px 0 0' }}>{c.rarity}</p>
+                  <p style={{ fontSize: 'var(--fs-2xs)', margin: '4px 0 0' }}>{c.rarity}</p>
                 </div>
               ))}
             </div>
-            <button onClick={() => setRevealedCards(null)} style={{ padding: '10px 24px', position: 'sticky', bottom: 0 }}>{t('close')}</button>
+            <button onClick={() => setRevealedCards(null)} style={{ padding: 'var(--sp-sm) var(--sp-lg)', fontSize: 'var(--fs-sm)', position: 'sticky', bottom: 0 }}>{t('close')}</button>
           </div>
         </div>
       )}

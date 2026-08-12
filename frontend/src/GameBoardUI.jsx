@@ -93,7 +93,10 @@ export function PalCard({ pal, width = '78px', selected = false, onClick, clicka
 
 export function StructureGearRow({
   structures, gear, cardWidth = '70px', cardHeight = '98px', onActivateStructure, onActivateGear,
-  onHoverCard, onHoverEnd, onDropStructure, dragActive, onAttackStructure, attackActive
+  onHoverCard, onHoverEnd, onDropStructure, dragActive, onAttackStructure, attackActive,
+  // Structure/Gear como alvo de um efeito pendente (ex: Lily's Strategy — "Choose 1 structure or
+  // gear, and put it into the graveyard") — mesmo contorno verde já usado nos Pals (ver isEffectTarget).
+  isEffectTargetStructure, onEffectTargetStructure, isEffectTargetGear, onEffectTargetGear
 }) {
   if (structures.length === 0 && gear.length === 0) return null
   // A arte de Structure já vem deitada no arquivo original (orientation: 'landscape') — não giramos,
@@ -110,16 +113,19 @@ export function StructureGearRow({
         // attackActive = seleção por clique (ver clickAttackReady nos tabuleiros); dragActive = arraste
         // em andamento. Os dois caminhos usam o mesmo contorno — só muda como o ataque é confirmado.
         const showAttackOutline = (isDropTarget && dragActive) || (!!onAttackStructure && attackActive)
+        const isEffectTarget = !!isEffectTargetStructure?.(i)
         return (
           <div key={'s' + i} style={{ position: 'relative', width: landscapeWidth, height: landscapeHeight }}
                onMouseEnter={() => onHoverCard && onHoverCard(s.imageUrl, s.name)}
                onMouseLeave={() => onHoverEnd && onHoverEnd()}
                onDragOver={e => isDropTarget && e.preventDefault()}
-               onDrop={() => isDropTarget && onDropStructure(i)}>
+               onDrop={() => isDropTarget && onDropStructure(i)}
+               onClick={() => isEffectTarget && onEffectTargetStructure?.(i)}>
             <img src={s.imageUrl} alt={s.name} title={s.name}
                  style={{
                    width: '100%', height: '100%', objectFit: 'cover', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
-                   outline: showAttackOutline ? '2px dashed #ffd54a' : 'none'
+                   cursor: isEffectTarget ? 'pointer' : 'default',
+                   outline: isEffectTarget ? '2px dashed #6cf25a' : (showAttackOutline ? '2px dashed #ffd54a' : 'none')
                  }} />
             {s.damageMarked > 0 && (
               <span style={{ position: 'absolute', top: '4px', right: '4px', background: 'rgba(200,0,0,0.85)', color: '#fff', fontSize: '10px', fontWeight: 700, padding: '2px 6px', borderRadius: '6px' }}>
@@ -131,15 +137,23 @@ export function StructureGearRow({
           </div>
         )
       })}
-      {gear.map((g, i) => (
-        <div key={'g' + i} style={{ position: 'relative', width: cardWidth, height: cardHeight }}
-             onMouseEnter={() => onHoverCard && onHoverCard(g.imageUrl, g.name)}
-             onMouseLeave={() => onHoverEnd && onHoverEnd()}>
-          <img src={g.imageUrl} alt={g.name} title={g.name}
-               style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.5)' }} />
-          {onActivateGear && g.acts?.length > 0 && <AbilityBadge onClick={() => onActivateGear(i)} />}
-        </div>
-      ))}
+      {gear.map((g, i) => {
+        const isEffectTarget = !!isEffectTargetGear?.(i)
+        return (
+          <div key={'g' + i} style={{ position: 'relative', width: cardWidth, height: cardHeight }}
+               onMouseEnter={() => onHoverCard && onHoverCard(g.imageUrl, g.name)}
+               onMouseLeave={() => onHoverEnd && onHoverEnd()}
+               onClick={() => isEffectTarget && onEffectTargetGear?.(i)}>
+            <img src={g.imageUrl} alt={g.name} title={g.name}
+                 style={{
+                   width: '100%', height: '100%', objectFit: 'cover', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
+                   cursor: isEffectTarget ? 'pointer' : 'default',
+                   outline: isEffectTarget ? '2px dashed #6cf25a' : 'none'
+                 }} />
+            {onActivateGear && g.acts?.length > 0 && <AbilityBadge onClick={() => onActivateGear(i)} />}
+          </div>
+        )
+      })}
     </div>
   )
 }

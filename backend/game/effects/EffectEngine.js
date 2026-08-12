@@ -272,17 +272,38 @@ function matchesFilter(instance, filter = {}) {
   return true
 }
 
+// "Choose 1 structure or gear, and put it into the graveyard." (Lily's Strategy) — a maioria dos
+// "choose" é só Pal, mas alguns miram Structure/Gear também; filter.cardTypes decide quais zonas
+// entram no pool de candidatos (ver parseClauseBodyTopLevel's TARGET_PATTERNS "structure or gear").
+function fieldPoolFor(state, cardTypes) {
+  if (!cardTypes) return state.basePals
+  const pool = []
+  if (cardTypes.includes('Pal')) pool.push(...state.basePals)
+  if (cardTypes.includes('Structure')) pool.push(...state.baseStructures)
+  if (cardTypes.includes('Gear')) pool.push(...state.baseGear)
+  return pool
+}
+
 function computeValidTargets(spec, sourceInstance, casterState, opponentState) {
   if (spec.mode === 'self' || spec.mode === 'contextPal') return [{ owner: 'caster', instance: sourceInstance }]
 
+  const cardTypes = spec.filter && spec.filter.cardTypes
   const pools = []
-  if (spec.side === 'own' || spec.side === 'any') pools.push(...casterState.basePals.map(instance => ({ owner: 'caster', instance })))
-  if (spec.side === 'opponent' || spec.side === 'any') pools.push(...opponentState.basePals.map(instance => ({ owner: 'opponent', instance })))
+  if (spec.side === 'own' || spec.side === 'any') pools.push(...fieldPoolFor(casterState, cardTypes).map(instance => ({ owner: 'caster', instance })))
+  if (spec.side === 'opponent' || spec.side === 'any') pools.push(...fieldPoolFor(opponentState, cardTypes).map(instance => ({ owner: 'opponent', instance })))
   return pools.filter(({ instance }) => matchesFilter(instance, spec.filter))
 }
 
+// Em qual das 3 zonas de campo uma instância está — {zone, array} ou null se não estiver em campo.
+function findFieldZone(state, instance) {
+  if (state.basePals.includes(instance)) return { zone: 'basePals', array: state.basePals }
+  if (state.baseStructures.includes(instance)) return { zone: 'baseStructures', array: state.baseStructures }
+  if (state.baseGear.includes(instance)) return { zone: 'baseGear', array: state.baseGear }
+  return null
+}
+
 function ownerStateOf(instance, casterState, opponentState) {
-  return casterState.basePals.includes(instance) ? casterState : opponentState
+  return findFieldZone(casterState, instance) ? casterState : opponentState
 }
 
 function randomDiscard(state) {
@@ -737,7 +758,9 @@ function absoluteTarget(turnManager, casterState, candidate) {
   const candidateIsCaster = candidate.owner === 'caster'
   const owner = candidateIsCaster === isCasterPlayer ? 'player' : 'bot'
   const stateForCandidate = owner === 'player' ? turnManager.player1 : turnManager.player2
-  return { owner, index: stateForCandidate.basePals.indexOf(candidate.instance) }
+  const found = findFieldZone(stateForCandidate, candidate.instance)
+  // zone default 'basePals' pra manter compatível com todo o resto que já manda {owner,index} sem zone.
+  return { owner, index: found ? found.array.indexOf(candidate.instance) : -1, zone: found ? found.zone : 'basePals' }
 }
 
 // ---------- Resolução de uma lista de ações (gatilho AUTO, corpo de ACT, Quick ou opção modal) ----------
@@ -1702,7 +1725,10 @@ function continuePendingEffect(turnManager, choice) {
   }
 
   const targetState = choice.owner === 'player' ? turnManager.player1 : turnManager.player2
-  const chosenInstance = targetState.basePals[choice.index]
+  // zone default 'basePals' (compatível com o formato antigo, quando alvo só podia ser Pal) — ver
+  // absoluteTarget/findFieldZone pra alvos em Structure/Gear (ex: Lily's Strategy).
+  const zone = choice.zone || 'basePals'
+  const chosenInstance = targetState[zone] ? targetState[zone][choice.index] : undefined
   if (!chosenInstance) {
     turnManager._resumeAttackAfterTrigger()
     return

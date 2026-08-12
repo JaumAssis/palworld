@@ -8,24 +8,24 @@ function FindMatchSelect() {
 
   return (
     <div style={{
-      minHeight: '100vh', boxSizing: 'border-box', padding: '2rem', textAlign: 'center',
+      minHeight: '100vh', boxSizing: 'border-box', padding: 'var(--sp-xl)', textAlign: 'center',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px',
       backgroundImage: `url(${isNight ? '/night.png' : '/ambient.webp'})`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat'
     }}>
-      <Link to="/" style={{ position: 'fixed', top: '20px', left: '20px' }}>
-        <button className="sign-button">{t('backToMenu')}</button>
+      <Link to="/" style={{ position: 'fixed', top: 'var(--sp-lg)', left: 'var(--sp-lg)' }}>
+        <button className="sign-button sign-button-fluid">{t('backToMenu')}</button>
       </Link>
 
       <h1 className="title-sign">{t('findMatchSelectTitle')}</h1>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxWidth: '340px', width: '100%', marginTop: '20px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-sm)', maxWidth: 'var(--panel-w-xs)', width: '100%', marginTop: '20px' }}>
         <Link to="/findmatch/normal">
-          <button className="sign-button" style={{ width: '100%', fontSize: '16px' }}>
+          <button className="sign-button" style={{ width: '100%', fontSize: 'var(--fs-md)' }}>
             {t('findMatchNormalButton')}
           </button>
         </Link>
         <Link to="/findmatch/arena">
-          <button className="sign-button" style={{ width: '100%', fontSize: '16px' }}>
+          <button className="sign-button" style={{ width: '100%', fontSize: 'var(--fs-md)' }}>
             {t('findMatchArenaButton')}
           </button>
         </Link>

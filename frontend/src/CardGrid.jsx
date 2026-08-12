@@ -5,7 +5,7 @@ import { apiFetch } from './api'
 import { cardMatchesSearch } from './cardSearch'
 
 // Mantém o tamanho compacto que os filtros já tinham antes de virarem sign-button.
-const FILTER_BTN_STYLE = { padding: '6px 12px', fontSize: '13px' }
+const FILTER_BTN_STYLE = { padding: 'var(--sp-xs) var(--sp-md)', fontSize: 'var(--fs-xs)' }
 const ACTIVE_FILTER_STYLE = { outline: '2px solid #ffcf7a', outlineOffset: '2px' }
 
 const COLOR_SWATCH = {
@@ -68,27 +68,27 @@ function CardGrid() {
     <div style={{
       minHeight: '100vh', width: '100%', boxSizing: 'border-box',
       background: 'radial-gradient(circle at 50% 40%, rgba(255,255,255,0.05), transparent 60%), #2b1a10',
-      padding: '1rem', textAlign: 'left', overflowX: 'hidden'
+      padding: 'var(--sp-lg)', textAlign: 'left', overflowX: 'hidden'
     }}>
       {/* Linha 1: voltar ao menu + busca */}
-      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '12px' }}>
-        <Link to="/"><button className="sign-button">{t('backToMenu')}</button></Link>
+      <div style={{ display: 'flex', gap: 'var(--sp-sm)', alignItems: 'center', flexWrap: 'wrap', marginBottom: '12px' }}>
+        <Link to="/"><button className="sign-button sign-button-fluid">{t('backToMenu')}</button></Link>
         <input
           type="text"
           placeholder={t('searchCard')}
           value={search}
           onChange={e => setSearch(e.target.value)}
-          style={{ flex: 1, minWidth: '150px', padding: '6px' }}
+          style={{ flex: 1, minWidth: '150px', padding: 'var(--sp-xs)', fontSize: 'var(--fs-sm)' }}
         />
       </div>
 
       {/* Linha 2: contador + filtros de tipo (sem cor aqui — ela virou subfiltro condicional abaixo) */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '8px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-md)', flexWrap: 'wrap', marginBottom: '8px' }}>
         <h2 style={{
-          margin: 0, fontFamily: "'Rye', Georgia, serif", color: '#f3e2b3', WebkitTextStroke: '1px #2b160a',
+          margin: 0, fontSize: 'var(--fs-xl)', fontFamily: "'Rye', Georgia, serif", color: '#f3e2b3', WebkitTextStroke: '1px #2b160a',
           textShadow: '2px 2px 0 #000, 0 0 14px rgba(0,0,0,0.6)'
         }}>{t('cardGridTitle', { filtered: filtered.length, total: cards.length })}</h2>
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 'var(--sp-xs)', flexWrap: 'wrap' }}>
           {['Todos', 'Pal', 'Structure', 'Gear', 'Event'].map(type => (
             <button
               key={type}
@@ -106,10 +106,10 @@ function CardGrid() {
           Multi-seleção dentro de cada grupo (ex: custo 3 e 5 juntos); os dois grupos se combinam
           em E (custo 7 + vermelho = só Pals de custo 7 vermelhos). */}
       {filterType !== 'Todos' && (
-        <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '16px' }}>
+        <div style={{ display: 'flex', gap: 'var(--sp-lg)', flexWrap: 'wrap', alignItems: 'center', marginBottom: '16px' }}>
           {availableCosts.length > 0 && (
             <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <span style={{ color: '#d9c4a3', fontSize: '12px' }}>{t('costFilterLabel')}</span>
+              <span style={{ color: '#d9c4a3', fontSize: 'var(--fs-xs)' }}>{t('costFilterLabel')}</span>
               {availableCosts.map(cost => (
                 <button
                   key={cost}
@@ -123,7 +123,7 @@ function CardGrid() {
             </div>
           )}
           <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={{ color: '#d9c4a3', fontSize: '12px' }}>{t('colorFilterLabel')}</span>
+            <span style={{ color: '#d9c4a3', fontSize: 'var(--fs-xs)' }}>{t('colorFilterLabel')}</span>
             {['Red', 'Blue', 'Green', 'Purple', 'Colorless'].map(color => (
               <button
                 key={color}
@@ -141,8 +141,8 @@ function CardGrid() {
 
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
-        gap: '12px',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(clamp(120px, 11vw, 190px), 1fr))',
+        gap: 'var(--sp-md)',
         width: '100%',
         boxSizing: 'border-box'
       }}>
@@ -153,7 +153,7 @@ function CardGrid() {
             style={{
               border: '1px solid #ccc',
               borderRadius: '8px',
-              padding: '8px',
+              padding: 'var(--sp-xs)',
               textAlign: 'center',
               background: '#fafafa',
               cursor: 'pointer',
@@ -169,8 +169,8 @@ function CardGrid() {
               style={{ width: '100%', borderRadius: '4px', marginBottom: '6px' }}
               onError={e => { e.target.style.display = 'none' }}
             />
-            <p style={{ fontSize: '12px', fontWeight: 'bold', margin: '4px 0' }}>{card.name}</p>
-            <p style={{ fontSize: '11px', color: '#666', margin: 0 }}>
+            <p style={{ fontSize: 'var(--fs-xs)', fontWeight: 'bold', margin: '4px 0' }}>{card.name}</p>
+            <p style={{ fontSize: 'var(--fs-2xs)', color: '#666', margin: 0 }}>
               {card.card_type} {card.cost !== null ? t('costLabel', { cost: card.cost }) : ''}
             </p>
           </div>
@@ -183,7 +183,7 @@ function CardGrid() {
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
         }}>
           <div onClick={e => e.stopPropagation()} style={{
-            background: '#fff', borderRadius: '16px', padding: '20px', textAlign: 'center',
+            background: '#fff', borderRadius: '16px', padding: 'var(--sp-lg)', textAlign: 'center',
             maxWidth: '90vw', maxHeight: '90vh', overflowY: 'auto', boxSizing: 'border-box'
           }}>
             <img
@@ -192,11 +192,11 @@ function CardGrid() {
               style={{ height: 'min(75vh, 800px)', maxWidth: '100%', width: 'auto', borderRadius: '10px', boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}
               onError={e => { e.target.style.display = 'none' }}
             />
-            <h3 style={{ margin: '12px 0 4px' }}>{selectedCard.name}</h3>
-            <p style={{ color: '#777', fontSize: '13px', margin: '0 0 12px' }}>
+            <h3 style={{ margin: '12px 0 4px', fontSize: 'var(--fs-lg)' }}>{selectedCard.name}</h3>
+            <p style={{ color: '#777', fontSize: 'var(--fs-sm)', margin: '0 0 12px' }}>
               {selectedCard.card_type} {selectedCard.cost !== null ? t('costLabel', { cost: selectedCard.cost }) : ''}
             </p>
-            <button onClick={() => setSelectedCard(null)} style={{ padding: '10px 20px' }}>{t('close')}</button>
+            <button onClick={() => setSelectedCard(null)} style={{ padding: 'var(--sp-xs) var(--sp-lg)', fontSize: 'var(--fs-sm)' }}>{t('close')}</button>
           </div>
         </div>
       )}

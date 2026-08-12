@@ -58,34 +58,34 @@ function RankPopup({ onClose }) {
       display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
     }} onClick={onClose}>
       <div onClick={e => e.stopPropagation()} style={{
-        width: '320px', textAlign: 'center', background: '#fff', borderRadius: '20px',
-        padding: '20px', boxShadow: '0 20px 60px rgba(0,0,0,0.4)'
+        width: 'var(--panel-w-xs)', textAlign: 'center', background: '#fff', borderRadius: '20px',
+        padding: 'var(--sp-lg)', boxShadow: '0 20px 60px rgba(0,0,0,0.4)'
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-          <h2 style={{ margin: 0, color: '#222', fontSize: '17px' }}>{t('rankPopupTitle')}</h2>
-          <button onClick={onClose} style={{ padding: '4px 10px' }}>✕</button>
+          <h2 style={{ margin: 0, color: '#222', fontSize: 'var(--fs-lg)' }}>{t('rankPopupTitle')}</h2>
+          <button onClick={onClose} style={{ padding: '4px 10px', fontSize: 'var(--fs-sm)' }}>✕</button>
         </div>
 
-        {!player && <p style={{ color: '#222' }}>{t('loading')}</p>}
+        {!player && <p style={{ color: '#222', fontSize: 'var(--fs-base)' }}>{t('loading')}</p>}
 
         {/* player.rank pode faltar se o backend ainda não tiver sido reiniciado depois da migração
             da coluna rank_points, ou se a resposta vier com erro (ex.: sessão expirada) — evita
             quebrar o popup inteiro nesse caso, só não mostra o bloco de rank. */}
-        {player && !player.rank && <p style={{ color: '#c0392b', fontSize: '13px' }}>{t('rankUnavailable')}</p>}
+        {player && !player.rank && <p style={{ color: '#c0392b', fontSize: 'var(--fs-sm)' }}>{t('rankUnavailable')}</p>}
 
         {player?.rank && (
           <>
             <div style={{
-              display: 'inline-block', padding: '8px 22px', borderRadius: '12px', color: '#fff',
-              fontWeight: 700, fontSize: '16px', marginBottom: '10px',
+              display: 'inline-block', padding: 'var(--sp-sm) var(--sp-lg)', borderRadius: '12px', color: '#fff',
+              fontWeight: 700, fontSize: 'var(--fs-md)', marginBottom: '10px',
               background: RANK_TIER_COLORS[player.rank.tierKey] || '#888'
             }}>
               🏆 {t(`rankTierName_${player.rank.tierKey}`)}
             </div>
-            <p style={{ color: '#444', fontSize: '14px', margin: '6px 0' }}>
+            <p style={{ color: '#444', fontSize: 'var(--fs-sm)', margin: '6px 0' }}>
               {t('rankPointsLabel', { points: player.rank.points })}
             </p>
-            <p style={{ color: '#777', fontSize: '13px', margin: 0 }}>
+            <p style={{ color: '#777', fontSize: 'var(--fs-xs)', margin: 0 }}>
               {player.rank.isMaxRank
                 ? t('rankMaxReached')
                 : t('rankPointsToNext', { n: player.rank.pointsToNext, nextTier: t(`rankTierName_${player.rank.nextTierKey}`) })}
@@ -116,24 +116,24 @@ function RankBoard() {
 
   return (
     <div style={{
-      width: '220px', maxHeight: '230px', overflowY: 'auto', boxSizing: 'border-box',
+      width: 'var(--panel-w-xs)', maxHeight: 'clamp(200px, 22vh, 340px)', overflowY: 'auto', boxSizing: 'border-box',
       background: 'rgba(0,0,0,0.55)', border: '2px solid #c99a4e', borderRadius: '12px',
-      padding: '10px 12px', textAlign: 'left'
+      padding: 'var(--sp-sm) var(--sp-md)', textAlign: 'left'
     }}>
-      <h3 style={{ margin: '0 0 6px', fontSize: '13px', color: '#f3e2b3', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>
+      <h3 style={{ margin: '0 0 6px', fontSize: 'var(--fs-sm)', color: '#f3e2b3', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>
         🏆 {t('rankBoardTitle')}
       </h3>
 
-      {!data && <p style={{ color: '#d9c4a3', fontSize: '11px', margin: 0 }}>{t('loading')}</p>}
+      {!data && <p style={{ color: '#d9c4a3', fontSize: 'var(--fs-2xs)', margin: 0 }}>{t('loading')}</p>}
 
       {data && data.top.length === 0 && (
-        <p style={{ color: '#d9c4a3', fontSize: '11px', margin: 0 }}>{t('rankBoardEmpty')}</p>
+        <p style={{ color: '#d9c4a3', fontSize: 'var(--fs-2xs)', margin: 0 }}>{t('rankBoardEmpty')}</p>
       )}
 
       {data && data.top.map(row => (
         <div key={row.position} style={{
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          fontSize: '11px', color: '#fff3d6', padding: '2px 0', gap: '6px'
+          fontSize: 'var(--fs-2xs)', color: '#fff3d6', padding: '2px 0', gap: '6px'
         }}>
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             <span style={{ color: '#d9c4a3' }}>{row.position}.</span> {row.username}
@@ -147,7 +147,7 @@ function RankBoard() {
           <div style={{ borderTop: '1px solid rgba(255,255,255,0.25)', margin: '4px 0' }} />
           <div style={{
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            fontSize: '11px', color: '#ffd76a', fontWeight: 700, padding: '2px 0', gap: '6px'
+            fontSize: 'var(--fs-2xs)', color: '#ffd76a', fontWeight: 700, padding: '2px 0', gap: '6px'
           }}>
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {data.you.position}. {data.you.username}
@@ -187,7 +187,7 @@ function AuthPanel({ onBlockedAction }) {
           onClick={() => setShowRank(true)}
           title={t('rankButtonTitle')}
           style={{
-            width: '42px', height: '42px', padding: 0, fontSize: '20px', cursor: 'pointer',
+            width: 'clamp(38px, 3vw, 52px)', height: 'clamp(38px, 3vw, 52px)', padding: 0, fontSize: 'var(--fs-lg)', cursor: 'pointer',
             borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center'
           }}
         >
@@ -262,18 +262,18 @@ function AuthPanel({ onBlockedAction }) {
         }}>
           <div style={{
             background: '#1a1410', border: '2px solid #c99a4e', borderRadius: '14px',
-            padding: '20px', maxWidth: '320px', textAlign: 'center', color: '#f3e2b3'
+            padding: 'var(--sp-lg)', maxWidth: 'var(--panel-w-xs)', textAlign: 'center', color: '#f3e2b3'
           }}>
-            <p style={{ fontSize: '13px', marginBottom: '16px' }}>{t('authRegisterConfirmMsg')}</p>
+            <p style={{ fontSize: 'var(--fs-sm)', marginBottom: '16px' }}>{t('authRegisterConfirmMsg')}</p>
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
               <button onClick={confirmRegister} disabled={submitting} style={{
-                padding: '8px 18px', borderRadius: '8px', border: 'none', background: '#a5541b', color: '#fff3d6',
+                padding: 'var(--sp-xs) var(--sp-lg)', fontSize: 'var(--fs-sm)', borderRadius: '8px', border: 'none', background: '#a5541b', color: '#fff3d6',
                 fontWeight: 700, cursor: submitting ? 'default' : 'pointer', opacity: submitting ? 0.6 : 1
               }}>
                 {t('authRegisterConfirmYes')}
               </button>
               <button onClick={() => setShowRegisterConfirm(false)} disabled={submitting} style={{
-                padding: '8px 18px', borderRadius: '8px', border: 'none', background: '#555', color: '#fff',
+                padding: 'var(--sp-xs) var(--sp-lg)', fontSize: 'var(--fs-sm)', borderRadius: '8px', border: 'none', background: '#555', color: '#fff',
                 fontWeight: 700, cursor: submitting ? 'default' : 'pointer', opacity: submitting ? 0.6 : 1
               }}>
                 {t('authRegisterConfirmNo')}
@@ -348,38 +348,38 @@ function MissionsPopup({ onClose }) {
       display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
     }} onClick={onClose}>
       <div onClick={e => e.stopPropagation()} style={{
-        width: '380px', maxHeight: '80vh', overflowY: 'auto', background: '#fff', borderRadius: '20px',
-        padding: '20px', boxShadow: '0 20px 60px rgba(0,0,0,0.4)'
+        width: 'var(--panel-w-sm)', maxHeight: '80vh', overflowY: 'auto', background: '#fff', borderRadius: '20px',
+        padding: 'var(--sp-lg)', boxShadow: '0 20px 60px rgba(0,0,0,0.4)'
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
           <h2 style={{ margin: 0, color: '#222' }}>{t('missionsTitle')}</h2>
-          <button onClick={onClose} style={{ padding: '4px 10px' }}>✕</button>
+          <button onClick={onClose} style={{ padding: '4px 10px', fontSize: 'var(--fs-sm)' }}>✕</button>
         </div>
 
-        {loading && <p style={{ color: '#222' }}>{t('loading')}</p>}
+        {loading && <p style={{ color: '#222', fontSize: 'var(--fs-base)' }}>{t('loading')}</p>}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           {missions.map(m => {
             const pct = Math.min(100, (m.currentValue / m.target_value) * 100)
             return (
               <div key={m.id} style={{
-                border: '1px solid #eee', borderRadius: '10px', padding: '10px',
+                border: '1px solid #eee', borderRadius: '10px', padding: 'var(--sp-sm)',
                 background: m.claimed ? '#f5f5f5' : '#fff'
               }}>
-                <p style={{ margin: '0 0 6px', fontSize: '13px', fontWeight: 600, color: '#222' }}>{missionDescription(t, m)}</p>
+                <p style={{ margin: '0 0 6px', fontSize: 'var(--fs-sm)', fontWeight: 600, color: '#222' }}>{missionDescription(t, m)}</p>
                 <div style={{ background: '#eee', borderRadius: '6px', height: '8px', overflow: 'hidden', marginBottom: '6px' }}>
                   <div style={{ width: `${pct}%`, height: '100%', background: m.completed ? '#34c759' : '#007aff', transition: 'width 0.3s' }} />
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '11px', color: '#888' }}>
+                  <span style={{ fontSize: 'var(--fs-2xs)', color: '#888' }}>
                     {m.currentValue} / {m.target_value} — 🪙{m.reward_gold} {m.reward_fluid > 0 && `💧${m.reward_fluid}`}
                   </span>
                   {m.completed && !m.claimed && (
-                    <button onClick={() => claim(m.id)} style={{ padding: '4px 12px', fontSize: '12px', background: '#34c759', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
+                    <button onClick={() => claim(m.id)} style={{ padding: 'var(--sp-2xs) var(--sp-sm)', fontSize: 'var(--fs-2xs)', background: '#34c759', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
                       {t('missionsClaim')}
                     </button>
                   )}
-                  {m.claimed && <span style={{ fontSize: '11px', color: '#34c759' }}>{t('missionsClaimed')}</span>}
+                  {m.claimed && <span style={{ fontSize: 'var(--fs-2xs)', color: '#34c759' }}>{t('missionsClaimed')}</span>}
                 </div>
               </div>
             )
@@ -433,16 +433,16 @@ function LoginStreakPopup({ onClose }) {
       display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
     }} onClick={onClose}>
       <div onClick={e => e.stopPropagation()} style={{
-        width: '420px', maxWidth: '92vw', maxHeight: '85vh', overflowY: 'auto', background: '#fff', borderRadius: '20px',
-        padding: '20px', boxShadow: '0 20px 60px rgba(0,0,0,0.4)'
+        width: 'var(--panel-w-sm)', maxWidth: '92vw', maxHeight: '85vh', overflowY: 'auto', background: '#fff', borderRadius: '20px',
+        padding: 'var(--sp-lg)', boxShadow: '0 20px 60px rgba(0,0,0,0.4)'
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
           <h2 style={{ margin: 0, color: '#222' }}>{t('loginStreakTitle')}</h2>
-          <button onClick={onClose} style={{ padding: '4px 10px' }}>✕</button>
+          <button onClick={onClose} style={{ padding: '4px 10px', fontSize: 'var(--fs-sm)' }}>✕</button>
         </div>
-        <p style={{ fontSize: '12px', color: '#666', marginTop: 0 }}>{t('loginStreakSubtitle')}</p>
+        <p style={{ fontSize: 'var(--fs-xs)', color: '#666', marginTop: 0 }}>{t('loginStreakSubtitle')}</p>
 
-        {loading && <p style={{ color: '#222' }}>{t('loading')}</p>}
+        {loading && <p style={{ color: '#222', fontSize: 'var(--fs-base)' }}>{t('loading')}</p>}
 
         {status && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', marginBottom: '16px' }}>
@@ -452,23 +452,23 @@ function LoginStreakPopup({ onClose }) {
               const isFuture = reward.day > status.currentDay
               return (
                 <div key={reward.day} style={{
-                  border: isCurrent ? '2px solid #ffab00' : '1px solid #eee', borderRadius: '10px', padding: '8px',
+                  border: isCurrent ? '2px solid #ffab00' : '1px solid #eee', borderRadius: '10px', padding: 'var(--sp-xs)',
                   textAlign: 'center', background: isCurrent ? '#fff8e1' : (isFuture ? '#fafafa' : '#f5f5f5'),
                   opacity: isFuture ? 0.6 : 1
                 }}>
-                  <p style={{ margin: '0 0 4px', fontSize: '11px', fontWeight: 600, color: '#222' }}>{t('loginStreakDayLabel', { day: reward.day })}</p>
-                  <div style={{ fontSize: '22px' }}>{rewardIcon(reward)}</div>
-                  <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#555' }}>{rewardLabel(reward)}</p>
-                  {isPast && <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#34c759' }}>{t('loginStreakDone')}</p>}
-                  {isFuture && <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#999' }}>{t('loginStreakLocked')}</p>}
-                  {isCurrent && status.claimedToday && <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#34c759' }}>{t('loginStreakClaimed')}</p>}
+                  <p style={{ margin: '0 0 4px', fontSize: 'var(--fs-2xs)', fontWeight: 600, color: '#222' }}>{t('loginStreakDayLabel', { day: reward.day })}</p>
+                  <div style={{ fontSize: 'var(--fs-xl)' }}>{rewardIcon(reward)}</div>
+                  <p style={{ margin: '4px 0 0', fontSize: 'var(--fs-2xs)', color: '#555' }}>{rewardLabel(reward)}</p>
+                  {isPast && <p style={{ margin: '4px 0 0', fontSize: 'var(--fs-2xs)', color: '#34c759' }}>{t('loginStreakDone')}</p>}
+                  {isFuture && <p style={{ margin: '4px 0 0', fontSize: 'var(--fs-2xs)', color: '#999' }}>{t('loginStreakLocked')}</p>}
+                  {isCurrent && status.claimedToday && <p style={{ margin: '4px 0 0', fontSize: 'var(--fs-2xs)', color: '#34c759' }}>{t('loginStreakClaimed')}</p>}
                 </div>
               )
             })}
           </div>
         )}
 
-        {error && <p style={{ color: '#c00', fontSize: '12px' }}>{error}</p>}
+        {error && <p style={{ color: '#c00', fontSize: 'var(--fs-xs)' }}>{error}</p>}
 
         {status && !status.claimedToday && (
           <button onClick={claim} disabled={claiming} className="sign-button" style={{ width: '100%' }}>
@@ -480,18 +480,18 @@ function LoginStreakPopup({ onClose }) {
           <div style={{ marginTop: '16px', textAlign: 'center' }}>
             {result.boosterCards ? (
               <>
-                <p style={{ fontWeight: 600, color: '#222' }}>{t('loginStreakBoosterWon')}</p>
+                <p style={{ fontWeight: 600, color: '#222', fontSize: 'var(--fs-base)' }}>{t('loginStreakBoosterWon')}</p>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
                   {result.boosterCards.map((c, i) => (
-                    <div key={i} style={{ width: '70px' }}>
+                    <div key={i} style={{ width: 'clamp(60px, 6vw, 90px)' }}>
                       <img src={c.image_url} alt={c.name} style={{ width: '100%', borderRadius: '6px' }} />
-                      <p style={{ fontSize: '10px', margin: '4px 0 0' }}>{c.rarity}</p>
+                      <p style={{ fontSize: 'var(--fs-2xs)', margin: '4px 0 0' }}>{c.rarity}</p>
                     </div>
                   ))}
                 </div>
               </>
             ) : (
-              <p style={{ fontWeight: 600, color: '#222' }}>{t('loginStreakGoldWon', { amount: result.goldGained, fluid: result.fluidGained })}</p>
+              <p style={{ fontWeight: 600, color: '#222', fontSize: 'var(--fs-base)' }}>{t('loginStreakGoldWon', { amount: result.goldGained, fluid: result.fluidGained })}</p>
             )}
           </div>
         )}
@@ -552,20 +552,20 @@ function MainMenu() {
 
   return (
     <div style={{
-      padding: '2rem', textAlign: 'center', minHeight: '100vh', position: 'relative', boxSizing: 'border-box',
+      padding: 'var(--sp-xl)', textAlign: 'center', minHeight: '100vh', position: 'relative', boxSizing: 'border-box',
       backgroundImage: `url(${isNight ? '/night.png' : '/ambient.webp'})`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat'
     }}>
-      <div style={{ position: 'fixed', top: '20px', left: '20px', zIndex: 500, display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      <div style={{ position: 'fixed', top: 'var(--sp-lg)', left: 'var(--sp-lg)', zIndex: 500, display: 'flex', flexDirection: 'column', gap: 'var(--sp-sm)' }}>
         <AuthPanel onBlockedAction={authHint ? t('authHintLoginRequired') : null} />
         <RankBoard />
       </div>
 
-      <div style={{ position: 'fixed', top: '20px', right: '20px', display: 'flex', gap: '8px' }}>
+      <div style={{ position: 'fixed', top: 'var(--sp-lg)', right: 'var(--sp-lg)', display: 'flex', gap: 'var(--sp-xs)' }}>
         <OnlineBadge />
         <button
           className="currency-badge"
           onClick={toggleTheme}
-          style={{ padding: '8px 14px', fontSize: '18px', cursor: 'pointer' }}
+          style={{ padding: 'var(--sp-xs) var(--sp-md)', fontSize: 'var(--fs-md)', cursor: 'pointer' }}
         >
           {isNight ? '🌙' : '☀️'}
         </button>
@@ -574,7 +574,7 @@ function MainMenu() {
           onClick={toggleLang}
           title={lang === 'pt' ? 'Switch to English' : 'Mudar para Português'}
           style={{
-            width: '42px', height: '42px', padding: 0, cursor: 'pointer',
+            width: 'clamp(38px, 3vw, 52px)', height: 'clamp(38px, 3vw, 52px)', padding: 0, cursor: 'pointer',
             borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center'
           }}
         >
@@ -584,27 +584,27 @@ function MainMenu() {
 
       <h1 className="title-sign">Palworld TCG</h1>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxWidth: '300px', margin: '0 auto' }}>
-        <Link to="/tutorial"><button className="sign-button" style={{ width: '100%' }}>{t('menuTutorial')}</button></Link>
-        <Link to="/catalog"><button className="sign-button" style={{ width: '100%' }}>{t('menuCatalog')}</button></Link>
-        <Link to="/mycollection" onClick={guardedLinkClick}><button className="sign-button" style={{ width: '100%' }}>{t('menuCollection')}</button></Link>
-        <Link to="/deckbuilder" onClick={guardedLinkClick}><button className="sign-button" style={{ width: '100%' }}>{t('menuDeckBuilder')}</button></Link>
-        <Link to="/mydecks" onClick={guardedLinkClick}><button className="sign-button" style={{ width: '100%' }}>{t('menuMyDecks')}</button></Link>
-        <Link to="/findmatch" onClick={guardedLinkClick}><button className="sign-button" style={{ width: '100%' }}>{t('menuFindMatch')}</button></Link>
-        <Link to="/game" onClick={guardedLinkClick}><button className="sign-button" style={{ width: '100%' }}>{t('menuBotMatch')}</button></Link>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-sm)', width: 'var(--panel-w-xs)', margin: '0 auto' }}>
+        <Link to="/tutorial"><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuTutorial')}</button></Link>
+        <Link to="/catalog"><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuCatalog')}</button></Link>
+        <Link to="/mycollection" onClick={guardedLinkClick}><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuCollection')}</button></Link>
+        <Link to="/deckbuilder" onClick={guardedLinkClick}><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuDeckBuilder')}</button></Link>
+        <Link to="/mydecks" onClick={guardedLinkClick}><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuMyDecks')}</button></Link>
+        <Link to="/findmatch" onClick={guardedLinkClick}><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuFindMatch')}</button></Link>
+        <Link to="/game" onClick={guardedLinkClick}><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuBotMatch')}</button></Link>
       </div>
 
-      <div style={{ position: 'fixed', bottom: '20px', left: '20px', display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'flex-start' }}>
-        <button className="sign-button" onClick={() => guard(() => setPopup('shop'))}>{t('menuShop')}</button>
-        <button className="sign-button" onClick={() => guard(() => setPopup('farming'))}>{t('menuFarming')}</button>
-        <button className="sign-button" onClick={() => guard(() => setPopup('breeding'))} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <img src="/egg.png" alt="Breeding" style={{ width: '28px', height: '28px' }} />
+      <div style={{ position: 'fixed', bottom: 'var(--sp-lg)', left: 'var(--sp-lg)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-sm)', alignItems: 'flex-start' }}>
+        <button className="sign-button sign-button-fluid" onClick={() => guard(() => setPopup('shop'))}>{t('menuShop')}</button>
+        <button className="sign-button sign-button-fluid" onClick={() => guard(() => setPopup('farming'))}>{t('menuFarming')}</button>
+        <button className="sign-button sign-button-fluid" onClick={() => guard(() => setPopup('breeding'))} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <img src="/egg.png" alt="Breeding" style={{ width: 'clamp(22px, 2vw, 32px)', height: 'clamp(22px, 2vw, 32px)' }} />
           Breeding
         </button>
         <div style={{ display: 'flex', gap: '6px' }}>
-          <button className="sign-button" onClick={() => guard(() => setShowMissions(true))}>{t('menuDailyMissions')}</button>
-          <button className="sign-button" onClick={() => guard(() => setShowLoginStreak(true))} title={t('loginStreakButtonTitle')}
-                  style={{ padding: '8px 12px', fontSize: '18px', position: 'relative' }}>
+          <button className="sign-button sign-button-fluid" onClick={() => guard(() => setShowMissions(true))}>{t('menuDailyMissions')}</button>
+          <button className="sign-button sign-button-fluid" onClick={() => guard(() => setShowLoginStreak(true))} title={t('loginStreakButtonTitle')}
+                  style={{ padding: 'var(--sp-xs) var(--sp-sm)', fontSize: 'var(--fs-md)', position: 'relative' }}>
             🏅
             {loginStreakClaimable && (
               <span style={{
@@ -618,8 +618,8 @@ function MainMenu() {
 
       <p style={{
         position: 'fixed', bottom: '6px', left: '50%', transform: 'translateX(-50%)', margin: 0,
-        textAlign: 'center', fontSize: '11px', color: '#fff', lineHeight: 1.4,
-        background: 'rgba(0,0,0,0.55)', borderRadius: '8px', padding: '8px 12px',
+        textAlign: 'center', fontSize: 'var(--fs-2xs)', color: '#fff', lineHeight: 1.4,
+        background: 'rgba(0,0,0,0.55)', borderRadius: '8px', padding: 'var(--sp-xs) var(--sp-sm)',
         textShadow: '0 1px 3px rgba(0,0,0,0.6)', maxWidth: '90vw', pointerEvents: 'none'
       }}>
         {t('fanDisclaimer')}
@@ -640,13 +640,13 @@ function MainMenu() {
       )}
 
       {player && (
-        <div style={{ position: 'fixed', bottom: '20px', right: '20px', display: 'flex', gap: '10px' }}>
+        <div style={{ position: 'fixed', bottom: 'var(--sp-lg)', right: 'var(--sp-lg)', display: 'flex', gap: 'var(--sp-sm)' }}>
           <div className="currency-badge">
-            <img src="/gold-coin.png" alt="Gold" style={{ width: '22px', height: '22px' }} />
+            <img src="/gold-coin.png" alt="Gold" style={{ width: 'clamp(18px, 1.6vw, 26px)', height: 'clamp(18px, 1.6vw, 26px)' }} />
             <strong>{player.gold_coins}</strong>
           </div>
           <div className="currency-badge">
-            <img src="/pal-fluid.png" alt={t('palFluidAlt')} style={{ width: '22px', height: '22px' }} />
+            <img src="/pal-fluid.png" alt={t('palFluidAlt')} style={{ width: 'clamp(18px, 1.6vw, 26px)', height: 'clamp(18px, 1.6vw, 26px)' }} />
             <strong>{player.pal_fluid}</strong>
           </div>
         </div>
