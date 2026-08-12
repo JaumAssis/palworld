@@ -383,6 +383,59 @@ function pickWeakest(instances) {
   return instances.reduce((a, b) => ((b.data.power || 0) < (a.data.power || 0) ? b : a))
 }
 
+// "Choose up to 5 of your opponent's Material and/or Ingredient in total, and your opponent loses
+// them." (Zoe's Strategy) — quem escolhe COMO dividir o total entre os 2 recursos é o CASTER (não o
+// motor sozinho): 1o passo pergunta quanto tirar de Material (0 até o teto), 2o passo pergunta o
+// Ingredient com o que sobrou do teto. Cada passo reaproveita o popup 'amount' já existente (mesmo
+// usado pra custo variável de ACT) — o campo `resourceSplit` avisa continuePendingEffect que não é
+// esse fluxo, e sim este aqui.
+function applyResourceLoss(turnManager, sourceInstance, opponentState, fromMaterial, fromIngredient) {
+  opponentState.material -= fromMaterial
+  opponentState.ingredient -= fromIngredient
+  if (fromMaterial || fromIngredient) {
+    turnManager._addLog(`${opponentState.playerName} perdeu ${fromMaterial} Material e ${fromIngredient} Ingredient (efeito de ${sourceInstance.data.name}).`)
+  }
+}
+
+function startLoseResourcesIngredientStep(turnManager, sourceInstance, casterState, opponentState, remainingBudget, fromMaterial) {
+  const maxIngredient = Math.min(remainingBudget, opponentState.ingredient)
+  if (maxIngredient === 0) {
+    applyResourceLoss(turnManager, sourceInstance, opponentState, fromMaterial, 0)
+    return
+  }
+  turnManager.pendingEffect = {
+    kind: 'amount',
+    sourceCardName: sourceInstance.data.name,
+    description: sourceInstance.data.effect_text,
+    min: 0, max: maxIngredient,
+    resourceSplit: { step: 'ingredient', sourceInstance, opponentState, fromMaterial }
+  }
+}
+
+function startLoseResourcesChoice(turnManager, sourceInstance, casterState, opponentState, amount) {
+  const maxMaterial = Math.min(amount, opponentState.material)
+
+  if (casterState !== turnManager.player1) {
+    // Bot: sem desvantagem em tirar o máximo possível — maximiza sempre.
+    applyResourceLoss(turnManager, sourceInstance, opponentState, maxMaterial, Math.min(amount - maxMaterial, opponentState.ingredient))
+    return true
+  }
+
+  if (maxMaterial === 0) {
+    startLoseResourcesIngredientStep(turnManager, sourceInstance, casterState, opponentState, amount, 0)
+    return true
+  }
+
+  turnManager.pendingEffect = {
+    kind: 'amount',
+    sourceCardName: sourceInstance.data.name,
+    description: sourceInstance.data.effect_text,
+    min: 0, max: maxMaterial,
+    resourceSplit: { step: 'material', sourceInstance, casterState, opponentState, totalBudget: amount }
+  }
+  return true
+}
+
 // Retorna se a ação de fato teve efeito (usado pela consequência "então..." — só roda se a ação
 // principal realmente aconteceu, ex: só ganha vida se algo foi descartado).
 function applyAction(turnManager, action, sourceInstance, casterState, opponentState, resolvedInstance, context = {}) {
@@ -490,6 +543,11 @@ function applyAction(turnManager, action, sourceInstance, casterState, opponentS
       casterState.nextGearDiscount = amount
       turnManager._addLog(`${casterState.playerName} reduziu o custo da próxima Gear jogada da mão em ${amount} até o fim do turno.`)
       return true
+    // "Choose up to 5 of your opponent's Material and/or Ingredient in total, and your opponent loses
+    // them." (Zoe's Strategy) — não há vantagem nenhuma em deixar recurso sobrando com o oponente, então
+    // drena o máximo possível até o total (Material primeiro, depois Ingredient com o que sobrar do teto).
+    case 'loseResourcesUpToTotal':
+      return startLoseResourcesChoice(turnManager, sourceInstance, casterState, opponentState, amount)
     // Alarm Bell: 3 efeitos de estado do jogador, não de um alvo escolhido.
     case 'standAllAssignedThisTurn':
       for (const p of casterState.assignedThisTurn) p.stand()
@@ -1189,13 +1247,29 @@ function runTrigger(turnManager, triggerName, instance, casterState, opponentSta
   const grantedClauses = (instance.grantedTriggers && instance.grantedTriggers[triggerName]) || []
   const allClauses = grantedClauses.length ? [...clauses, ...grantedClauses] : clauses
   const repeatCount = shouldDoubleAuto(triggerName, casterState) ? 2 : 1
-  for (let rep = 0; rep < repeatCount; rep++) {
-    for (const clauseActions of allClauses) {
-      const result = resolveRepeatableClause(turnManager, clauseActions, instance, casterState, opponentState, isBot)
-      if (result.paused) return { paused: true }
-    }
+  return runTriggerClauses(turnManager, allClauses, 0, repeatCount, 0, instance, casterState, opponentState, isBot)
+}
+
+// Roda cada cláusula do gatilho, repetindo o CONJUNTO INTEIRO `repeatCount` vezes (Shadowbeak —
+// "If it is night, your Pal's AUTO activates twice"). Antes disto, um `for` simples perdia a 2a
+// repetição sempre que a 1a cláusula pausava esperando o jogador (ex: "choose 1 Pal, and butcher it")
+// — o `return` no meio do loop nunca deixava a 2a repetição rodar. Guarda onde parou (índice da
+// cláusula + qual repetição) pra retomar exatamente daí (ver TurnManager._resumeAttackAfterTrigger).
+function runTriggerClauses(turnManager, allClauses, clauseIndex, repeatCount, repIndex, instance, casterState, opponentState, isBot) {
+  if (repIndex >= repeatCount) return { paused: false }
+  if (clauseIndex >= allClauses.length) {
+    return runTriggerClauses(turnManager, allClauses, 0, repeatCount, repIndex + 1, instance, casterState, opponentState, isBot)
   }
-  return { paused: false }
+  const result = resolveRepeatableClause(turnManager, allClauses[clauseIndex], instance, casterState, opponentState, isBot)
+  if (result.paused) {
+    turnManager._pendingTriggerContinuation = { allClauses, clauseIndex: clauseIndex + 1, repeatCount, repIndex, instance, casterState, opponentState, isBot }
+    return { paused: true }
+  }
+  return runTriggerClauses(turnManager, allClauses, clauseIndex + 1, repeatCount, repIndex, instance, casterState, opponentState, isBot)
+}
+
+function resumeTriggerContinuation(turnManager, cont) {
+  return runTriggerClauses(turnManager, cont.allClauses, cont.clauseIndex, cont.repeatCount, cont.repIndex, cont.instance, cont.casterState, cont.opponentState, cont.isBot)
 }
 
 // ---------- Efeitos modais ("Choose 1 of the following") ----------
@@ -1607,6 +1681,20 @@ function continuePendingEffect(turnManager, choice) {
 
   if (pending.kind === 'amount') {
     const amount = Math.max(pending.min, Math.min(pending.max, parseInt(choice.amount, 10) || pending.min))
+
+    // "Choose up to 5 of your opponent's Material and/or Ingredient in total, ..." (Zoe's Strategy) —
+    // popup 'amount' reaproveitado pra um fluxo diferente do custo variável de ACT (ver startLoseResourcesChoice).
+    if (pending.resourceSplit) {
+      const rs = pending.resourceSplit
+      if (rs.step === 'material') {
+        startLoseResourcesIngredientStep(turnManager, rs.sourceInstance, rs.casterState, rs.opponentState, rs.totalBudget - amount, amount)
+      } else {
+        applyResourceLoss(turnManager, rs.sourceInstance, rs.opponentState, rs.fromMaterial, amount)
+      }
+      if (!turnManager.pendingEffect) turnManager._resumeAttackAfterTrigger()
+      return
+    }
+
     pending.context.chosenAmount = amount
     proceedActivation(turnManager, pending.ability, pending.group, pending.context, pending.instance, pending.casterState, pending.opponentState, false, pending.actIndex)
     if (!turnManager.pendingEffect) turnManager._resumeAttackAfterTrigger()
@@ -1686,5 +1774,6 @@ module.exports = {
   resolveCardChoice,
   notifyAllyDeploy,
   resumeAssignContinuation,
-  resumeClauseContinuation
+  resumeClauseContinuation,
+  resumeTriggerContinuation
 }

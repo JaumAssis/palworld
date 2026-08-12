@@ -265,6 +265,15 @@ class TurnManager {
       if (!result.paused && !this.pendingEffect) this._resumeAttackAfterTrigger()
       return
     }
+    // "If it is night, your Pal's AUTO activates twice" (Shadowbeak) — retoma a 2a repetição do
+    // MESMO gatilho AUTO depois que a 1a pausou esperando o jogador (ver EffectEngine.runTriggerClauses).
+    const triggerCont = this._pendingTriggerContinuation
+    if (triggerCont) {
+      this._pendingTriggerContinuation = null
+      const result = EffectEngine.resumeTriggerContinuation(this, triggerCont)
+      if (!result.paused && !this.pendingEffect) this._resumeAttackAfterTrigger()
+      return
+    }
     const endTurnCont = this._pendingEndTurnContinuation
     if (endTurnCont) {
       this._pendingEndTurnContinuation = null

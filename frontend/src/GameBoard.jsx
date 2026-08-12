@@ -74,7 +74,7 @@ function GameBoard() {
     socket.on('bot:state', (state) => {
       setGameState(state)
       setStage(state.gameOver ? 'gameOver' : 'playing')
-      if (state.pendingEffect?.kind === 'amount') setAmountInput(state.pendingEffect.min || 1)
+      if (state.pendingEffect?.kind === 'amount') setAmountInput(state.pendingEffect.min ?? 1)
       if (state.lastDamageReveal && state.lastDamageReveal.id !== seenDamageRevealIdRef.current) {
         seenDamageRevealIdRef.current = state.lastDamageReveal.id
         setDamageRevealShown(state.lastDamageReveal)

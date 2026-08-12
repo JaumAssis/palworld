@@ -525,9 +525,21 @@ function parseDeclareNameClause(rawBody) {
   return [{ type: 'declareNameForTeam' }]
 }
 
+// "Choose up to 5 of your opponent's Material and/or Ingredient in total, and your opponent loses
+// them." (Zoe's Strategy) — não é "escolha 1 Pal" (TARGET_PATTERNS), é uma quantidade TOTAL dividida
+// entre os 2 recursos do OPONENTE — ver 'loseResourcesUpToTotal' em applyAction.
+function parseLoseOpponentResourcesClause(rawBody) {
+  const m = /^Choose up to (\d+) of your opponent's Material and\/or Ingredient in total,?\s*and your opponent loses them\.?$/i.exec(rawBody.trim())
+  if (!m) return null
+  return [{ type: 'loseResourcesUpToTotal', amount: +m[1] }]
+}
+
 function parseClauseBodyTopLevel(rawBody) {
   const declareName = parseDeclareNameClause(rawBody)
   if (declareName) return declareName
+
+  const loseOpponentResources = parseLoseOpponentResourcesClause(rawBody)
+  if (loseOpponentResources) return loseOpponentResources
 
   const graveyardExcludeKeyword = parseGraveyardExcludeKeywordClause(rawBody)
   if (graveyardExcludeKeyword) return graveyardExcludeKeyword
@@ -1002,7 +1014,10 @@ function parseModalBlock(effectText) {
 
   const options = bulletLines.map(bullet => {
     const description = bullet.replace(/^・/, '').trim()
-    const actions = parseClauseBody(stripAsides(description))
+    // parseClauseBodyTopLevel (não parseClauseBody direto) — assim os bullets também passam pelas
+    // cláusulas dedicadas (ex: parseLoseOpponentResourcesClause pra Zoe's Strategy), não só o fallback
+    // genérico. Passa o texto CRU (ele mesmo aplica stripAsides internamente, quando precisa).
+    const actions = parseClauseBodyTopLevel(description)
     return { description, actions: hasUnresolvedX(actions) ? [] : actions }
   })
   return options.some(o => o.actions.length > 0) ? options : null
