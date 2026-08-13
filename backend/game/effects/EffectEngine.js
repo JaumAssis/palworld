@@ -21,6 +21,13 @@ function hasKeyword(cardData, name) {
   return getParsedEffects(cardData).keywords.some(k => k.name.toLowerCase() === name.toLowerCase())
 }
 
+// Quantas vezes a keyword aparece IMPRESSA na carta — algumas cartas (ex: Depresso – Late Night
+// Hustler) têm a mesma keyword com efeito numérico (Nocturnal, +300 Power) escrita 2 vezes de
+// propósito, pra empilhar o próprio bônus (hasKeyword só diz se/não, não quantas vezes).
+function countKeyword(cardData, name) {
+  return getParsedEffects(cardData).keywords.filter(k => k.name.toLowerCase() === name.toLowerCase()).length
+}
+
 // Keyword estática da carta OU concedida temporariamente até o fim do turno (ex: Digtoise ganhando
 // Breakthrough, Gumoss ganhando Assault) — ver 'grantKeywordUntilEndOfTurn' em applyAction.
 function hasKeywordOrGranted(instance, name) {
@@ -64,8 +71,13 @@ function countDistinctNamesContaining(instances, substring) {
 function checkPrecondition(precondition, sourceInstance, casterState, opponentState) {
   const id = typeof precondition === 'string' ? precondition : precondition.id
   switch (id) {
-    case 'hasRestingNocturnal':
-      return casterState.basePals.some(p => !p.isStanding && hasKeyword(p.data, 'Nocturnal'))
+    // "if you have a 〈Nocturnal〉 Pal in the rest state, ..." (Shoddy Bed) — conta tanto quem tem
+    // Nocturnal de fábrica quanto quem ganhou de um Lamp ("All of your Pals get the skill in 〈〉.
+    // 〈CONT Nocturnal〉") — sem isso, um time que só tem Nocturnal via Lamp nunca disparava o draw.
+    case 'hasRestingNocturnal': {
+      const grantedToTeam = hasContOfType(casterState, 'grantNocturnalToTeam')
+      return casterState.basePals.some(p => !p.isStanding && (grantedToTeam || hasKeyword(p.data, 'Nocturnal')))
+    }
     case 'noExiledByThis':
       return !(sourceInstance.exiledCards && sourceInstance.exiledCards.length)
     case 'isNight':
@@ -90,6 +102,12 @@ function fieldCardsOf(state) {
 
 function hasContOfType(state, contType) {
   return fieldCardsOf(state).some(c => getParsedEffects(c.data).cont.some(f => f.type === contType))
+}
+
+// Quantas cartas em campo concedem esse CONT — 2 Lamps concedendo "Nocturnal" pro time empilham
+// (+300 de CADA Lamp), não faz diferença nenhuma ter 1 ou 5 se for só um "se/não" (hasContOfType).
+function countContOfType(state, contType) {
+  return fieldCardsOf(state).reduce((sum, c) => sum + getParsedEffects(c.data).cont.filter(f => f.type === contType).length, 0)
 }
 
 // "CONT When your red card would deal Damage other than battle damage to a Pal, deal +200 Damage
@@ -127,7 +145,10 @@ function computeContinuousBonuses(instance, ownerState, opponentState) {
     if (f.type === 'nameBuff' && hasName(instance, f.palName)) power += f.amount
   }
 
-  if (night && (hasKeyword(instance.data, 'Nocturnal') || hasContOfType(ownerState, 'grantNocturnalToTeam'))) power += 300
+  // Nocturnal empilha: tanto se a PRÓPRIA carta tiver a keyword impressa mais de 1 vez (Depresso –
+  // Late Night Hustler, 2x CONT Nocturnal = +600) quanto se mais de 1 Lamp em campo conceder o skill
+  // pro time (2 Lamps = +600 também) — cada ocorrência soma seu próprio +300, não é um "se/não".
+  if (night) power += 300 * (countKeyword(instance.data, 'Nocturnal') + countContOfType(ownerState, 'grantNocturnalToTeam'))
 
   // colorBuff/nameBuff concedido por OUTRA carta do time — inclui Structure/Gear (ex: Flame Cauldron,
   // "CONT All of your red Pals get Power +200"), não só outros Pals (mesmo motivo do fieldCardsOf acima).
