@@ -10,13 +10,16 @@ const NODES_COMING_SOON = new Set([])
 
 // Peça de dama de madeira entalhada — só CSS (gradiente em camadas simulando veios de madeira +
 // bisel em relevo + ícone com sombra dupla pra parecer entalhado), sem depender de asset novo.
-// `status` controla opacidade/destaque; `disabled` é só pros tipos de nó ainda desabilitados.
+// `status` controla opacidade/destaque; `disabled` é só pros tipos de nó ainda desabilitados. O
+// Boss ganha um token maior — tem que pesar mais na tela que um nó comum.
 function MapNode({ node, onClick, disabled, t }) {
   const [hovering, setHovering] = useState(false)
   const clickable = node.status === 'available' && !disabled
   const isCleared = node.status === 'cleared'
   const isLocked = node.status === 'locked'
+  const isBoss = node.type === 'boss'
   const woodGrain = 'repeating-radial-gradient(circle at 35% 30%, rgba(0,0,0,0.07) 0px, rgba(0,0,0,0.07) 1px, transparent 2px, transparent 7px)'
+  const size = isBoss ? 'clamp(64px, 7.5vw, 88px)' : 'clamp(52px, 6vw, 72px)'
   return (
     <button
       onClick={clickable ? onClick : undefined}
@@ -24,11 +27,14 @@ function MapNode({ node, onClick, disabled, t }) {
       onMouseLeave={() => setHovering(false)}
       title={disabled && node.status === 'available' ? t('roguelikeNodeLockedHint') : t(`roguelikeNodeType_${node.type}`)}
       style={{
-        width: 'clamp(52px, 6vw, 72px)', height: 'clamp(52px, 6vw, 72px)', borderRadius: '50%',
-        border: '2px solid rgba(0,0,0,0.35)', cursor: clickable ? 'pointer' : 'default', position: 'relative',
+        width: size, height: size, borderRadius: '50%', zIndex: 1,
+        border: isBoss && !isLocked ? '2px solid rgba(120,20,20,0.6)' : '2px solid rgba(0,0,0,0.35)',
+        cursor: clickable ? 'pointer' : 'default', position: 'relative',
         background: isLocked
           ? `${woodGrain}, radial-gradient(circle at 35% 30%, #5a4433, #2e2013)`
-          : `${woodGrain}, radial-gradient(circle at 35% 30%, #c99a68, #6b4423)`,
+          : isBoss
+            ? `${woodGrain}, radial-gradient(circle at 35% 30%, #8a3a3a, #3a1010)`
+            : `${woodGrain}, radial-gradient(circle at 35% 30%, #c99a68, #6b4423)`,
         boxShadow: isLocked
           ? 'inset 0 2px 4px rgba(0,0,0,0.6), inset 0 -2px 3px rgba(255,255,255,0.05)'
           : `inset 0 2px 5px rgba(255,255,255,0.3), inset 0 -3px 6px rgba(0,0,0,0.5), 0 3px 6px rgba(0,0,0,0.45)${clickable && hovering ? ', 0 0 0 3px rgba(255,215,106,0.55)' : ''}`,
@@ -36,7 +42,7 @@ function MapNode({ node, onClick, disabled, t }) {
         filter: isCleared ? 'grayscale(0.6)' : 'none',
         transform: clickable && hovering ? 'scale(1.1)' : 'scale(1)',
         transition: 'transform 0.15s ease, box-shadow 0.15s ease',
-        fontSize: 'var(--fs-lg)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: isBoss ? 'var(--fs-xl)' : 'var(--fs-lg)', display: 'flex', alignItems: 'center', justifyContent: 'center',
         textShadow: '1px 1px 1px rgba(0,0,0,0.65), -1px -1px 1px rgba(255,255,255,0.12)'
       }}
     >
@@ -47,14 +53,25 @@ function MapNode({ node, onClick, disabled, t }) {
 
 const NODE_LEGEND = ['battle', 'medicine_bench', 'shop', 'event', 'boss']
 
-// Posição percentual de cada nó dentro do painel do mapa — camada vira coluna (X), posição dentro
-// da camada vira linha (Y), espalhada e centralizada verticalmente. Puramente derivado dos dados
-// (sem medir DOM), então as linhas conectoras do SVG e os botões dos nós sempre concordam.
+// O mapa é mais largo que a janela visível (câmera segue o jogador, ver RoguelikeMapCanvas) — X de
+// cada nó vira uma posição fixa em pixels (não percentual do painel), Y continua percentual
+// (a altura não rola, só a largura). MAP_VIEWPORT_WIDTH também é usado no cálculo da câmera — a
+// largura real em CSS usa min(860px, 94vw), então em telas bem estreitas o cálculo fica aproximado.
+const MAP_VIEWPORT_WIDTH = 860
+const LAYER_SPACING = 190
+const MAP_SIDE_PADDING = 70
+
+function mapContentWidth(layerIndexes) {
+  return MAP_SIDE_PADDING * 2 + LAYER_SPACING * Math.max(0, layerIndexes.length - 1)
+}
+
+// Posição de cada nó dentro do painel do mapa — camada vira coluna (X, em pixels), posição dentro
+// da camada vira linha (Y, percentual), espalhada e centralizada verticalmente. Puramente derivado
+// dos dados (sem medir DOM), então as linhas conectoras do SVG e os botões dos nós sempre concordam.
 function layoutNodePositions(layerIndexes, layers) {
   const positions = {}
-  const totalLayers = layerIndexes.length
   layerIndexes.forEach((layerIdx, i) => {
-    const x = totalLayers <= 1 ? 50 : 8 + (i * (84 / (totalLayers - 1)))
+    const x = MAP_SIDE_PADDING + i * LAYER_SPACING
     const nodesInLayer = layers[layerIdx]
     nodesInLayer.forEach((node, idx) => {
       const y = nodesInLayer.length <= 1 ? 50 : 15 + (idx * (70 / (nodesInLayer.length - 1)))
@@ -71,51 +88,133 @@ function layoutNodePositions(layerIndexes, layers) {
 // vectorEffect="non-scaling-stroke" no <line>, evita que o preserveAspectRatio="none" (necessário
 // pra esticar x/y de forma independente) deixe a linha com espessura distorcida.
 function edgeStyle(sourceStatus) {
-  if (sourceStatus === 'cleared') return { stroke: '#ffd76a', strokeWidth: 2.5, strokeDasharray: 'none', opacity: 0.85 }
-  if (sourceStatus === 'available') return { stroke: '#ffd76a', strokeWidth: 2, strokeDasharray: '6,5', opacity: 0.55 }
-  return { stroke: '#8a7358', strokeWidth: 1.5, strokeDasharray: '3,5', opacity: 0.25 }
+  if (sourceStatus === 'cleared') return { stroke: '#ffd76a', strokeWidth: 2.5, strokeDasharray: 'none', opacity: 0.85, flowing: false }
+  if (sourceStatus === 'available') return { stroke: '#ffd76a', strokeWidth: 2, strokeDasharray: '6,5', opacity: 0.6, flowing: true }
+  return { stroke: '#8a7358', strokeWidth: 1.5, strokeDasharray: '3,5', opacity: 0.25, flowing: false }
+}
+
+// Brasas subindo no fundo do painel — posições/tempos fixos (não Math.random() a cada render, senão
+// elas "pulam" de lugar a cada atualização de estado) — só decoração, atrás de tudo o resto.
+const MAP_EMBERS = [
+  { left: 8, delay: 0, duration: 7 }, { left: 18, delay: 2.2, duration: 8.5 }, { left: 30, delay: 4.5, duration: 6.5 },
+  { left: 45, delay: 1.1, duration: 9 }, { left: 58, delay: 3.3, duration: 7.5 }, { left: 70, delay: 5.5, duration: 8 },
+  { left: 82, delay: 0.8, duration: 6.8 }, { left: 92, delay: 2.9, duration: 7.8 }
+]
+
+// Keyframes usados pelo mapa — injetado 1x aqui perto do que os usa (glow "respirando" nos nós
+// disponíveis, brasas subindo, linha tracejada "correndo" pros nós disponíveis, marcador de posição
+// balançando). Tudo via classe/animation, nunca sobrescrevendo o box-shadow/transform inline dos
+// nós (que muda por instância) — o glow e o marcador são elementos à parte, só decorativos.
+const MAP_STYLE_TAG = (
+  <style>{`
+    @keyframes rgNodeGlowGold { 0%, 100% { opacity: 0.5; transform: scale(0.9); } 50% { opacity: 1; transform: scale(1.1); } }
+    @keyframes rgNodeGlowBoss { 0%, 100% { opacity: 0.55; transform: scale(0.92); } 50% { opacity: 1; transform: scale(1.15); } }
+    @keyframes rgEmberFloat { 0% { transform: translateY(0) scale(0.6); opacity: 0; } 15% { opacity: 0.9; } 85% { opacity: 0.35; } 100% { transform: translateY(-220px) scale(1); opacity: 0; } }
+    @keyframes rgDashFlow { to { stroke-dashoffset: -22; } }
+    @keyframes rgMarkerBob { 0%, 100% { transform: translateX(-50%) translateY(0); } 50% { transform: translateX(-50%) translateY(-6px); } }
+    @keyframes rgPanelIn { from { opacity: 0; transform: translateY(10px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+    @keyframes rgBossVignette { 0%, 100% { opacity: 0.25; } 50% { opacity: 0.5; } }
+    @keyframes rgFloatUp { 0% { opacity: 0; transform: translate(-50%, 0) scale(0.8); } 20% { opacity: 1; transform: translate(-50%, -6px) scale(1); } 100% { opacity: 0; transform: translate(-50%, -32px) scale(1); } }
+    .rg-node-pulse { position: absolute; inset: -7px; border-radius: 50%; pointer-events: none; animation: rgNodeGlowGold 2s ease-in-out infinite; box-shadow: 0 0 14px 6px rgba(255,215,106,0.55); }
+    .rg-node-pulse--boss { animation-name: rgNodeGlowBoss; box-shadow: 0 0 18px 8px rgba(255,60,60,0.6); }
+    .rg-edge-flowing { animation: rgDashFlow 1s linear infinite; }
+    .rg-marker { position: absolute; left: 50%; top: -18px; animation: rgMarkerBob 1.6s ease-in-out infinite; pointer-events: none; font-size: var(--fs-md); filter: drop-shadow(0 0 4px rgba(255,150,50,0.8)); }
+    .rg-ember { position: absolute; bottom: 0; width: 3px; height: 3px; border-radius: 50%; background: radial-gradient(circle, #ffd76a, transparent); animation: rgEmberFloat linear infinite; }
+    .rg-map-panel { animation: rgPanelIn 0.5s ease-out; }
+    .rg-boss-vignette { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 50% 100%, rgba(200,20,20,0.5), transparent 65%); animation: rgBossVignette 2.6s ease-in-out infinite; }
+    .rg-hud-stat { position: relative; display: inline-flex; align-items: center; gap: 6px; background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.3)); border: 2px solid #c99a4e; border-radius: 999px; padding: 6px 16px; box-shadow: inset 0 1px 2px rgba(255,255,255,0.15), 0 2px 6px rgba(0,0,0,0.4); }
+    .rg-floating-feedback { position: absolute; left: 50%; top: -6px; font-weight: 700; font-size: var(--fs-sm); white-space: nowrap; animation: rgFloatUp 1.5s ease-out forwards; pointer-events: none; }
+    .rg-floating-feedback--gold { color: #ffd76a; text-shadow: 0 0 6px rgba(255,215,106,0.8); }
+    .rg-floating-feedback--life { color: #ff6b6b; text-shadow: 0 0 6px rgba(255,60,60,0.8); }
+  `}</style>
+)
+
+// Silhuetas de montanha/floresta no fundo do painel (2 camadas, clip-path) — só pra dar sensação de
+// ambiente/profundidade em vez de um gradiente liso. Puramente decorativo, sem depender de imagem.
+function MapBackdrop() {
+  return (
+    <>
+      <div style={{
+        position: 'absolute', left: 0, right: 0, bottom: 0, height: '55%', opacity: 0.35, background: '#1a3a2e',
+        clipPath: 'polygon(0% 100%, 0% 45%, 8% 58%, 18% 32%, 30% 60%, 42% 22%, 55% 52%, 68% 18%, 80% 50%, 92% 28%, 100% 48%, 100% 100%)'
+      }} />
+      <div style={{
+        position: 'absolute', left: 0, right: 0, bottom: 0, height: '38%', opacity: 0.55, background: '#0d1f17',
+        clipPath: 'polygon(0% 100%, 0% 62%, 12% 76%, 25% 48%, 38% 74%, 50% 40%, 63% 70%, 76% 44%, 88% 66%, 100% 52%, 100% 100%)'
+      }} />
+    </>
+  )
 }
 
 // Painel do mapa em si — moldura de "mapa de expedição" com as linhas do grafo desenhadas em SVG
-// por baixo dos nós (mesmas coordenadas percentuais dos dois, calculadas 1x por render).
-function RoguelikeMapCanvas({ layers, layerIndexes, disabledTypes, onEnterNode, t }) {
+// por baixo dos nós. O conteúdo (linhas+nós) é mais largo que a janela visível e desliza como uma
+// câmera seguindo o jogador: a camada do último nó visitado fica sempre perto do início da tela,
+// revelando o que vem pela frente, em vez de encolher o mapa inteiro pra caber de uma vez. Fundo
+// (montanhas/brasas) fica fixo na janela — só o "terreno" em si se move, dando profundidade.
+// Nó disponível ganha um glow pulsante (vermelho pro Boss), o último nó visitado ganha um marcador
+// de "você está aqui", e o caminho ainda aberto tem a linha tracejada "correndo" na direção certa.
+function RoguelikeMapCanvas({ layers, layerIndexes, disabledTypes, currentNodeId, onEnterNode, t }) {
   const positions = layoutNodePositions(layerIndexes, layers)
   const allNodes = layerIndexes.flatMap(layerIdx => layers[layerIdx])
+  const bossAvailable = allNodes.some(n => n.type === 'boss' && n.status === 'available')
+  const contentWidth = mapContentWidth(layerIndexes)
+
+  const currentNode = allNodes.find(n => n.id === currentNodeId)
+  const focusX = MAP_SIDE_PADDING + (currentNode ? currentNode.layer : 0) * LAYER_SPACING
+  const scrollX = Math.max(0, Math.min(contentWidth - MAP_VIEWPORT_WIDTH, focusX - MAP_VIEWPORT_WIDTH * 0.32))
 
   return (
     <div>
-      <div style={{
-        position: 'relative', width: '100%', height: 'clamp(260px, 32vw, 420px)',
+      {MAP_STYLE_TAG}
+      <div className="rg-map-panel" style={{
+        position: 'relative', width: 'min(860px, 94vw)', margin: '0 auto', height: 'clamp(320px, 40vw, 500px)',
         background: 'radial-gradient(ellipse at 50% 20%, rgba(255,255,255,0.05), transparent 55%), linear-gradient(180deg, #3a2718, #201409)',
         border: '3px solid #c99a4e', borderRadius: '16px',
         boxShadow: 'inset 0 0 50px rgba(0,0,0,0.55), 0 6px 18px rgba(0,0,0,0.4)',
         overflow: 'hidden'
       }}>
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
-          {allNodes.flatMap(node => node.edgesTo.map(targetId => {
-            const from = positions[node.id]
-            const to = positions[targetId]
-            if (!from || !to) return null
-            const style = edgeStyle(node.status)
-            return (
-              <line
-                key={`${node.id}-${targetId}`}
-                x1={from.x} y1={from.y} x2={to.x} y2={to.y}
-                stroke={style.stroke} strokeWidth={style.strokeWidth} strokeDasharray={style.strokeDasharray}
-                opacity={style.opacity} strokeLinecap="round" vectorEffect="non-scaling-stroke"
-              />
-            )
-          }))}
-        </svg>
+        <MapBackdrop />
+        {bossAvailable && <div className="rg-boss-vignette" />}
 
-        {allNodes.map(node => {
-          const pos = positions[node.id]
-          return (
-            <div key={node.id} style={{ position: 'absolute', left: `${pos.x}%`, top: `${pos.y}%`, transform: 'translate(-50%, -50%)' }}>
-              <MapNode node={node} disabled={disabledTypes.has(node.type)} onClick={() => onEnterNode(node.id)} t={t} />
-            </div>
-          )
-        })}
+        {MAP_EMBERS.map((ember, i) => (
+          <div key={i} className="rg-ember" style={{ left: `${ember.left}%`, animationDelay: `${ember.delay}s`, animationDuration: `${ember.duration}s` }} />
+        ))}
+
+        <div style={{
+          position: 'absolute', left: 0, top: 0, height: '100%', width: `${contentWidth}px`,
+          transform: `translateX(-${scrollX}px)`, transition: 'transform 0.7s ease'
+        }}>
+          <svg viewBox={`0 0 ${contentWidth} 100`} preserveAspectRatio="none" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
+            {allNodes.flatMap(node => node.edgesTo.map(targetId => {
+              const from = positions[node.id]
+              const to = positions[targetId]
+              if (!from || !to) return null
+              const style = edgeStyle(node.status)
+              return (
+                <line
+                  key={`${node.id}-${targetId}`}
+                  className={style.flowing ? 'rg-edge-flowing' : undefined}
+                  x1={from.x} y1={from.y} x2={to.x} y2={to.y}
+                  stroke={style.stroke} strokeWidth={style.strokeWidth} strokeDasharray={style.strokeDasharray}
+                  opacity={style.opacity} strokeLinecap="round" vectorEffect="non-scaling-stroke"
+                />
+              )
+            }))}
+          </svg>
+
+          {allNodes.map(node => {
+            const pos = positions[node.id]
+            const disabled = disabledTypes.has(node.type)
+            const clickable = node.status === 'available' && !disabled
+            return (
+              <div key={node.id} style={{ position: 'absolute', left: `${pos.x}px`, top: `${pos.y}%`, transform: 'translate(-50%, -50%)' }}>
+                {clickable && <div className={`rg-node-pulse${node.type === 'boss' ? ' rg-node-pulse--boss' : ''}`} />}
+                {node.id === currentNodeId && <span className="rg-marker">🔥</span>}
+                <MapNode node={node} disabled={disabled} onClick={() => onEnterNode(node.id)} t={t} />
+              </div>
+            )
+          })}
+        </div>
       </div>
 
       <div style={{
@@ -127,6 +226,17 @@ function RoguelikeMapCanvas({ layers, layerIndexes, disabledTypes, onEnterNode, 
         ))}
       </div>
     </div>
+  )
+}
+
+// Plaqueta de HUD (vidas/dogecoins) com texto flutuante "+N"/"-N" passageiro quando o valor muda —
+// `feedback` já vem filtrado pro tipo certo (gold/life) por quem chama.
+function HudStat({ icon, value, feedback }) {
+  return (
+    <span className="rg-hud-stat">
+      {icon}<strong>{value}</strong>
+      {feedback.map(f => <span key={f.id} className={`rg-floating-feedback rg-floating-feedback--${f.type}`}>{f.text}</span>)}
+    </span>
   )
 }
 
@@ -533,6 +643,42 @@ function Roguelike() {
     setZoomCard(null)
   }
 
+  // Texto flutuante "+N"/"-N" no HUD quando dogecoins sobe ou vidas cai. Detecção comparando com o
+  // snapshot do render anterior guardado em STATE (não ref — refs não podem ser lidos/escritos
+  // durante o render) direto no corpo do componente: é o padrão documentado do React pra "ajustar
+  // estado quando algo muda", dispara já no mesmo ciclo, sem precisar de useEffect pra isso. Só
+  // conta a partir da 2ª leitura (a 1ª só define a base, senão o valor inicial da run "piscaria"
+  // como se tivesse acabado de ganhar tudo de uma vez).
+  const [feedback, setFeedback] = useState([])
+  const [prevStats, setPrevStats] = useState(null)
+  const scheduledFeedbackIdsRef = useRef(new Set())
+  if (run && run.active) {
+    if (prevStats && (run.dogecoins !== prevStats.dogecoins || run.lives !== prevStats.lives)) {
+      const toasts = []
+      // Id derivado só do valor novo em si (nunca Date.now()/Math.random() — render precisa ser
+      // puro): único o bastante na prática, já que vidas/dogecoins mudam pra um valor novo a cada
+      // evento que gera um texto flutuante.
+      if (run.dogecoins > prevStats.dogecoins) toasts.push({ id: `gold-${run.dogecoins}`, text: `+${run.dogecoins - prevStats.dogecoins}`, type: 'gold' })
+      if (run.lives < prevStats.lives) toasts.push({ id: `life-${run.lives}`, text: `-${prevStats.lives - run.lives}`, type: 'life' })
+      setPrevStats({ lives: run.lives, dogecoins: run.dogecoins })
+      if (toasts.length > 0) setFeedback(f => [...f, ...toasts])
+    } else if (!prevStats) {
+      setPrevStats({ lives: run.lives, dogecoins: run.dogecoins })
+    }
+  }
+  // Cada texto some sozinho depois de 1.5s — inscrição num timer de verdade (setTimeout), com
+  // setState só dentro do callback assíncrono dele, não sincronamente no corpo do efeito.
+  useEffect(() => {
+    for (const item of feedback) {
+      if (scheduledFeedbackIdsRef.current.has(item.id)) continue
+      scheduledFeedbackIdsRef.current.add(item.id)
+      setTimeout(() => {
+        setFeedback(f => f.filter(x => x.id !== item.id))
+        scheduledFeedbackIdsRef.current.delete(item.id)
+      }, 1500)
+    }
+  }, [feedback])
+
   const loadStatus = () => {
     apiFetch('/api/roguelike/status').then(r => r.json()).then(data => {
       setRun(data)
@@ -641,8 +787,12 @@ function Roguelike() {
       {run.active && !isFinished && (
         <div style={{ maxWidth: 'var(--panel-w-lg)', margin: '1.5rem auto', color: '#f3e2b3' }}>
           <div style={{ display: 'flex', justifyContent: 'center', gap: 'var(--sp-lg)', fontSize: 'var(--fs-md)', marginBottom: 'var(--sp-lg)' }}>
-            <span>❤️ {t('roguelikeLivesLabel', { lives: run.lives })}</span>
-            <span><img src="/dogecoin.webp" alt="dogecoin" style={{ width: '1.2em', height: '1.2em', verticalAlign: 'middle', marginRight: '4px' }} />{run.dogecoins}</span>
+            <HudStat icon="❤️ " value={t('roguelikeLivesLabel', { lives: run.lives })} feedback={feedback.filter(f => f.type === 'life')} />
+            <HudStat
+              icon={<img src="/dogecoin.webp" alt="dogecoin" style={{ width: '1.2em', height: '1.2em', verticalAlign: 'middle', marginRight: '4px' }} />}
+              value={run.dogecoins}
+              feedback={feedback.filter(f => f.type === 'gold')}
+            />
           </div>
 
           <h2 style={{ fontSize: 'var(--fs-lg)' }}>{t('roguelikeMapTitle')}</h2>
@@ -650,6 +800,7 @@ function Roguelike() {
             layers={layers}
             layerIndexes={layerIndexes}
             disabledTypes={NODES_COMING_SOON}
+            currentNodeId={run.currentNodeId}
             onEnterNode={enterNode}
             t={t}
           />
