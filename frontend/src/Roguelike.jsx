@@ -808,7 +808,7 @@ function Roguelike() {
 
   if (loading || !run) return <p style={{ padding: '2rem' }}>{t('roguelikeLoading')}</p>
 
-  const isFinished = run.active && (run.status === 'finished_win' || run.status === 'finished_dead')
+  const isFinished = run.active && (run.status === 'finished_win' || run.status === 'finished_dead' || run.status === 'finished_forfeit')
   const layers = run.active && !isFinished
     ? Object.values(run.map.nodes).reduce((acc, n) => {
         (acc[n.layer] ||= []).push(n)
