@@ -3107,9 +3107,7 @@ io.on('connection', (socket) => {
       }
       const effTag = effectTagOf(card.effect_text);
       if (effTag) incrementMission(sidePlayerId, 'play_effect_tag', effTag, 1);
-      EffectEngine.runTrigger(tm, 'onDeploy', result.instance, self, opponent, { isBot: false });
-      EffectEngine.notifyAllyDeploy(tm, self, opponent, result.instance, { isBot: false });
-      tm.checkOverloadedPals(self, opponent, result.instance, false);
+      tm.runDeployFollowups(self, opponent, result.instance, false);
     } else {
       socket.emit('match:error', { message: MATCH_DEPLOY_FAIL_MESSAGES[result.reason] || 'Não foi possível deployar essa carta agora.' });
     }
@@ -3612,9 +3610,7 @@ io.on('connection', (socket) => {
       }
       const effTag = effectTagOf(card.effect_text);
       if (effTag) incrementMission(playerId, 'play_effect_tag', effTag, 1);
-      EffectEngine.runTrigger(match.turnManager, 'onDeploy', result.instance, match.playerState, match.botState, { isBot: false });
-      EffectEngine.notifyAllyDeploy(match.turnManager, match.playerState, match.botState, result.instance, { isBot: false });
-      match.turnManager.checkOverloadedPals(match.playerState, match.botState, result.instance, false);
+      match.turnManager.runDeployFollowups(match.playerState, match.botState, result.instance, false);
     } else {
       socket.emit('bot:error', { message: DEPLOY_FAIL_MESSAGES[result.reason] || 'Não foi possível deployar essa carta agora.' });
     }

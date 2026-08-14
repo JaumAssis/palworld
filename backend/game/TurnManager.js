@@ -294,6 +294,15 @@ class TurnManager {
       if (!result.paused && !this.pendingEffect) this._resumeAttackAfterTrigger()
       return
     }
+    // Elphidran Aqua ("choose 1 card... put on top of deck") seguido da Regra 11.5 (mais de 5 Pals)
+    // — o passo de baixo só roda depois que o de cima (se abriu pendingEffect) for resolvido.
+    const deployCont = this._pendingDeployContinuation
+    if (deployCont) {
+      this._pendingDeployContinuation = null
+      const result = this._runDeployStep(deployCont.step, deployCont.casterState, deployCont.opponentState, deployCont.instance, deployCont.isBot)
+      if (!result.paused && !this.pendingEffect) this._resumeAttackAfterTrigger()
+      return
+    }
     const endTurnCont = this._pendingEndTurnContinuation
     if (endTurnCont) {
       this._pendingEndTurnContinuation = null
@@ -742,9 +751,7 @@ class TurnManager {
       if (rested) instance.rest()
       casterState.basePals.push(instance)
       this._addLog(`${casterState.playerName} deployou ${cardData.name}.`)
-      EffectEngine.runTrigger(this, 'onDeploy', instance, casterState, opponentState, { isBot })
-      EffectEngine.notifyAllyDeploy(this, casterState, opponentState, instance, { isBot })
-      this.checkOverloadedPals(casterState, opponentState, instance, isBot)
+      this.runDeployFollowups(casterState, opponentState, instance, isBot)
     } else if (cardData.card_type === 'Structure') {
       instance = new StructureInstance(cardData)
       if (rested) instance.rest()
@@ -763,6 +770,36 @@ class TurnManager {
     }
 
     return { success: true, instance }
+  }
+
+  // Depois de deployar um Pal, 3 coisas em ORDEM podem abrir uma escolha do jogador: o próprio
+  // onDeploy da carta (ex: Elphidran Aqua — "Draw 2 cards, choose 1 card from your hand, and put it
+  // on the top of the deck"), o onAllyDeploy de outras cartas suas que observam qualquer deploy, e só
+  // por último a Regra 11.5 (mais de 5 Pals em campo, escolher quem sacrificar). Sem isso, o passo de
+  // baixo (ex: overloaded pals) abria seu próprio pendingEffect por cima do de cima (ex: Elphidran)
+  // antes do jogador conseguir nem ver a escolha da própria carta que acabou de jogar.
+  runDeployFollowups(casterState, opponentState, instance, isBot) {
+    return this._runDeployStep(0, casterState, opponentState, instance, isBot)
+  }
+
+  _runDeployStep(step, casterState, opponentState, instance, isBot) {
+    if (step === 0) {
+      const result = EffectEngine.runTrigger(this, 'onDeploy', instance, casterState, opponentState, { isBot })
+      if (result.paused) {
+        this._pendingDeployContinuation = { step: 1, casterState, opponentState, instance, isBot }
+        return { paused: true }
+      }
+      return this._runDeployStep(1, casterState, opponentState, instance, isBot)
+    }
+    if (step === 1) {
+      EffectEngine.notifyAllyDeploy(this, casterState, opponentState, instance, { isBot })
+      if (this.pendingEffect) {
+        this._pendingDeployContinuation = { step: 2, casterState, opponentState, instance, isBot }
+        return { paused: true }
+      }
+      return this._runDeployStep(2, casterState, opponentState, instance, isBot)
+    }
+    return this.checkOverloadedPals(casterState, opponentState, instance, isBot)
   }
 
   // Regra 11.5 (Overloaded Pals Resolution): passar do limite de 5 Pals não bloqueia o deploy — o

@@ -167,9 +167,7 @@ async function performAction(action, { tm, self, opponent, emit }) {
       const result = self.tryDeployPal(action.card)
       if (result.success) {
         tm._addLog(`${self.playerName} jogou ${action.card.name}.`)
-        EffectEngine.runTrigger(tm, 'onDeploy', result.instance, self, opponent, { isBot: true })
-        EffectEngine.notifyAllyDeploy(tm, self, opponent, result.instance, { isBot: true })
-        tm.checkOverloadedPals(self, opponent, result.instance, true)
+        tm.runDeployFollowups(self, opponent, result.instance, true)
       }
       return
     }
