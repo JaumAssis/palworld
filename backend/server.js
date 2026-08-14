@@ -3064,8 +3064,12 @@ app.post('/api/roguelike/forfeit', requirePlayer, (req, res) => {
   if (run.status === 'in_battle') {
     return res.status(400).json({ error: 'Termine a batalha atual antes de desistir da expedição.' });
   }
-  convertRoguelikeDogecoins(run.player_id, run.dogecoins);
-  db.prepare("UPDATE roguelike_runs SET status = 'finished_forfeit', finished_at = CURRENT_TIMESTAMP WHERE id = ?").run(run.id);
+  // Desistir custa metade dos dogecoins acumulados (arredondado pra baixo) — só a outra metade
+  // passa pela conversão normal (ver computeRoguelikeDogecoinConversion). Grava o valor já
+  // penalizado na run, então o payload/resumo final mostram exatamente o que foi convertido.
+  const penalizedDogecoins = Math.floor(run.dogecoins / 2);
+  convertRoguelikeDogecoins(run.player_id, penalizedDogecoins);
+  db.prepare("UPDATE roguelike_runs SET status = 'finished_forfeit', dogecoins = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ?").run(penalizedDogecoins, run.id);
   res.json(buildRoguelikeRunPayload(db.prepare('SELECT * FROM roguelike_runs WHERE id = ?').get(run.id)));
 });
 

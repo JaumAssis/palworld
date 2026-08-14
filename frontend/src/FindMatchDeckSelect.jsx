@@ -342,7 +342,10 @@ function FindMatchDeckSelect() {
   // ================= SELEÇÃO DE DECK =================
   if (stage === 'selecting') {
     // Modo Arena (draft): sem deck pra escolher — o findMatch já foi disparado sozinho (ver efeito
-    // acima), essa tela só aparece por uma fração de segundo até o servidor confirmar a entrada na fila.
+    // acima). Normalmente essa tela só aparece por uma fração de segundo até o servidor confirmar a
+    // entrada na fila (stage vira 'searching'), MAS também é pra onde cancelSearch() manda de volta
+    // depois de um cancelamento — sem um link de saída aqui, cancelar a busca parecia não fazer nada
+    // (o servidor já tinha tirado da fila, só a tela continuava idêntica à de "procurando").
     if (isArenaDraft) {
       return (
         <div style={{
@@ -351,6 +354,7 @@ function FindMatchDeckSelect() {
         }}>
           <p style={WOOD_P}>{t('findMatchSearching')}</p>
           {errorMsg && <p style={{ ...WOOD_P, color: '#ff8a8a' }}>{errorMsg}</p>}
+          <Link to="/arena"><button className="sign-button">{t('findMatchBack')}</button></Link>
         </div>
       )
     }
