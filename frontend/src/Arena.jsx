@@ -7,6 +7,51 @@ const COLOR_SWATCH = { Red: '#c62828', Blue: '#1565c0', Green: '#2e7d32', Purple
 const ARENA_TICKET_PRICE = 100 // só pra exibição/gate de UI — o servidor revalida o preço de verdade
 const CHEST_EMOJI = { wood: '📦', bronze: '🥉', silver: '🥈', gold: '🏆' }
 
+// Lista agrupada das cartas escolhidas + curva de custo — mostrado tanto durante o draft (pra
+// acompanhar em tempo real) quanto na tela de "deck pronto" (pra revisar o deck fechado).
+function DraftedCardsPanels({ groupedDraftedCards, costCurve, costCurveMax, t }) {
+  return (
+    <div style={{ display: 'flex', gap: 'var(--sp-lg)', justifyContent: 'center', flexWrap: 'wrap', marginTop: 'var(--sp-xl)', textAlign: 'left' }}>
+      <div style={{ flex: '1 1 280px', maxWidth: '360px', background: 'rgba(0,0,0,0.3)', borderRadius: '10px', padding: 'var(--sp-md)' }}>
+        <h3 style={{ fontSize: 'var(--fs-md)', margin: '0 0 8px' }}>{t('arenaDraftedListTitle')}</h3>
+        {groupedDraftedCards.length === 0 ? (
+          <p style={{ fontSize: 'var(--fs-sm)', color: '#d9c4a3', margin: 0 }}>{t('arenaDraftedListEmpty')}</p>
+        ) : (
+          <div style={{ maxHeight: '260px', overflowY: 'auto' }}>
+            {groupedDraftedCards.map(({ name, cost, count }) => (
+              <div key={name} style={{
+                display: 'flex', justifyContent: 'space-between', gap: '8px', fontSize: 'var(--fs-sm)',
+                padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.08)'
+              }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <strong style={{ color: '#ffd76a' }}>{cost}</strong> {name}
+                </span>
+                <span style={{ flexShrink: 0 }}>x{count}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div style={{ flex: '1 1 280px', maxWidth: '360px', background: 'rgba(0,0,0,0.3)', borderRadius: '10px', padding: 'var(--sp-md)' }}>
+        <h3 style={{ fontSize: 'var(--fs-md)', margin: '0 0 8px' }}>{t('arenaCostCurveTitle')}</h3>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '6px', height: 'clamp(100px, 14vw, 150px)' }}>
+          {costCurve.map(({ cost, count }) => (
+            <div key={cost} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
+              <span style={{ fontSize: 'var(--fs-2xs)', minHeight: '1.2em' }}>{count > 0 ? count : ''}</span>
+              <div style={{
+                width: '100%', background: 'linear-gradient(180deg, #ffd76a, #c99a4e)', borderRadius: '3px 3px 0 0',
+                height: `${(count / costCurveMax) * 100}%`, minHeight: count > 0 ? '4px' : '0'
+              }} />
+              <span style={{ fontSize: 'var(--fs-2xs)', marginTop: '4px', color: '#d9c4a3' }}>{cost}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // Modo Arena (draft temporário estilo Hearthstone). Fase 1: comprar ingresso, escolher 2 cores,
 // draftar 50 cartas 1-de-3. Fase 2: fila própria contra outro jogador (ou bot com deck aleatório
 // depois de 15s) e o motor de partida (ver FindMatchDeckSelect.jsx, matchType 'arenaDraft'). Fase 3:
@@ -80,6 +125,24 @@ function Arena() {
   }
 
   if (loading || !run) return <p style={{ padding: '2rem' }}>{t('arenaLoading')}</p>
+
+  // Derivados só usados durante o draft de carta — o espaço abaixo das 3 ofertas ficava vazio, então
+  // aproveitamos pra mostrar o que já foi escolhido: lista agrupada (nome + quantas cópias) e a curva
+  // de custo (quantas cartas de cada custo), que vai mudando de forma a cada pick.
+  const draftedCards = run.draftedCards || []
+  const groupedDraftedCards = Object.values(
+    draftedCards.reduce((acc, c) => {
+      if (!acc[c.name]) acc[c.name] = { name: c.name, cost: c.cost, count: 0 }
+      acc[c.name].count++
+      return acc
+    }, {})
+  ).sort((a, b) => a.cost - b.cost || a.name.localeCompare(b.name))
+
+  const maxAxisCost = Math.max(8, ...draftedCards.map(c => c.cost || 0))
+  const costBuckets = {}
+  for (const c of draftedCards) costBuckets[c.cost] = (costBuckets[c.cost] || 0) + 1
+  const costCurve = Array.from({ length: maxAxisCost }, (_, i) => ({ cost: i + 1, count: costBuckets[i + 1] || 0 }))
+  const costCurveMax = Math.max(1, ...costCurve.map(b => b.count))
 
   return (
     <div style={{
@@ -169,11 +232,13 @@ function Arena() {
               </div>
             ))}
           </div>
+
+          <DraftedCardsPanels groupedDraftedCards={groupedDraftedCards} costCurve={costCurve} costCurveMax={costCurveMax} t={t} />
         </div>
       )}
 
       {run.active && run.status === 'ready' && (
-        <div style={{ maxWidth: 'var(--panel-w-sm)', margin: '2rem auto', color: '#f3e2b3' }}>
+        <div style={{ maxWidth: 'var(--panel-w-lg)', margin: '2rem auto', color: '#f3e2b3' }}>
           <h2 style={{ fontSize: 'var(--fs-lg)' }}>{t('arenaDeckReadyTitle')}</h2>
           <p style={{ fontSize: 'var(--fs-md)' }}>{t('arenaDeckReadySummary', { colors: run.colors.join(' + ') })}</p>
           <p style={{ fontSize: 'var(--fs-sm)' }}>{t('arenaRunScoreLabel', { wins: run.wins, losses: run.losses })}</p>
@@ -182,6 +247,7 @@ function Arena() {
               {t('findMatchSearchButton')}
             </button>
           </Link>
+          <DraftedCardsPanels groupedDraftedCards={groupedDraftedCards} costCurve={costCurve} costCurveMax={costCurveMax} t={t} />
         </div>
       )}
 

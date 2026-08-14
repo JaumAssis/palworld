@@ -2659,6 +2659,16 @@ function getAllCardsHydrated() {
   return getCardsByNumbers(numbers);
 }
 
+// Lista enxuta (nome + custo) na ordem dos picks, com repetição — o front usa isso pra montar a
+// lista agrupada e a curva de custo, tanto durante o draft quanto na tela de "deck pronto".
+function buildDraftedCardsList(allCards, mainDeck) {
+  const byNumber = new Map(allCards.map(c => [c.card_number, c]));
+  return mainDeck.map(num => {
+    const c = byNumber.get(num);
+    return { cardNumber: c.card_number, name: c.name, cost: c.cost };
+  });
+}
+
 function getActiveArenaRun(playerId) {
   return db.prepare("SELECT * FROM arena_runs WHERE player_id = ? AND status != 'finished' ORDER BY id DESC LIMIT 1").get(playerId);
 }
@@ -2716,10 +2726,15 @@ function buildArenaRunPayload(run) {
   } else if (run.status === 'drafting_color2') {
     payload.colorOffer = arenaDraft.offerSecondColorTrio(colors[0]);
   } else if (run.status === 'drafting_cards') {
-    const pool = arenaDraft.buildEligiblePool(getAllCardsHydrated(), colors);
+    const allCards = getAllCardsHydrated();
+    const pool = arenaDraft.buildEligiblePool(allCards, colors);
     payload.cardOffer = arenaDraft.offerCardTrio(pool, mainDeck).map(c => ({
       cardNumber: c.card_number, name: c.name, imageUrl: c.image_url, cost: c.cost, colors: c.colors
     }));
+    payload.draftedCards = buildDraftedCardsList(allCards, mainDeck);
+  } else if (run.status === 'ready') {
+    // Deck fechado — mesma lista/curva de custo do draft continuam visíveis na tela de "deck pronto".
+    payload.draftedCards = buildDraftedCardsList(getAllCardsHydrated(), mainDeck);
   } else if (run.status === 'finished') {
     // Só chega aqui quando o baú ainda não foi resgatado (ver getUnclaimedFinishedArenaRun) — a
     // faixa é só uma prévia pro front mostrar qual baú vai abrir; o resgate de verdade acontece em
