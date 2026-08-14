@@ -284,6 +284,16 @@ class TurnManager {
       this.pendingBattle = battle
       return
     }
+    // Fila de gatilhos da resolução de dano (onAttacked/onGraveyard/onLeaveBase/onEndOfBattleAttacked)
+    // — ex: Leezpunk perguntando qual carta descartar, seguido de Bushi perguntando se volta pra mão;
+    // sem isso, o 2o atropelava o pendingEffect do 1o (ver _resolveDamage/_runDamageTriggerQueue).
+    const damageCont = this._pendingDamageTriggerContinuation
+    if (damageCont) {
+      this._pendingDamageTriggerContinuation = null
+      const result = this._runDamageTriggerQueue(damageCont.queue, damageCont.index, damageCont.battle)
+      if (!result.paused && !this.pendingEffect) this._resumeAttackAfterTrigger()
+      return
+    }
     const endTurnCont = this._pendingEndTurnContinuation
     if (endTurnCont) {
       this._pendingEndTurnContinuation = null
@@ -350,12 +360,17 @@ class TurnManager {
     const skipDamage = battle.nullified || attackerGone
 
     this.pendingBattle = null
-    const damageResult = skipDamage ? {} : this._resolveDamage(battle)
-    if (!skipDamage) {
-      EffectEngine.runTrigger(this, 'onEndOfBattleAttacked', battle.attackerInstance, battle.attackerState, battle.defenderState, { isBot: this.player2IsBot && battle.attackerState === this.player2 })
+    if (skipDamage) {
+      battle.resolveWait()
+      return { success: true, paused: false, nullified: true }
     }
-    battle.resolveWait()
-    return { success: true, paused: false, nullified: skipDamage, ...damageResult }
+    // _resolveDamage agora empilha onAttacked/onGraveyard/onLeaveBase/onEndOfBattleAttacked numa fila
+    // (ver _runDamageTriggerQueue) em vez de disparar cada um na hora — um gatilho anterior que pausa
+    // (ex: Leezpunk perguntando qual carta o oponente descarta) não pode ser atropelado pelo próximo
+    // (ex: Bushi perguntando se volta pra mão) só porque ninguém checava pendingEffect no meio do caminho.
+    const damageResult = this._resolveDamage(battle)
+    if (damageResult.paused) return { success: true, paused: true }
+    return { success: true, paused: false, nullified: false, ...damageResult }
   }
 
   _applyBlock(battle, blockerInstance) {
@@ -474,71 +489,108 @@ class TurnManager {
     return this._advanceBattle(battle)
   }
 
-  // Passo 9.6 — resolve o dano depois que Block e Quick Step já foram decididos
+  // Passo 9.6 — resolve o dano depois que Block e Quick Step já foram decididos. Os gatilhos que essa
+  // resolução pode disparar (onAttacked, onGraveyard/onLeaveBase de quem morreu, onEndOfBattleAttacked)
+  // vão todos numa FILA (ver _runDamageTriggerQueue) em vez de rodarem soltos um atrás do outro — um
+  // deles pode abrir uma escolha do jogador (ex: Leezpunk perguntando qual carta o oponente descarta),
+  // e o próximo da fila só roda DEPOIS que essa escolha for resolvida, nunca por cima dela.
   _resolveDamage(battle) {
     const { attackerInstance, attackerState, defenderState, target } = battle
+    const queue = []
+    let syncResult
 
     if (target.type === 'pal') {
-      EffectEngine.runTrigger(this, 'onAttacked', target.instance, defenderState, attackerState, { isBot: this.player2IsBot && defenderState === this.player2 })
-      return this.resolveBattle(attackerInstance, target.instance)
-    }
-
-    if (target.type === 'structure') {
+      queue.push({ name: 'onAttacked', instance: target.instance, casterState: defenderState, opponentState: attackerState, isBot: this.player2IsBot && defenderState === this.player2 })
+      syncResult = this._resolveBattle(attackerInstance, target.instance, queue)
+    } else if (target.type === 'structure') {
       // 9.6.3.2 — dano unidirecional, a Structure não bate de volta no atacante
       const power = attackerInstance.effectivePower(attackerState, defenderState)
       target.instance.damageMarked += power
       const structureDestroyed = target.instance.isDestroyed
       this._addLog(`${attackerInstance.data.name} atacou a Structure ${target.instance.data.name} (${power} de dano).`)
-      // Via _sendToGraveyard (não splice direto) pra disparar onGraveyard/onLeaveBase da própria
-      // Structure destruída (ex: Wooden Wall "AUTO When this card is put into the graveyard, draw 1").
       if (structureDestroyed) {
-        this._sendToGraveyard(target.instance, defenderState)
+        this._sendToGraveyardQueued(target.instance, defenderState, queue)
         this._addLog(`${target.instance.data.name} foi destruída.`)
       }
-      return { structureDestroyed }
-    }
-
-    const strike = attackerInstance.effectiveStrike(attackerState, defenderState)
-    const revealed = []
-    for (let i = 0; i < strike; i++) {
-      if (defenderState.deck.length === 0) {
-        this._endGame(attackerState)
-        return { gameEnded: true }
-      }
-      revealed.push(defenderState.deck.shift())
-    }
-
-    const canceled = revealed.some(c => c.is_lucky)
-    let damageDealt = 0
-    if (!canceled) {
-      defenderState.life -= strike
-      damageDealt = strike
-    }
-    defenderState.graveyard.push(...revealed)
-
-    if (canceled) {
-      this._addLog(`${attackerInstance.data.name} atacou ${defenderState.playerName} diretamente, mas revelou um Lucky Pal — ataque anulado.`)
+      syncResult = { structureDestroyed }
     } else {
-      this._addLog(`${attackerInstance.data.name} atacou ${defenderState.playerName} diretamente e causou ${damageDealt} de dano.`)
+      // Alvo é o jogador direto — "vida" nesse jogo é revelar Strike cartas do topo do deck do defensor.
+      const strike = attackerInstance.effectiveStrike(attackerState, defenderState)
+      const revealed = []
+      let deckedOut = false
+      for (let i = 0; i < strike; i++) {
+        if (defenderState.deck.length === 0) { deckedOut = true; break }
+        revealed.push(defenderState.deck.shift())
+      }
+
+      if (deckedOut) {
+        this._endGame(attackerState)
+        syncResult = { gameEnded: true }
+      } else {
+        const canceled = revealed.some(c => c.is_lucky)
+        let damageDealt = 0
+        if (!canceled) {
+          defenderState.life -= strike
+          damageDealt = strike
+        }
+        defenderState.graveyard.push(...revealed)
+
+        if (canceled) {
+          this._addLog(`${attackerInstance.data.name} atacou ${defenderState.playerName} diretamente, mas revelou um Lucky Pal — ataque anulado.`)
+        } else {
+          this._addLog(`${attackerInstance.data.name} atacou ${defenderState.playerName} diretamente e causou ${damageDealt} de dano.`)
+        }
+
+        this.lastDamageReveal = {
+          id: ++this._damageRevealSeq,
+          attackerName: attackerInstance.data.name,
+          defenderName: defenderState.playerName,
+          canceled,
+          damageDealt,
+          cards: revealed.map(c => ({ cardNumber: c.card_number, name: c.name, imageUrl: c.image_url, isLucky: !!c.is_lucky }))
+        }
+
+        if (defenderState.life <= 0) {
+          this._endGame(attackerState)
+          syncResult = { canceled, damageDealt, revealed, gameEnded: true }
+        } else {
+          syncResult = { canceled, damageDealt, revealed, gameEnded: false }
+        }
+      }
     }
 
-    this.lastDamageReveal = {
-      id: ++this._damageRevealSeq,
-      attackerName: attackerInstance.data.name,
-      defenderName: defenderState.playerName,
-      canceled,
-      damageDealt,
-      cards: revealed.map(c => ({ cardNumber: c.card_number, name: c.name, imageUrl: c.image_url, isLucky: !!c.is_lucky }))
-    }
+    // "AUTO At the end of the battle this card attacked, ..." (Bushi – Ephemeral Blade) — vale pra
+    // qualquer tipo de alvo, sempre por último na fila.
+    queue.push({
+      name: 'onEndOfBattleAttacked', instance: attackerInstance, casterState: attackerState, opponentState: defenderState,
+      isBot: this.player2IsBot && attackerState === this.player2
+    })
 
-    if (defenderState.life <= 0) {
-      this._endGame(attackerState)
-      return { canceled, damageDealt, revealed, gameEnded: true }
-    }
-    return { canceled, damageDealt, revealed, gameEnded: false }
+    const queueResult = this._runDamageTriggerQueue(queue, 0, battle)
+    return { ...syncResult, paused: queueResult.paused }
   }
 
-  resolveBattle(attackerInstance, defenderInstance) {
+  // Roda a fila de gatilhos da resolução de dano em ordem, um de cada vez — se um pausar esperando
+  // o jogador, guarda o resto da fila pra retomar depois (ver _resumeAttackAfterTrigger) e só chama
+  // battle.resolveWait() quando TODOS já tiverem rodado, nunca antes (senão o front acha que a
+  // batalha terminou enquanto ainda falta resolver uma escolha).
+  _runDamageTriggerQueue(queue, index, battle) {
+    if (index >= queue.length) {
+      battle.resolveWait()
+      return { paused: false }
+    }
+    const step = queue[index]
+    const result = EffectEngine.runTrigger(this, step.name, step.instance, step.casterState, step.opponentState, { isBot: step.isBot })
+    if (result.paused) {
+      this._pendingDamageTriggerContinuation = { queue, index: index + 1, battle }
+      return { paused: true }
+    }
+    return this._runDamageTriggerQueue(queue, index + 1, battle)
+  }
+
+  // Resolve dano + destruição entre 2 Pals em batalha — em vez de disparar onGraveyard/onLeaveBase
+  // na hora (ver _sendToGraveyardQueued), empilha na MESMA fila de _resolveDamage.
+  _resolveBattle(attackerInstance, defenderInstance, queue) {
     const attackerState = this.activePlayer
     const defenderState = this.defendingPlayer
 
@@ -551,7 +603,7 @@ class TurnManager {
     const results = { attackerDestroyed: false, defenderDestroyed: false }
 
     if (defenderInstance.isDestroyed(defenderState, attackerState)) {
-      this._sendToGraveyard(defenderInstance, defenderState)
+      this._sendToGraveyardQueued(defenderInstance, defenderState, queue)
       results.defenderDestroyed = true
       this._addLog(`${defenderInstance.data.name} foi destruído.`)
 
@@ -563,18 +615,19 @@ class TurnManager {
       }
     }
     if (attackerInstance.isDestroyed(attackerState, defenderState)) {
-      this._sendToGraveyard(attackerInstance, attackerState)
+      this._sendToGraveyardQueued(attackerInstance, attackerState, queue)
       results.attackerDestroyed = true
       this._addLog(`${attackerInstance.data.name} foi destruído.`)
 
       if (!results.defenderDestroyed && EffectEngine.hasKeyword(attackerInstance.data, 'Retaliate')) {
-        this._sendToGraveyard(defenderInstance, defenderState)
+        this._sendToGraveyardQueued(defenderInstance, defenderState, queue)
         results.defenderDestroyed = true
         this._addLog(`${defenderInstance.data.name} foi destruído (Retaliate).`)
       }
     }
     return results
   }
+
 
   checkAndRemoveIfDestroyed(instance, ownerState, opponentState) {
     if (instance.isDestroyed(ownerState, opponentState)) {
@@ -614,15 +667,43 @@ class TurnManager {
     EffectEngine.runTrigger(this, 'onLeaveBase', instance, ownerState, opponentState, { isBot })
   }
 
-  _returnToHand(instance, ownerState) {
+  // Variante usada durante resolução de batalha (ver _resolveDamage/_resolveBattle) — em vez de
+  // disparar onGraveyard/onLeaveBase na hora (o que atropelava um pendingEffect deixado por um
+  // gatilho anterior NA MESMA resolução — ex: Bushi sobrescrevendo a escolha de descarte do
+  // Leezpunk), só faz a remoção mecânica e empilha os 2 gatilhos na fila compartilhada.
+  _sendToGraveyardQueued(instance, ownerState, queue) {
     const array = this._findBaseArray(instance, ownerState)
     if (!array) return
     array.splice(array.indexOf(instance), 1)
-    ownerState.hand.push(instance.data)
+    ownerState.graveyard.push(instance.data)
     this._releaseStandLocksFrom(instance)
 
     const opponentState = ownerState === this.player1 ? this.player2 : this.player1
-    EffectEngine.runTrigger(this, 'onLeaveBase', instance, ownerState, opponentState, { isBot: this.player2IsBot && ownerState !== this.player1 })
+    const isBot = this.player2IsBot && ownerState !== this.player1
+    queue.push({ name: 'onGraveyard', instance, casterState: ownerState, opponentState, isBot })
+    queue.push({ name: 'onLeaveBase', instance, casterState: ownerState, opponentState, isBot })
+  }
+
+  _returnToHand(instance, ownerState) {
+    const array = this._findBaseArray(instance, ownerState)
+    if (array) {
+      array.splice(array.indexOf(instance), 1)
+      ownerState.hand.push(instance.data)
+      this._releaseStandLocksFrom(instance)
+
+      const opponentState = ownerState === this.player1 ? this.player2 : this.player1
+      EffectEngine.runTrigger(this, 'onLeaveBase', instance, ownerState, opponentState, { isBot: this.player2IsBot && ownerState !== this.player1 })
+      return
+    }
+    // "AUTO At the end of the battle this card attacked, you may return this card to hand." (Bushi –
+    // Ephemeral Blade) — se a carta já morreu NA MESMA batalha (destruição mútua), ela não está mais
+    // em nenhuma zona de campo quando esse gatilho de fim de batalha resolve, só no cemitério; a regra
+    // ainda deixa resgatar de lá (não é "leaves the base" de novo, por isso sem onLeaveBase aqui).
+    const graveyardIdx = ownerState.graveyard.indexOf(instance.data)
+    if (graveyardIdx !== -1) {
+      ownerState.graveyard.splice(graveyardIdx, 1)
+      ownerState.hand.push(instance.data)
+    }
   }
 
   // Devolve os Pals guardados em sourceInstance.exiledCards (exilados POR essa carta) pro campo

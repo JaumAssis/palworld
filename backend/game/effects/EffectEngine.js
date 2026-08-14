@@ -323,8 +323,17 @@ function findFieldZone(state, instance) {
   return null
 }
 
+// "AUTO At the end of the battle this card attacked, you may return this card to hand." (Bushi –
+// Ephemeral Blade) — se a carta já foi destruída NA MESMA batalha (destruição mútua), ela não está
+// mais no campo de NENHUM dos dois lados quando esse gatilho resolve, só no cemitério; sem checar
+// isso, o "não achei no caster, deve ser do oponente" caía pro lado errado e o resgate silenciosamente
+// procurava no cemitério de quem não era o dono de verdade.
 function ownerStateOf(instance, casterState, opponentState) {
-  return findFieldZone(casterState, instance) ? casterState : opponentState
+  if (findFieldZone(casterState, instance)) return casterState
+  if (findFieldZone(opponentState, instance)) return opponentState
+  if (casterState.graveyard.includes(instance.data)) return casterState
+  if (opponentState.graveyard.includes(instance.data)) return opponentState
+  return casterState
 }
 
 function randomDiscard(state) {
