@@ -157,8 +157,10 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS arena_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     player_id INTEGER NOT NULL,
-    status TEXT NOT NULL DEFAULT 'drafting_color1', -- drafting_color1|drafting_color2|drafting_cards|ready|in_progress|finished
-    colors TEXT NOT NULL DEFAULT '[]',    -- JSON com as cores já escolhidas (cresce até ter 2)
+    status TEXT NOT NULL DEFAULT 'drafting_cards', -- drafting_cards|ready|in_progress|finished
+    -- Emergem organicamente dos picks (ver tryLockColors em arenaDraft.js) — não existe etapa
+    -- separada de "escolher cor"; as 2 cores travam sozinhas conforme o jogador vai draftando.
+    colors TEXT NOT NULL DEFAULT '[]',    -- JSON com as cores já travadas (cresce até ter 2)
     main_deck TEXT NOT NULL DEFAULT '[]', -- JSON com array de card_number (cresce a cada pick, até 50)
     wins INTEGER NOT NULL DEFAULT 0,
     losses INTEGER NOT NULL DEFAULT 0,
@@ -2659,13 +2661,14 @@ function getAllCardsHydrated() {
   return getCardsByNumbers(numbers);
 }
 
-// Lista enxuta (nome + custo) na ordem dos picks, com repetição — o front usa isso pra montar a
-// lista agrupada e a curva de custo, tanto durante o draft quanto na tela de "deck pronto".
+// Lista enxuta (nome + custo + tipo + is_lucky) na ordem dos picks, com repetição — o front usa
+// isso pra montar a lista agrupada, a curva de custo e a contagem por tipo/Lucky Pal, tanto durante
+// o draft quanto na tela de "deck pronto".
 function buildDraftedCardsList(allCards, mainDeck) {
   const byNumber = new Map(allCards.map(c => [c.card_number, c]));
   return mainDeck.map(num => {
     const c = byNumber.get(num);
-    return { cardNumber: c.card_number, name: c.name, cost: c.cost };
+    return { cardNumber: c.card_number, name: c.name, cost: c.cost, cardType: c.card_type, isLucky: c.is_lucky };
   });
 }
 
@@ -2721,13 +2724,11 @@ function buildArenaRunPayload(run) {
     losses: run.losses
   };
 
-  if (run.status === 'drafting_color1') {
-    payload.colorOffer = arenaDraft.offerFirstColorTrio();
-  } else if (run.status === 'drafting_color2') {
-    payload.colorOffer = arenaDraft.offerSecondColorTrio(colors[0]);
-  } else if (run.status === 'drafting_cards') {
+  if (run.status === 'drafting_cards') {
+    // Sem restrição de cor enquanto `colors` ainda não travou as 2 (ver buildDraftPool/tryLockColors
+    // em arenaDraft.js) — as cores emergem dos próprios picks, não existe mais uma etapa separada.
     const allCards = getAllCardsHydrated();
-    const pool = arenaDraft.buildEligiblePool(allCards, colors);
+    const pool = arenaDraft.buildDraftPool(allCards, colors);
     payload.cardOffer = arenaDraft.offerCardTrio(pool, mainDeck).map(c => ({
       cardNumber: c.card_number, name: c.name, imageUrl: c.image_url, cost: c.cost, colors: c.colors
     }));
@@ -2762,8 +2763,24 @@ app.post('/api/arena/start', requirePlayer, (req, res) => {
   }
 
   db.prepare('UPDATE players SET gold_coins = gold_coins - ? WHERE id = ?').run(ARENA_TICKET_PRICE, req.playerId);
-  const result = db.prepare('INSERT INTO arena_runs (player_id) VALUES (?)').run(req.playerId);
+  const result = db.prepare("INSERT INTO arena_runs (player_id, status) VALUES (?, 'drafting_cards')").run(req.playerId);
   res.json(buildArenaRunPayload(db.prepare('SELECT * FROM arena_runs WHERE id = ?').get(result.lastInsertRowid)));
+});
+
+// Desiste da run, travando o baú na faixa correspondente às vitórias já conquistadas até agora
+// (mesma faixa que bater 3 derrotas ou 12 vitórias daria — ver computeArenaRewardTier). Só permitido
+// com o deck pronto e ENTRE partidas ('ready') — não dá pra desistir no meio do draft (não haveria
+// vitória nenhuma pra valer o baú) nem no meio de uma partida em andamento ('in_progress'), que
+// exigiria encerrar a sessão online/avisar o oponente. Não mexe em wins/losses, só fecha a run.
+app.post('/api/arena/forfeit', requirePlayer, (req, res) => {
+  const run = getActiveArenaRun(req.playerId);
+  if (!run) return res.status(404).json({ error: 'Nenhuma run de Arena em andamento.' });
+  if (run.status !== 'ready') {
+    return res.status(400).json({ error: 'Só dá pra desistir entre partidas, com o deck pronto.' });
+  }
+
+  db.prepare("UPDATE arena_runs SET status = 'finished', finished_at = CURRENT_TIMESTAMP WHERE id = ?").run(run.id);
+  res.json(buildArenaRunPayload(db.prepare('SELECT * FROM arena_runs WHERE id = ?').get(run.id)));
 });
 
 // Resgata o baú da run mais recente que terminou e ainda não foi resgatada. Concede ouro/fluido/
@@ -2807,31 +2824,11 @@ app.post('/api/arena/claim-reward', requirePlayer, (req, res) => {
   });
 });
 
-// Escolhe 1ª ou 2ª cor (o status da run diz qual das duas é). Revalida no servidor que a cor é uma
-// das 4 possíveis e, na 2ª escolha, que não repete a 1ª — nunca confia soltamente no valor mandado.
-app.post('/api/arena/pick-color', requirePlayer, (req, res) => {
-  const { color } = req.body;
-  const run = getActiveArenaRun(req.playerId);
-  if (!run) return res.status(404).json({ error: 'Nenhuma run de Arena em andamento.' });
-  if (!arenaDraft.ARENA_COLORS.includes(color)) return res.status(400).json({ error: 'Cor inválida.' });
-
-  const colors = JSON.parse(run.colors);
-  if (run.status === 'drafting_color1') {
-    db.prepare("UPDATE arena_runs SET colors = ?, status = 'drafting_color2' WHERE id = ?")
-      .run(JSON.stringify([color]), run.id);
-  } else if (run.status === 'drafting_color2') {
-    if (color === colors[0]) return res.status(400).json({ error: 'Essa cor já foi escolhida.' });
-    db.prepare("UPDATE arena_runs SET colors = ?, status = 'drafting_cards' WHERE id = ?")
-      .run(JSON.stringify([colors[0], color]), run.id);
-  } else {
-    return res.status(400).json({ error: 'Essa run não está escolhendo cor agora.' });
-  }
-
-  res.json(buildArenaRunPayload(db.prepare('SELECT * FROM arena_runs WHERE id = ?').get(run.id)));
-});
-
-// Escolhe 1 carta do draft (até fechar as 50). Revalida no servidor que a carta é elegível pras
-// cores da run e ainda cabe nos tetos de cópias/Lucky Pals — nunca confia no card_number sozinho.
+// Escolhe 1 carta do draft (até fechar as 50). As 2 cores da run não são mais escolhidas à parte —
+// elas travam sozinhas conforme os picks reais acontecem (ver tryLockColors em arenaDraft.js):
+// enquanto não travarem as 2, a oferta vem de TODAS as cores; a cor de cada pick que ainda não
+// repete uma já travada vira uma das 2 cores da run. Revalida no servidor que a carta é elegível
+// pro pool atual (restrito ou não) e ainda cabe nos tetos de cópias/Lucky Pals.
 app.post('/api/arena/pick-card', requirePlayer, (req, res) => {
   const { cardNumber } = req.body;
   const run = getActiveArenaRun(req.playerId);
@@ -2840,15 +2837,18 @@ app.post('/api/arena/pick-card', requirePlayer, (req, res) => {
 
   const colors = JSON.parse(run.colors);
   const mainDeck = JSON.parse(run.main_deck);
-  const pool = arenaDraft.buildEligiblePool(getAllCardsHydrated(), colors);
+  const allCards = getAllCardsHydrated();
+  const pool = arenaDraft.buildDraftPool(allCards, colors);
   if (!arenaDraft.isCardNumberLegalPick(pool, mainDeck, cardNumber)) {
     return res.status(400).json({ error: 'Essa carta não é uma escolha válida agora.' });
   }
 
+  const card = pool.find(c => c.card_number === cardNumber);
   mainDeck.push(cardNumber);
+  const newColors = arenaDraft.tryLockColors(colors, card);
   const newStatus = mainDeck.length >= arenaDraft.ARENA_MAIN_DECK_SIZE ? 'ready' : 'drafting_cards';
-  db.prepare('UPDATE arena_runs SET main_deck = ?, status = ? WHERE id = ?')
-    .run(JSON.stringify(mainDeck), newStatus, run.id);
+  db.prepare('UPDATE arena_runs SET main_deck = ?, colors = ?, status = ? WHERE id = ?')
+    .run(JSON.stringify(mainDeck), JSON.stringify(newColors), newStatus, run.id);
 
   res.json(buildArenaRunPayload(db.prepare('SELECT * FROM arena_runs WHERE id = ?').get(run.id)));
 });

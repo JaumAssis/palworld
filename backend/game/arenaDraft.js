@@ -72,6 +72,30 @@ function isCardNumberLegalPick(pool, deckCardNumbers, cardNumber) {
   return isCardStillLegal(card, nameCounts, luckyCount)
 }
 
+// Pool de elegibilidade pro draft humano: sem NENHUMA restrição de cor (só nunca Soul) enquanto as
+// 2 cores da run ainda não travaram — o jogador vê cartas de todas as cores até a própria escolha
+// definir quais são as 2 cores dele. Depois que travam (colors.length === 2), vira o pool restrito
+// de sempre. Diferente do bot (draftRandomDeck), que já sorteia as 2 cores de cara — aqui elas
+// emergem organicamente dos picks reais do jogador.
+function buildDraftPool(allCards, colors) {
+  if (colors.length < 2) return allCards.filter(card => card.card_type !== 'Soul')
+  return buildEligiblePool(allCards, colors)
+}
+
+// Depois de um pick humano, verifica se essa carta trava uma cor nova pra run — ignora Colorless
+// (nunca conta como "cor escolhida") e ignora cor que já foi travada (repetir a 1ª cor não define a
+// 2ª). Só mexe em `colors` enquanto ainda não travou as 2; depois disso é no-op.
+function tryLockColors(colors, card) {
+  if (colors.length >= 2) return colors
+  const realColors = (card.colors || []).filter(c => c !== 'Colorless')
+  const updated = [...colors]
+  for (const c of realColors) {
+    if (updated.length >= 2) break
+    if (!updated.includes(c)) updated.push(c)
+  }
+  return updated
+}
+
 // Monta uma run inteira sozinha, sem interação — usada pelo bot substituto de fila da Arena, que
 // precisa de um deck temporário e aleatório só pra essa partida (nunca o deck fixo de um bot
 // permanente). Mesmas 2 escolhas de cor + mesmo draft de carta que o fluxo interativo usa, só que
@@ -99,7 +123,9 @@ module.exports = {
   offerFirstColorTrio,
   offerSecondColorTrio,
   buildEligiblePool,
+  buildDraftPool,
   offerCardTrio,
   isCardNumberLegalPick,
+  tryLockColors,
   draftRandomDeck
 }

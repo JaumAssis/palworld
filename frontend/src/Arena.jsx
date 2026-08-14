@@ -5,11 +5,64 @@ import { apiFetch, apiJson } from './api'
 
 const COLOR_SWATCH = { Red: '#c62828', Blue: '#1565c0', Green: '#2e7d32', Purple: '#6a1b9a' }
 const ARENA_TICKET_PRICE = 100 // só pra exibição/gate de UI — o servidor revalida o preço de verdade
-const CHEST_EMOJI = { wood: '📦', bronze: '🥉', silver: '🥈', gold: '🏆' }
+// As chaves internas (wood/bronze/silver/gold) continuam as mesmas do backend (computeArenaRewardTier,
+// coluna reward_tier) — só o ÍCONE e o NOME exibido (arenaChestName_*) mudaram pros baús novos.
+const CHEST_ICON = {
+  wood: '/Wooden_Chest.webp',
+  bronze: '/Metal_Chest_icon.webp',
+  silver: '/Refined_Metal_Chest.webp',
+  gold: '/Advanced_Chest.webp'
+}
+const ARENA_WIN_CAP = 12 // espelha ARENA_MAIN_DECK_SIZE etc. do backend — só pra escala da barra/tier aqui
+
+// Espelha computeArenaRewardTier do backend (server.js) — puro e barato o bastante pra duplicar no
+// front em vez de esperar o servidor pra saber qual baú a run já garante nas vitórias atuais.
+function computeArenaRewardTier(wins) {
+  if (wins >= 12) return 'gold'
+  if (wins >= 9) return 'silver'
+  if (wins >= 5) return 'bronze'
+  return 'wood'
+}
+
+// Ícone do baú — mesmo tamanho que o emoji ocupava antes (`size` é um var(--fs-*) existente, dá
+// pra usar direto como width/height já que é só um comprimento CSS).
+function ChestIcon({ tier, size }) {
+  return <img src={CHEST_ICON[tier]} alt={tier} style={{ width: size, height: size, objectFit: 'contain' }} />
+}
+
+// Indicador fixo no canto: baú que a run garante agora + barra de progresso até o próximo, com
+// marcas nos limites reais (5/9/12 vitórias). Não aparece na tela de "run encerrada" (o baú já vem
+// destacado grande lá) nem antes de existir uma run.
+function ChestProgressWidget({ wins, t }) {
+  const tier = computeArenaRewardTier(wins)
+  const pct = Math.min(100, (wins / ARENA_WIN_CAP) * 100)
+  return (
+    <div style={{
+      position: 'fixed', top: 'var(--sp-lg)', right: 'var(--sp-lg)', width: 'clamp(180px, 16vw, 240px)',
+      background: 'rgba(0,0,0,0.55)', border: '2px solid #c99a4e', borderRadius: '12px',
+      padding: 'var(--sp-sm) var(--sp-md)', color: '#f3e2b3', textAlign: 'center', zIndex: 50
+    }}>
+      <ChestIcon tier={tier} size="var(--fs-lg)" />
+      <p style={{ fontSize: 'var(--fs-xs)', margin: '2px 0 8px', fontWeight: 700 }}>{t(`arenaChestName_${tier}`)}</p>
+      <div style={{ position: 'relative', height: '10px', background: 'rgba(255,255,255,0.15)', borderRadius: '999px', overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg, #ffd76a, #c99a4e)', transition: 'width 0.3s ease' }} />
+      </div>
+      <div style={{ position: 'relative', height: '14px', marginTop: '2px' }}>
+        {[5, 9, 12].map(mark => (
+          <span key={mark} style={{
+            position: 'absolute', left: `${(mark / ARENA_WIN_CAP) * 100}%`, transform: 'translateX(-50%)',
+            fontSize: 'var(--fs-2xs)', color: '#d9c4a3'
+          }}>{mark}</span>
+        ))}
+      </div>
+      <p style={{ fontSize: 'var(--fs-2xs)', margin: '6px 0 0', color: '#d9c4a3' }}>{t('arenaWinsProgressLabel', { wins, cap: ARENA_WIN_CAP })}</p>
+    </div>
+  )
+}
 
 // Lista agrupada das cartas escolhidas + curva de custo — mostrado tanto durante o draft (pra
 // acompanhar em tempo real) quanto na tela de "deck pronto" (pra revisar o deck fechado).
-function DraftedCardsPanels({ groupedDraftedCards, costCurve, costCurveMax, t }) {
+function DraftedCardsPanels({ groupedDraftedCards, costCurve, costCurveMax, typeCounts, t }) {
   return (
     <div style={{ display: 'flex', gap: 'var(--sp-lg)', justifyContent: 'center', flexWrap: 'wrap', marginTop: 'var(--sp-xl)', textAlign: 'left' }}>
       <div style={{ flex: '1 1 280px', maxWidth: '360px', background: 'rgba(0,0,0,0.3)', borderRadius: '10px', padding: 'var(--sp-md)' }}>
@@ -47,6 +100,17 @@ function DraftedCardsPanels({ groupedDraftedCards, costCurve, costCurveMax, t })
             </div>
           ))}
         </div>
+
+        <div style={{
+          display: 'flex', gap: 'var(--sp-sm)', flexWrap: 'wrap', justifyContent: 'center',
+          marginTop: 'var(--sp-md)', paddingTop: 'var(--sp-sm)', borderTop: '1px solid rgba(255,255,255,0.15)',
+          fontSize: 'var(--fs-2xs)', color: '#d9c4a3'
+        }}>
+          <span>🍀 {t('arenaStatLuckyPals')}: <strong style={{ color: '#f3e2b3' }}>{typeCounts.lucky}</strong></span>
+          <span>🐾 {t('arenaStatPals')}: <strong style={{ color: '#f3e2b3' }}>{typeCounts.pals}</strong></span>
+          <span>🏛️ {t('arenaStatStructures')}: <strong style={{ color: '#f3e2b3' }}>{typeCounts.structures}</strong></span>
+          <span>⚙️ {t('arenaStatGear')}: <strong style={{ color: '#f3e2b3' }}>{typeCounts.gear}</strong></span>
+        </div>
       </div>
     </div>
   )
@@ -68,6 +132,7 @@ function Arena() {
   // a run some do /api/arena/status (reward_tier deixa de ser NULL), então não dá pra confiar em
   // `run` pra mostrar o que foi ganho depois — só essa cópia local sabe.
   const [claimResult, setClaimResult] = useState(null)
+  const [showForfeitConfirm, setShowForfeitConfirm] = useState(false)
 
   const loadStatus = () => {
     apiFetch('/api/arena/status').then(r => r.json()).then(data => {
@@ -93,19 +158,20 @@ function Arena() {
       .finally(() => setBusy(false))
   }
 
-  const pickColor = (color) => {
+  const pickCard = (cardNumber) => {
     setError('')
     setBusy(true)
-    apiJson('/api/arena/pick-color', { method: 'POST', body: JSON.stringify({ color }) })
+    apiJson('/api/arena/pick-card', { method: 'POST', body: JSON.stringify({ cardNumber }) })
       .then(setRun)
       .catch(err => setError(err.message))
       .finally(() => setBusy(false))
   }
 
-  const pickCard = (cardNumber) => {
+  const forfeitRun = () => {
     setError('')
     setBusy(true)
-    apiJson('/api/arena/pick-card', { method: 'POST', body: JSON.stringify({ cardNumber }) })
+    setShowForfeitConfirm(false)
+    apiJson('/api/arena/forfeit', { method: 'POST' })
       .then(setRun)
       .catch(err => setError(err.message))
       .finally(() => setBusy(false))
@@ -144,6 +210,14 @@ function Arena() {
   const costCurve = Array.from({ length: maxAxisCost }, (_, i) => ({ cost: i + 1, count: costBuckets[i + 1] || 0 }))
   const costCurveMax = Math.max(1, ...costCurve.map(b => b.count))
 
+  const typeCounts = draftedCards.reduce((acc, c) => {
+    if (c.isLucky) acc.lucky++
+    if (c.cardType === 'Pal') acc.pals++
+    else if (c.cardType === 'Structure') acc.structures++
+    else if (c.cardType === 'Gear') acc.gear++
+    return acc
+  }, { lucky: 0, pals: 0, structures: 0, gear: 0 })
+
   return (
     <div style={{
       minHeight: '100vh', boxSizing: 'border-box', padding: 'var(--sp-xl)', textAlign: 'center',
@@ -155,10 +229,12 @@ function Arena() {
 
       <h1 className="title-sign" style={{ marginTop: 0 }}>{t('arenaTicketTitle')}</h1>
 
+      {run.active && run.status !== 'finished' && <ChestProgressWidget wins={run.wins} t={t} />}
+
       {claimResult && (
         <div style={{ maxWidth: 'var(--panel-w-sm)', margin: '2rem auto', color: '#f3e2b3' }}>
           <h2 style={{ fontSize: 'var(--fs-lg)' }}>{t('arenaRewardTitle')}</h2>
-          <div style={{ fontSize: 'var(--fs-2xl)' }}>{CHEST_EMOJI[claimResult.tier]}</div>
+          <ChestIcon tier={claimResult.tier} size="var(--fs-2xl)" />
           <p style={{ fontSize: 'var(--fs-md)', fontWeight: 700 }}>{t(`arenaChestName_${claimResult.tier}`)}</p>
           <p style={{ fontSize: 'var(--fs-sm)' }}>{t('arenaRunScoreLabel', { wins: claimResult.wins, losses: claimResult.losses })}</p>
           <p style={{ fontSize: 'var(--fs-sm)' }}>
@@ -195,31 +271,19 @@ function Arena() {
         </div>
       )}
 
-      {run.active && (run.status === 'drafting_color1' || run.status === 'drafting_color2') && (
-        <div style={{ maxWidth: 'var(--panel-w-sm)', margin: '2rem auto', color: '#f3e2b3' }}>
-          <h2 style={{ fontSize: 'var(--fs-lg)' }}>
-            {run.status === 'drafting_color1' ? t('arenaColorStep1Title') : t('arenaColorStep2Title')}
-          </h2>
-          <div style={{ display: 'flex', gap: 'var(--sp-md)', justifyContent: 'center', flexWrap: 'wrap', marginTop: 'var(--sp-lg)' }}>
-            {run.colorOffer.map(color => (
-              <button
-                key={color}
-                className="sign-button sign-button-fluid"
-                disabled={busy}
-                onClick={() => pickColor(color)}
-                style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
-              >
-                <span style={{ width: '16px', height: '16px', borderRadius: '50%', background: COLOR_SWATCH[color], display: 'inline-block' }} />
-                {color}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       {run.active && run.status === 'drafting_cards' && (
         <div style={{ maxWidth: 'var(--panel-w-lg)', margin: '2rem auto', color: '#f3e2b3' }}>
           <h2 style={{ fontSize: 'var(--fs-lg)' }}>{t('arenaCardDraftTitle', { count: run.deckCount, total: 50 })}</h2>
+          <p style={{ fontSize: 'var(--fs-sm)', display: 'flex', gap: '10px', justifyContent: 'center', alignItems: 'center' }}>
+            {run.colors.length === 0 && t('arenaColorsPending')}
+            {run.colors.length >= 1 && run.colors.map(color => (
+              <span key={color} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                <span style={{ width: '12px', height: '12px', borderRadius: '50%', background: COLOR_SWATCH[color], display: 'inline-block' }} />
+                {color}
+              </span>
+            ))}
+            {run.colors.length === 1 && <span style={{ color: '#d9c4a3' }}>{t('arenaSecondColorPending')}</span>}
+          </p>
           <div style={{ display: 'flex', gap: 'var(--sp-lg)', justifyContent: 'center', flexWrap: 'wrap', marginTop: 'var(--sp-lg)' }}>
             {run.cardOffer.map(card => (
               <div
@@ -233,7 +297,7 @@ function Arena() {
             ))}
           </div>
 
-          <DraftedCardsPanels groupedDraftedCards={groupedDraftedCards} costCurve={costCurve} costCurveMax={costCurveMax} t={t} />
+          <DraftedCardsPanels groupedDraftedCards={groupedDraftedCards} costCurve={costCurve} costCurveMax={costCurveMax} typeCounts={typeCounts} t={t} />
         </div>
       )}
 
@@ -242,12 +306,41 @@ function Arena() {
           <h2 style={{ fontSize: 'var(--fs-lg)' }}>{t('arenaDeckReadyTitle')}</h2>
           <p style={{ fontSize: 'var(--fs-md)' }}>{t('arenaDeckReadySummary', { colors: run.colors.join(' + ') })}</p>
           <p style={{ fontSize: 'var(--fs-sm)' }}>{t('arenaRunScoreLabel', { wins: run.wins, losses: run.losses })}</p>
-          <Link to="/findmatch/arenaDraft" state={{ arenaRunId: run.id }}>
-            <button className="sign-button sign-button-fluid" style={{ marginTop: 'var(--sp-md)' }}>
-              {t('findMatchSearchButton')}
+          <div style={{ display: 'flex', gap: 'var(--sp-sm)', justifyContent: 'center', marginTop: 'var(--sp-md)', flexWrap: 'wrap' }}>
+            <Link to="/findmatch/arenaDraft" state={{ arenaRunId: run.id }}>
+              <button className="sign-button sign-button-fluid">{t('findMatchSearchButton')}</button>
+            </Link>
+            <button className="sign-button sign-button-fluid" onClick={() => setShowForfeitConfirm(true)} disabled={busy}>
+              {t('arenaForfeitButton')}
             </button>
-          </Link>
-          <DraftedCardsPanels groupedDraftedCards={groupedDraftedCards} costCurve={costCurve} costCurveMax={costCurveMax} t={t} />
+          </div>
+          <DraftedCardsPanels groupedDraftedCards={groupedDraftedCards} costCurve={costCurve} costCurveMax={costCurveMax} typeCounts={typeCounts} t={t} />
+        </div>
+      )}
+
+      {showForfeitConfirm && (
+        <div onClick={() => setShowForfeitConfirm(false)} style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            width: 'var(--panel-w-xs)', background: '#1a1410', border: '2px solid #c99a4e', borderRadius: '14px',
+            padding: 'var(--sp-lg)', textAlign: 'center', color: '#f3e2b3'
+          }}>
+            <h3 style={{ marginTop: 0, fontSize: 'var(--fs-lg)' }}>{t('arenaForfeitConfirmTitle')}</h3>
+            {run && <ChestIcon tier={computeArenaRewardTier(run.wins)} size="var(--fs-2xl)" />}
+            <p style={{ fontSize: 'var(--fs-sm)' }}>
+              {run && t('arenaForfeitConfirmBody', { chest: t(`arenaChestName_${computeArenaRewardTier(run.wins)}`) })}
+            </p>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: 'var(--sp-md)' }}>
+              <button style={{ flex: 1, padding: 'var(--sp-sm)', fontSize: 'var(--fs-sm)', background: '#a5541b', color: '#fff3d6', border: 'none', borderRadius: '8px', cursor: 'pointer' }} onClick={forfeitRun} disabled={busy}>
+                {t('arenaForfeitConfirmYes')}
+              </button>
+              <button style={{ flex: 1, padding: 'var(--sp-sm)', fontSize: 'var(--fs-sm)', background: '#555', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer' }} onClick={() => setShowForfeitConfirm(false)}>
+                {t('arenaForfeitConfirmNo')}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -255,7 +348,7 @@ function Arena() {
         <div style={{ maxWidth: 'var(--panel-w-sm)', margin: '2rem auto', color: '#f3e2b3' }}>
           <h2 style={{ fontSize: 'var(--fs-lg)' }}>{t('arenaRunOverTitle')}</h2>
           <p style={{ fontSize: 'var(--fs-md)' }}>{t('arenaRunScoreLabel', { wins: run.wins, losses: run.losses })}</p>
-          <div style={{ fontSize: 'var(--fs-2xl)' }}>{CHEST_EMOJI[run.rewardTier]}</div>
+          <ChestIcon tier={run.rewardTier} size="var(--fs-2xl)" />
           <p style={{ fontSize: 'var(--fs-md)', fontWeight: 700 }}>{t(`arenaChestName_${run.rewardTier}`)}</p>
           <button className="sign-button sign-button-fluid" onClick={claimReward} disabled={busy}>
             {t('arenaClaimRewardButton')}
