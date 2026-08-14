@@ -482,13 +482,20 @@ function applyRoguelikeBattleResult(runId, won) {
 
   if (!won) {
     const lives = run.lives - 1;
-    roguelikeMap.markNodeCleared(map, run.current_node_id);
     if (lives <= 0) {
       convertRoguelikeDogecoins(run.player_id, run.dogecoins);
-      db.prepare("UPDATE roguelike_runs SET status = 'finished_dead', lives = 0, map = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ?")
-        .run(JSON.stringify(map), runId);
+      db.prepare("UPDATE roguelike_runs SET status = 'finished_dead', lives = 0, finished_at = CURRENT_TIMESTAMP WHERE id = ?").run(runId);
       return { outcome: 'finished_dead' };
     }
+    // Perder pro Boss com vidas sobrando permite tentar de novo: ele nunca é marcado 'cleared'
+    // numa derrota (diferente de uma batalha comum) — como o Boss não tem edgesTo, marcar
+    // 'cleared' aqui deixaria o mapa inteiro sem nenhum nó disponível (nem o próprio Boss de
+    // novo, nem nada à frente dele), travando a run sem ela ter realmente terminado.
+    if (node && node.type === 'boss') {
+      db.prepare("UPDATE roguelike_runs SET status = 'traveling', lives = ? WHERE id = ?").run(lives, runId);
+      return { outcome: 'lost', lives };
+    }
+    roguelikeMap.markNodeCleared(map, run.current_node_id);
     db.prepare("UPDATE roguelike_runs SET status = 'traveling', lives = ?, map = ? WHERE id = ?").run(lives, JSON.stringify(map), runId);
     return { outcome: 'lost', lives };
   }

@@ -210,7 +210,7 @@ function RoguelikeMapCanvas({ layers, layerIndexes, disabledTypes, currentNodeId
               <div key={node.id} style={{ position: 'absolute', left: `${pos.x}px`, top: `${pos.y}%`, transform: 'translate(-50%, -50%)' }}>
                 {clickable && <div className={`rg-node-pulse${node.type === 'boss' ? ' rg-node-pulse--boss' : ''}`} />}
                 {node.id === currentNodeId && <span className="rg-marker">🔥</span>}
-                <MapNode node={node} disabled={disabled} onClick={() => onEnterNode(node.id)} t={t} />
+                <MapNode node={node} disabled={disabled} onClick={() => onEnterNode(node.id, node.type)} t={t} />
               </div>
             )
           })}
@@ -738,6 +738,19 @@ function Roguelike() {
       .finally(() => setBusy(false))
   }
 
+  // Clicar no Boss pede confirmação primeiro (mostra o que está em jogo) — os demais tipos de nó
+  // entram direto, igual sempre foi.
+  const [showBossConfirm, setShowBossConfirm] = useState(null)
+  const handleNodeClick = (nodeId, nodeType) => {
+    if (nodeType === 'boss') setShowBossConfirm(nodeId)
+    else enterNode(nodeId)
+  }
+  const confirmBossFight = () => {
+    const nodeId = showBossConfirm
+    setShowBossConfirm(null)
+    enterNode(nodeId)
+  }
+
   const resolveChoice = (body) => {
     setError('')
     setBusy(true)
@@ -830,7 +843,7 @@ function Roguelike() {
             layerIndexes={layerIndexes}
             disabledTypes={NODES_COMING_SOON}
             currentNodeId={run.currentNodeId}
-            onEnterNode={enterNode}
+            onEnterNode={handleNodeClick}
             t={t}
           />
 
@@ -928,6 +941,30 @@ function Roguelike() {
           )}
 
           <DeckPanel draftedCards={run.draftedCards} t={t} />
+        </div>
+      )}
+
+      {showBossConfirm && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000
+        }}>
+          <div style={{
+            maxWidth: 'var(--panel-w-xs)', background: '#2b1a10', border: '3px solid #c99a4e',
+            borderRadius: '16px', padding: 'var(--sp-lg)', textAlign: 'center', color: '#f3e2b3'
+          }}>
+            <p style={{ fontSize: 'var(--fs-xl)', margin: 0 }}>💀</p>
+            <h3 style={{ fontSize: 'var(--fs-md)' }}>{t('roguelikeBossConfirmTitle')}</h3>
+            <p style={{ fontSize: 'var(--fs-sm)' }}>{t('roguelikeBossConfirmBody', { lives: run.lives })}</p>
+            <div style={{ display: 'flex', gap: 'var(--sp-sm)', justifyContent: 'center', marginTop: 'var(--sp-md)' }}>
+              <button className="sign-button sign-button-fluid" disabled={busy} onClick={confirmBossFight}>
+                {t('roguelikeBossConfirmYes')}
+              </button>
+              <button className="sign-button sign-button-fluid" disabled={busy} onClick={() => setShowBossConfirm(null)}>
+                {t('roguelikeBossConfirmNo')}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
