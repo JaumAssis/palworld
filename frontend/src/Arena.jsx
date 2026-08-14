@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useLanguage } from './i18n/LanguageContext'
 import { apiFetch, apiJson } from './api'
@@ -133,6 +133,18 @@ function Arena() {
   // `run` pra mostrar o que foi ganho depois — só essa cópia local sabe.
   const [claimResult, setClaimResult] = useState(null)
   const [showForfeitConfirm, setShowForfeitConfirm] = useState(false)
+  // Zoom ao passar o mouse numa carta oferecida — mesmo padrão (meio segundo de espera antes de
+  // mostrar) já usado em DeckBuilder.jsx/FindMatchDeckSelect.jsx.
+  const [zoomCard, setZoomCard] = useState(null)
+  const hoverTimerRef = useRef(null)
+  const startHoverZoom = (imageUrl, name) => {
+    clearTimeout(hoverTimerRef.current)
+    hoverTimerRef.current = setTimeout(() => setZoomCard({ imageUrl, name }), 500)
+  }
+  const cancelHoverZoom = () => {
+    clearTimeout(hoverTimerRef.current)
+    setZoomCard(null)
+  }
 
   const loadStatus = () => {
     apiFetch('/api/arena/status').then(r => r.json()).then(data => {
@@ -159,6 +171,7 @@ function Arena() {
   }
 
   const pickCard = (cardNumber) => {
+    cancelHoverZoom()
     setError('')
     setBusy(true)
     apiJson('/api/arena/pick-card', { method: 'POST', body: JSON.stringify({ cardNumber }) })
@@ -289,6 +302,8 @@ function Arena() {
               <div
                 key={card.cardNumber}
                 onClick={() => !busy && pickCard(card.cardNumber)}
+                onMouseEnter={() => startHoverZoom(card.imageUrl, card.name)}
+                onMouseLeave={cancelHoverZoom}
                 style={{ cursor: busy ? 'default' : 'pointer', width: 'clamp(130px, 14vw, 180px)', opacity: busy ? 0.6 : 1 }}
               >
                 <img src={card.imageUrl} alt={card.name} style={{ width: '100%', borderRadius: '8px', border: '2px solid #c99a4e' }} />
@@ -296,6 +311,15 @@ function Arena() {
               </div>
             ))}
           </div>
+
+          {zoomCard && (
+            <div style={{
+              position: 'fixed', top: '50%', right: 'var(--sp-lg)', transform: 'translateY(-50%)',
+              zIndex: 1000, pointerEvents: 'none', boxShadow: '0 8px 24px rgba(0,0,0,0.4)', borderRadius: '10px'
+            }}>
+              <img src={zoomCard.imageUrl} alt={zoomCard.name} style={{ width: 'clamp(240px, 22vw, 340px)', borderRadius: '10px' }} />
+            </div>
+          )}
 
           <DraftedCardsPanels groupedDraftedCards={groupedDraftedCards} costCurve={costCurve} costCurveMax={costCurveMax} typeCounts={typeCounts} t={t} />
         </div>
