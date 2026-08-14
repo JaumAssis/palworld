@@ -45,6 +45,91 @@ function MapNode({ node, onClick, disabled, t }) {
   )
 }
 
+const NODE_LEGEND = ['battle', 'medicine_bench', 'shop', 'event', 'boss']
+
+// Posição percentual de cada nó dentro do painel do mapa — camada vira coluna (X), posição dentro
+// da camada vira linha (Y), espalhada e centralizada verticalmente. Puramente derivado dos dados
+// (sem medir DOM), então as linhas conectoras do SVG e os botões dos nós sempre concordam.
+function layoutNodePositions(layerIndexes, layers) {
+  const positions = {}
+  const totalLayers = layerIndexes.length
+  layerIndexes.forEach((layerIdx, i) => {
+    const x = totalLayers <= 1 ? 50 : 8 + (i * (84 / (totalLayers - 1)))
+    const nodesInLayer = layers[layerIdx]
+    nodesInLayer.forEach((node, idx) => {
+      const y = nodesInLayer.length <= 1 ? 50 : 15 + (idx * (70 / (nodesInLayer.length - 1)))
+      positions[node.id] = { x, y }
+    })
+  })
+  return positions
+}
+
+// Cor/estilo da linha que liga 2 nós — reflete o progresso: caminho já percorrido fica dourado
+// sólido, opções ainda disponíveis ficam tracejadas douradas mais fracas, o resto (bloqueado) quase
+// invisível — dá pra "ler" o mapa de relance sem precisar ler o status de cada nó individualmente.
+// strokeWidth em pixels de verdade (não em unidades do viewBox) — combinado com
+// vectorEffect="non-scaling-stroke" no <line>, evita que o preserveAspectRatio="none" (necessário
+// pra esticar x/y de forma independente) deixe a linha com espessura distorcida.
+function edgeStyle(sourceStatus) {
+  if (sourceStatus === 'cleared') return { stroke: '#ffd76a', strokeWidth: 2.5, strokeDasharray: 'none', opacity: 0.85 }
+  if (sourceStatus === 'available') return { stroke: '#ffd76a', strokeWidth: 2, strokeDasharray: '6,5', opacity: 0.55 }
+  return { stroke: '#8a7358', strokeWidth: 1.5, strokeDasharray: '3,5', opacity: 0.25 }
+}
+
+// Painel do mapa em si — moldura de "mapa de expedição" com as linhas do grafo desenhadas em SVG
+// por baixo dos nós (mesmas coordenadas percentuais dos dois, calculadas 1x por render).
+function RoguelikeMapCanvas({ layers, layerIndexes, disabledTypes, onEnterNode, t }) {
+  const positions = layoutNodePositions(layerIndexes, layers)
+  const allNodes = layerIndexes.flatMap(layerIdx => layers[layerIdx])
+
+  return (
+    <div>
+      <div style={{
+        position: 'relative', width: '100%', height: 'clamp(260px, 32vw, 420px)',
+        background: 'radial-gradient(ellipse at 50% 20%, rgba(255,255,255,0.05), transparent 55%), linear-gradient(180deg, #3a2718, #201409)',
+        border: '3px solid #c99a4e', borderRadius: '16px',
+        boxShadow: 'inset 0 0 50px rgba(0,0,0,0.55), 0 6px 18px rgba(0,0,0,0.4)',
+        overflow: 'hidden'
+      }}>
+        <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
+          {allNodes.flatMap(node => node.edgesTo.map(targetId => {
+            const from = positions[node.id]
+            const to = positions[targetId]
+            if (!from || !to) return null
+            const style = edgeStyle(node.status)
+            return (
+              <line
+                key={`${node.id}-${targetId}`}
+                x1={from.x} y1={from.y} x2={to.x} y2={to.y}
+                stroke={style.stroke} strokeWidth={style.strokeWidth} strokeDasharray={style.strokeDasharray}
+                opacity={style.opacity} strokeLinecap="round" vectorEffect="non-scaling-stroke"
+              />
+            )
+          }))}
+        </svg>
+
+        {allNodes.map(node => {
+          const pos = positions[node.id]
+          return (
+            <div key={node.id} style={{ position: 'absolute', left: `${pos.x}%`, top: `${pos.y}%`, transform: 'translate(-50%, -50%)' }}>
+              <MapNode node={node} disabled={disabledTypes.has(node.type)} onClick={() => onEnterNode(node.id)} t={t} />
+            </div>
+          )
+        })}
+      </div>
+
+      <div style={{
+        display: 'flex', gap: 'var(--sp-md)', justifyContent: 'center', flexWrap: 'wrap',
+        marginTop: 'var(--sp-sm)', fontSize: 'var(--fs-2xs)', color: '#d9c4a3'
+      }}>
+        {NODE_LEGEND.map(type => (
+          <span key={type}>{NODE_ICON[type]} {t(`roguelikeNodeType_${type}`)}</span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // Preview das 16 cartas de um deck-personagem, com zoom de 500ms ao passar o mouse — mesmo
 // padrão de hover-zoom já usado em Arena.jsx/DeckBuilder.jsx.
 function StarterDeckCard({ deck, onChoose, busy, startHoverZoom, cancelHoverZoom, t }) {
@@ -561,21 +646,13 @@ function Roguelike() {
           </div>
 
           <h2 style={{ fontSize: 'var(--fs-lg)' }}>{t('roguelikeMapTitle')}</h2>
-          <div style={{ display: 'flex', gap: 'var(--sp-xl)', overflowX: 'auto', padding: 'var(--sp-lg) var(--sp-sm)', justifyContent: layerIndexes.length <= 6 ? 'center' : 'flex-start' }}>
-            {layerIndexes.map(layerIdx => (
-              <div key={layerIdx} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-md)', alignItems: 'center', flexShrink: 0 }}>
-                {layers[layerIdx].map(node => (
-                  <MapNode
-                    key={node.id}
-                    node={node}
-                    disabled={NODES_COMING_SOON.has(node.type)}
-                    onClick={() => enterNode(node.id)}
-                    t={t}
-                  />
-                ))}
-              </div>
-            ))}
-          </div>
+          <RoguelikeMapCanvas
+            layers={layers}
+            layerIndexes={layerIndexes}
+            disabledTypes={NODES_COMING_SOON}
+            onEnterNode={enterNode}
+            t={t}
+          />
 
           {run.status === 'in_event' && run.pendingChoice && run.pendingChoice.kind === 'battle_reward' && (
             <div style={{ maxWidth: 'var(--panel-w-lg)', margin: '2rem auto' }}>
