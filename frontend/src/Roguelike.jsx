@@ -627,10 +627,12 @@ function ShopPanel({ pendingChoice, dogecoins, busy, onBuy, onLeave, t }) {
 // expedição nova ao confirmar.
 function FinishedRunSummary({ run, busy, onAcknowledge, t }) {
   const won = run.status === 'finished_win'
+  const forfeited = run.status === 'finished_forfeit'
+  const titleKey = won ? 'roguelikeRunWonTitle' : forfeited ? 'roguelikeRunForfeitTitle' : 'roguelikeRunLostTitle'
   return (
     <div style={{ maxWidth: 'var(--panel-w-lg)', margin: '2rem auto', color: '#f3e2b3' }}>
-      <h2 style={{ fontSize: 'var(--fs-lg)', color: won ? '#8bc34a' : '#ff8a80' }}>
-        {won ? t('roguelikeRunWonTitle') : t('roguelikeRunLostTitle')}
+      <h2 style={{ fontSize: 'var(--fs-lg)', color: won ? '#8bc34a' : forfeited ? '#d9c4a3' : '#ff8a80' }}>
+        {t(titleKey)}
       </h2>
       <p style={{ fontSize: 'var(--fs-md)' }}>
         <img src="/dogecoin.webp" alt="dogecoin" style={{ width: '1.2em', height: '1.2em', verticalAlign: 'middle', marginRight: '4px' }} />
@@ -640,6 +642,27 @@ function FinishedRunSummary({ run, busy, onAcknowledge, t }) {
       <button className="sign-button sign-button-fluid" style={{ marginTop: 'var(--sp-lg)' }} disabled={busy} onClick={onAcknowledge}>
         {t('roguelikeNewExpeditionButton')}
       </button>
+    </div>
+  )
+}
+
+// Popout dos eventos que exigem interação do jogador (recompensa de batalha, Bancada, Loja, pool
+// de eventos) — antes ficavam empilhados embaixo do mapa; agora abrem por cima de tudo, num
+// overlay central, igual os outros modais do modo (confirmação de Boss/desistência).
+function EventPopout({ children }) {
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1500,
+      padding: 'var(--sp-lg)', overflowY: 'auto'
+    }}>
+      <div style={{
+        maxWidth: 'var(--panel-w-lg)', width: '100%', maxHeight: '90vh', overflowY: 'auto',
+        background: '#2b1a10', border: '3px solid #c99a4e', borderRadius: '16px',
+        boxShadow: '0 12px 36px rgba(0,0,0,0.6)', padding: 'var(--sp-lg)'
+      }}>
+        {children}
+      </div>
     </div>
   )
 }
@@ -751,6 +774,20 @@ function Roguelike() {
     enterNode(nodeId)
   }
 
+  // Desistência — sai da run atual a qualquer momento fora de uma batalha em andamento (também
+  // serve pra destravar uma run presa, ex.: usuários que ficaram sem nó nenhum disponível pelo bug
+  // antigo do Boss virar 'cleared' numa derrota, já corrigido).
+  const [showForfeitConfirm, setShowForfeitConfirm] = useState(false)
+  const forfeitRun = () => {
+    setError('')
+    setBusy(true)
+    setShowForfeitConfirm(false)
+    apiJson('/api/roguelike/forfeit', { method: 'POST' })
+      .then(setRun)
+      .catch(err => setError(err.message))
+      .finally(() => setBusy(false))
+  }
+
   const resolveChoice = (body) => {
     setError('')
     setBusy(true)
@@ -828,7 +865,15 @@ function Roguelike() {
 
       {run.active && !isFinished && (
         <div style={{ maxWidth: 'var(--panel-w-lg)', margin: '1.5rem auto', color: '#f3e2b3' }}>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 'var(--sp-lg)', fontSize: 'var(--fs-md)', marginBottom: 'var(--sp-lg)' }}>
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 'var(--sp-lg)', fontSize: 'var(--fs-md)', marginBottom: 'var(--sp-lg)' }}>
+            <button
+              className="sign-button sign-button-fluid"
+              disabled={busy || run.status === 'in_battle'}
+              onClick={() => setShowForfeitConfirm(true)}
+              style={{ fontSize: 'var(--fs-sm)' }}
+            >
+              {t('roguelikeForfeitButton')}
+            </button>
             <HudStat icon="❤️ " value={t('roguelikeLivesLabel', { lives: run.lives })} feedback={feedback.filter(f => f.type === 'life')} />
             <HudStat
               icon={<img src="/dogecoin.webp" alt="dogecoin" style={{ width: '1.2em', height: '1.2em', verticalAlign: 'middle', marginRight: '4px' }} />}
@@ -847,8 +892,14 @@ function Roguelike() {
             t={t}
           />
 
-          {run.status === 'in_event' && run.pendingChoice && run.pendingChoice.kind === 'battle_reward' && (
-            <div style={{ maxWidth: 'var(--panel-w-lg)', margin: '2rem auto' }}>
+          <DeckPanel draftedCards={run.draftedCards} t={t} />
+        </div>
+      )}
+
+      {run.active && run.status === 'in_event' && run.pendingChoice && (
+        <EventPopout>
+          {run.pendingChoice.kind === 'battle_reward' && (
+            <div>
               <h3 style={{ fontSize: 'var(--fs-md)' }}>{t('roguelikeBattleRewardTitle')}</h3>
               <div style={{ display: 'flex', gap: 'var(--sp-lg)', justifyContent: 'center', flexWrap: 'wrap', marginTop: 'var(--sp-md)' }}>
                 {run.pendingChoice.options.map(card => (
@@ -865,7 +916,7 @@ function Roguelike() {
             </div>
           )}
 
-          {run.status === 'in_event' && run.pendingChoice && run.pendingChoice.kind === 'medicine_bench' && (
+          {run.pendingChoice.kind === 'medicine_bench' && (
             <MedicineBenchPanel
               pendingChoice={run.pendingChoice}
               busy={busy}
@@ -875,7 +926,7 @@ function Roguelike() {
             />
           )}
 
-          {run.status === 'in_event' && run.pendingChoice && run.pendingChoice.kind === 'shop' && (
+          {run.pendingChoice.kind === 'shop' && (
             <ShopPanel
               pendingChoice={run.pendingChoice}
               dogecoins={run.dogecoins}
@@ -886,7 +937,7 @@ function Roguelike() {
             />
           )}
 
-          {run.status === 'in_event' && run.pendingChoice && run.pendingChoice.kind === 'sacrifice' && (
+          {run.pendingChoice.kind === 'sacrifice' && (
             <SacrificePanel
               pendingChoice={run.pendingChoice}
               busy={busy}
@@ -896,7 +947,7 @@ function Roguelike() {
             />
           )}
 
-          {run.status === 'in_event' && run.pendingChoice && run.pendingChoice.kind === 'black_market' && (
+          {run.pendingChoice.kind === 'black_market' && (
             <BlackMarketPanel
               pendingChoice={run.pendingChoice}
               busy={busy}
@@ -906,11 +957,11 @@ function Roguelike() {
             />
           )}
 
-          {run.status === 'in_event' && run.pendingChoice && run.pendingChoice.kind === 'rare_chest' && (
+          {run.pendingChoice.kind === 'rare_chest' && (
             <RareChestPanel pendingChoice={run.pendingChoice} busy={busy} onContinue={() => resolveChoice()} t={t} />
           )}
 
-          {run.status === 'in_event' && run.pendingChoice && run.pendingChoice.kind === 'wild_encounter' && (
+          {run.pendingChoice.kind === 'wild_encounter' && (
             <WildEncounterPanel
               pendingChoice={run.pendingChoice}
               busy={busy}
@@ -919,7 +970,7 @@ function Roguelike() {
             />
           )}
 
-          {run.status === 'in_event' && run.pendingChoice && run.pendingChoice.kind === 'breeding' && (
+          {run.pendingChoice.kind === 'breeding' && (
             <BreedingPanel
               pendingChoice={run.pendingChoice}
               busy={busy}
@@ -929,8 +980,8 @@ function Roguelike() {
             />
           )}
 
-          {run.status === 'in_event' && run.pendingChoice && run.pendingChoice.kind === 'coming_soon' && (
-            <div style={{ maxWidth: 'var(--panel-w-xs)', margin: '2rem auto', background: 'rgba(0,0,0,0.4)', border: '2px solid #c99a4e', borderRadius: '12px', padding: 'var(--sp-lg)' }}>
+          {run.pendingChoice.kind === 'coming_soon' && (
+            <div>
               <p style={{ fontSize: 'var(--fs-lg)' }}>{NODE_ICON[run.pendingChoice.nodeType]}</p>
               <h3 style={{ fontSize: 'var(--fs-md)' }}>{t(`roguelikeNodeType_${run.pendingChoice.nodeType}`)}</h3>
               <p style={{ fontSize: 'var(--fs-sm)' }}>{t('roguelikeNodeComingSoonBody')}</p>
@@ -939,9 +990,7 @@ function Roguelike() {
               </button>
             </div>
           )}
-
-          <DeckPanel draftedCards={run.draftedCards} t={t} />
-        </div>
+        </EventPopout>
       )}
 
       {showBossConfirm && (
@@ -962,6 +1011,29 @@ function Roguelike() {
               </button>
               <button className="sign-button sign-button-fluid" disabled={busy} onClick={() => setShowBossConfirm(null)}>
                 {t('roguelikeBossConfirmNo')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showForfeitConfirm && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000
+        }}>
+          <div style={{
+            maxWidth: 'var(--panel-w-xs)', background: '#2b1a10', border: '3px solid #c99a4e',
+            borderRadius: '16px', padding: 'var(--sp-lg)', textAlign: 'center', color: '#f3e2b3'
+          }}>
+            <h3 style={{ fontSize: 'var(--fs-md)' }}>{t('roguelikeForfeitConfirmTitle')}</h3>
+            <p style={{ fontSize: 'var(--fs-sm)' }}>{t('roguelikeForfeitConfirmBody')}</p>
+            <div style={{ display: 'flex', gap: 'var(--sp-sm)', justifyContent: 'center', marginTop: 'var(--sp-md)' }}>
+              <button className="sign-button sign-button-fluid" disabled={busy} onClick={forfeitRun}>
+                {t('roguelikeForfeitConfirmYes')}
+              </button>
+              <button className="sign-button sign-button-fluid" disabled={busy} onClick={() => setShowForfeitConfirm(false)}>
+                {t('roguelikeForfeitConfirmNo')}
               </button>
             </div>
           </div>

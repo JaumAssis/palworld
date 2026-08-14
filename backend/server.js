@@ -181,7 +181,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS roguelike_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     player_id INTEGER NOT NULL,
-    status TEXT NOT NULL DEFAULT 'traveling', -- traveling|in_battle|in_event|finished_win|finished_dead
+    status TEXT NOT NULL DEFAULT 'traveling', -- traveling|in_battle|in_event|finished_win|finished_dead|finished_forfeit
     starter_deck_key TEXT NOT NULL,
     main_deck TEXT NOT NULL DEFAULT '[]',      -- JSON com array de card_number (cresce durante a run)
     card_modifiers TEXT NOT NULL DEFAULT '{}', -- JSON: { [card_number]: {powerBonus, strikeBonus, grantedKeywords:[]} }
@@ -2963,14 +2963,14 @@ app.post('/api/arena/pick-card', requirePlayer, (req, res) => {
 // ---------- Modo Expedição: rotas de progressão (Fase 1 — escolha de deck e mapa) ----------
 
 function getActiveRoguelikeRun(playerId) {
-  return db.prepare("SELECT * FROM roguelike_runs WHERE player_id = ? AND status NOT IN ('finished_win','finished_dead') ORDER BY id DESC LIMIT 1").get(playerId);
+  return db.prepare("SELECT * FROM roguelike_runs WHERE player_id = ? AND status NOT IN ('finished_win','finished_dead','finished_forfeit') ORDER BY id DESC LIMIT 1").get(playerId);
 }
 
-// Run terminada (vitória ou derrota) cujo resultado o jogador ainda não viu (ver
+// Run terminada (vitória, derrota ou desistência) cujo resultado o jogador ainda não viu (ver
 // /api/roguelike/acknowledge-result) — sem isso a run some de vista assim que termina, já que
 // getActiveRoguelikeRun exclui runs finalizadas de propósito.
 function getUnclaimedFinishedRoguelikeRun(playerId) {
-  return db.prepare("SELECT * FROM roguelike_runs WHERE player_id = ? AND status IN ('finished_win','finished_dead') AND result_seen = 0 ORDER BY id DESC LIMIT 1").get(playerId);
+  return db.prepare("SELECT * FROM roguelike_runs WHERE player_id = ? AND status IN ('finished_win','finished_dead','finished_forfeit') AND result_seen = 0 ORDER BY id DESC LIMIT 1").get(playerId);
 }
 
 // A run "relevante" agora: em andamento (retomável) tem prioridade; senão, a mais recente com
@@ -2998,7 +2998,7 @@ function buildRoguelikeRunPayload(run) {
 
   const map = JSON.parse(run.map);
   const mainDeck = JSON.parse(run.main_deck);
-  const isFinished = run.status === 'finished_win' || run.status === 'finished_dead';
+  const isFinished = run.status === 'finished_win' || run.status === 'finished_dead' || run.status === 'finished_forfeit';
   const conversion = isFinished ? computeRoguelikeDogecoinConversion(run.dogecoins) : null;
   return {
     active: true,
@@ -3051,6 +3051,22 @@ app.post('/api/roguelike/start', requirePlayer, (req, res) => {
   `).run(req.playerId, starterDeckKey, JSON.stringify(mainDeck), JSON.stringify(map));
 
   res.json(buildRoguelikeRunPayload(db.prepare('SELECT * FROM roguelike_runs WHERE id = ?').get(result.lastInsertRowid)));
+});
+
+// Desiste da run atual — converte os dogecoins acumulados (mesma fórmula de sempre) e encerra em
+// 'finished_forfeit'. Só permitido fora de uma batalha em andamento ('in_battle'), já que ali existe
+// uma partida socket ativa que essa rota não teria como encerrar. Serve tanto pra quem quer parar
+// de propósito quanto pra destravar uma run presa (ex: o bug antigo do Boss virar 'cleared' numa
+// derrota, já corrigido, mas que deixou gente com uma run sem nenhum nó disponível pra sempre).
+app.post('/api/roguelike/forfeit', requirePlayer, (req, res) => {
+  const run = getActiveRoguelikeRun(req.playerId);
+  if (!run) return res.status(404).json({ error: 'Nenhuma run de Expedição em andamento.' });
+  if (run.status === 'in_battle') {
+    return res.status(400).json({ error: 'Termine a batalha atual antes de desistir da expedição.' });
+  }
+  convertRoguelikeDogecoins(run.player_id, run.dogecoins);
+  db.prepare("UPDATE roguelike_runs SET status = 'finished_forfeit', finished_at = CURRENT_TIMESTAMP WHERE id = ?").run(run.id);
+  res.json(buildRoguelikeRunPayload(db.prepare('SELECT * FROM roguelike_runs WHERE id = ?').get(run.id)));
 });
 
 // Entra num nó disponível do mapa. Battle/Boss só marcam a run como 'in_battle' — quem realmente
