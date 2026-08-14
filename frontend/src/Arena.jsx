@@ -110,6 +110,7 @@ function DraftedCardsPanels({ groupedDraftedCards, costCurve, costCurveMax, type
           <span>🐾 {t('arenaStatPals')}: <strong style={{ color: '#f3e2b3' }}>{typeCounts.pals}</strong></span>
           <span>🏛️ {t('arenaStatStructures')}: <strong style={{ color: '#f3e2b3' }}>{typeCounts.structures}</strong></span>
           <span>⚙️ {t('arenaStatGear')}: <strong style={{ color: '#f3e2b3' }}>{typeCounts.gear}</strong></span>
+          <span>📜 {t('arenaStatEvent')}: <strong style={{ color: '#f3e2b3' }}>{typeCounts.event}</strong></span>
         </div>
       </div>
     </div>
@@ -228,8 +229,9 @@ function Arena() {
     if (c.cardType === 'Pal') acc.pals++
     else if (c.cardType === 'Structure') acc.structures++
     else if (c.cardType === 'Gear') acc.gear++
+    else if (c.cardType === 'Event') acc.event++
     return acc
-  }, { lucky: 0, pals: 0, structures: 0, gear: 0 })
+  }, { lucky: 0, pals: 0, structures: 0, gear: 0, event: 0 })
 
   return (
     <div style={{
