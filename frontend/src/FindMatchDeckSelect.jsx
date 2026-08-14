@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useLocation } from 'react-router-dom'
 import { useLanguage } from './i18n/LanguageContext'
 import { apiFetch } from './api'
 import { socket } from './socket'
@@ -18,8 +18,13 @@ import {
 function FindMatchDeckSelect() {
   const { t } = useLanguage()
   const CHOICE_LABELS = { rock: t('rockLabel'), paper: t('paperLabel'), scissors: t('scissorsLabel') }
-  const { matchType } = useParams() // 'normal' ou 'arena'
+  const { matchType } = useParams() // 'normal', 'arena' (ranqueada) ou 'arenaDraft' (modo Arena)
   const isArena = matchType === 'arena'
+  // Modo Arena (draft): o deck já veio pronto do draft em Arena.jsx (nunca é escolhido aqui) — o
+  // arenaRunId chega via state de navegação, não por query string (não precisa aparecer na URL).
+  const location = useLocation()
+  const isArenaDraft = matchType === 'arenaDraft'
+  const arenaRunId = location.state?.arenaRunId
 
   // ---------- fila / seleção de deck ----------
   const [decks, setDecks] = useState([])
@@ -187,10 +192,23 @@ function FindMatchDeckSelect() {
   const visibleDecks = isArena ? decks.filter(d => d.mode === 'rank') : decks
 
   const findMatch = () => {
-    if (!selectedDeckId) return
     setErrorMsg('')
+    if (isArenaDraft) {
+      socket.emit('match:findMatch', { matchType: 'arenaDraft', arenaRunId })
+      return
+    }
+    if (!selectedDeckId) return
     socket.emit('match:findMatch', { deckId: selectedDeckId, matchType: isArena ? 'arena' : 'normal' })
   }
+
+  // Modo Arena (draft) não tem etapa de escolher deck — entra na fila sozinho assim que a tela
+  // monta. `stage === 'selecting'` continua sendo o estado inicial (só o que é renderizado nele
+  // muda, ver mais abaixo) até o servidor confirmar com match:queued.
+  useEffect(() => {
+    if (isArenaDraft && arenaRunId) {
+      socket.emit('match:findMatch', { matchType: 'arenaDraft', arenaRunId })
+    }
+  }, [isArenaDraft, arenaRunId])
 
   const cancelSearch = () => {
     socket.emit('match:cancelFindMatch')
@@ -323,6 +341,19 @@ function FindMatchDeckSelect() {
 
   // ================= SELEÇÃO DE DECK =================
   if (stage === 'selecting') {
+    // Modo Arena (draft): sem deck pra escolher — o findMatch já foi disparado sozinho (ver efeito
+    // acima), essa tela só aparece por uma fração de segundo até o servidor confirmar a entrada na fila.
+    if (isArenaDraft) {
+      return (
+        <div style={{
+          minHeight: '100vh', boxSizing: 'border-box', padding: '2rem', textAlign: 'center', background: WOOD_PAGE_BACKGROUND,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '16px'
+        }}>
+          <p style={WOOD_P}>{t('findMatchSearching')}</p>
+          {errorMsg && <p style={{ ...WOOD_P, color: '#ff8a8a' }}>{errorMsg}</p>}
+        </div>
+      )
+    }
     return (
       <div style={{ minHeight: '100vh', boxSizing: 'border-box', padding: '2rem', textAlign: 'center', background: WOOD_PAGE_BACKGROUND }}>
         <Link to="/findmatch"><button className="sign-button" style={{ marginBottom: '20px' }}>{t('findMatchBack')}</button></Link>
@@ -557,11 +588,24 @@ function FindMatchDeckSelect() {
   // ================= FIM DE JOGO =================
   if (stage === 'gameOver') {
     const won = !!gameState?.youWon
+    const runResult = gameState?.arenaRunResult
     return (
       <Overlay accent={won ? 'win' : 'lose'}>
         <h2 style={won ? THEMED_RESULT_WIN : THEMED_RESULT_LOSE}>{won ? t('gbYouWin') : t('gbYouLose')}</h2>
         {gameState?.arenaPointsChange != null && (
           <p style={{ ...THEMED_P, fontWeight: 700 }}>{t('arenaPointsChangeLabel', { n: gameState.arenaPointsChange })}</p>
+        )}
+        {runResult && (
+          <>
+            <p style={{ ...THEMED_P, fontWeight: 700 }}>{t('arenaRunScoreLabel', { wins: runResult.wins, losses: runResult.losses })}</p>
+            {runResult.ended ? (
+              <Link to="/arena"><button className="sign-button" style={{ marginTop: '10px' }}>{t('arenaSeeResultsButton')}</button></Link>
+            ) : (
+              <button className="sign-button" style={{ marginTop: '10px' }} onClick={findMatch}>
+                {t('arenaNextMatchButton')}
+              </button>
+            )}
+          </>
         )}
         <Link to="/"><button className="sign-button" style={{ marginTop: '18px' }}>{t('backToMenu')}</button></Link>
       </Overlay>

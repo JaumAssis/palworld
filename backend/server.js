@@ -15,6 +15,7 @@ const { resolveRPS, randomChoice } = require('./game/RockPaperScissors');
 const EffectEngine = require('./game/effects/EffectEngine');
 const BotBrain = require('./game/BotBrain');
 const { createBotSocketShim } = require('./game/BotSocketShim');
+const arenaDraft = require('./game/arenaDraft');
 const { createAuthRouter } = require('./auth/routes');
 const { unusableHash } = require('./auth/passwords');
 const SqliteSessionStore = require('./auth/SqliteSessionStore');
@@ -149,6 +150,24 @@ try { db.exec('ALTER TABLE decks ADD COLUMN player_id INTEGER'); } catch (e) {}
 // completar via craft) — só existe pra decks 'rank'; decks 'normal' nunca são rascunho.
 try { db.exec('ALTER TABLE decks ADD COLUMN is_draft INTEGER NOT NULL DEFAULT 0'); } catch (e) {}
 
+// ---------- Modo Arena: run de draft temporário estilo Hearthstone ----------
+// Nunca toca a tabela `decks` de propósito — o deck de uma run de Arena é descartável (nasce do
+// draft, morre no fim da run), bem diferente de um deck salvo que aparece em "Meus Decks".
+db.exec(`
+  CREATE TABLE IF NOT EXISTS arena_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'drafting_color1', -- drafting_color1|drafting_color2|drafting_cards|ready|in_progress|finished
+    colors TEXT NOT NULL DEFAULT '[]',    -- JSON com as cores já escolhidas (cresce até ter 2)
+    main_deck TEXT NOT NULL DEFAULT '[]', -- JSON com array de card_number (cresce a cada pick, até 50)
+    wins INTEGER NOT NULL DEFAULT 0,
+    losses INTEGER NOT NULL DEFAULT 0,
+    reward_tier TEXT,                     -- 'wood'|'bronze'|'silver'|'gold' — só preenchido ao terminar
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    finished_at TEXT
+  )
+`);
+
 // ---------- Decks pré-montados padrão (criados 1x, se ainda não existirem) ----------
 function expandPairs(pairs) {
   const arr = [];
@@ -217,13 +236,16 @@ const BOT_REGISTRY = []; // [{ playerId, username, deckId }]
 // startBotFallbackMatch). Só a fila Normal — a Arena fica só entre jogadores reais, pra ladder de
 // rank permanecer íntegra (bots não têm player_cards, não conseguem montar deck Rank de verdade).
 const BOT_QUEUE_FALLBACK_MS = 20000;
+// Fila do modo Arena (draft) espera só 15s antes do bot assumir — o jogador já pagou um ingresso e
+// draftou o deck inteiro pra chegar até aqui, então a espera precisa ser mais curta que a Normal.
+const ARENA_DRAFT_BOT_FALLBACK_MS = 15000;
 // playerId de bot -> está numa partida agora. Impede o mesmo bot assumir 2 filas ao mesmo tempo.
 const botsInMatch = new Set();
 
-// ---------- Matchmaking online: fila de "Encontrar Partida" (Normal / Arena) ----------
+// ---------- Matchmaking online: fila de "Encontrar Partida" (Normal / Arena ranqueada / Arena draft) ----------
 // Fila em memória, válida enquanto o processo Node estiver de pé — se um dia isso escalar para
 // múltiplas instâncias do servidor, precisa virar uma fila compartilhada (ex: Redis) em vez de array local.
-const matchQueues = { normal: [], arena: [] };
+const matchQueues = { normal: [], arena: [], arenaDraft: [] };
 // playerId -> matchType da fila em que está. Evita que o mesmo jogador entre em 2 filas ao mesmo
 // tempo e permite tirar da fila rápido (cancelamento/disconnect) sem varrer os arrays.
 const queuedPlayers = new Map();
@@ -356,7 +378,44 @@ function checkOnlineWinMissions(session) {
     }
   }
   finishArenaRankPoints(session);
+  finishArenaDraftRun(session);
   releaseBotFromMatch(session);
+}
+
+// Aplica o resultado de 1 partida (vitória ou derrota) numa run de Arena (draft): soma no placar,
+// checa se bateu 3 derrotas ou 12 vitórias — se bateu, fecha a run (status 'finished'); senão volta
+// pra 'ready', liberando o jogador pra procurar a próxima partida na mesma run. Reaproveitado tanto
+// pelo fim natural (finishArenaDraftRun) quanto pelo W.O. de desconexão (ver socket.on('disconnect')).
+function applyArenaDraftMatchResult(arenaRunId, won) {
+  const run = db.prepare('SELECT * FROM arena_runs WHERE id = ?').get(arenaRunId);
+  if (!run) return null;
+  const wins = run.wins + (won ? 1 : 0);
+  const losses = run.losses + (won ? 0 : 1);
+  const ended = losses >= 3 || wins >= 12;
+  db.prepare(`
+    UPDATE arena_runs SET wins = ?, losses = ?, status = ?,
+      finished_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE finished_at END
+    WHERE id = ?
+  `).run(wins, losses, ended ? 'finished' : 'ready', ended ? 1 : 0, arenaRunId);
+  return { wins, losses, ended, won };
+}
+
+// Fim natural de uma partida de Arena (draft) — o bot substituto de fila nunca tem arenaRunId de
+// verdade (o deck dele é temporário, não vem de uma run), então só o lado humano é atualizado.
+function finishArenaDraftRun(session) {
+  if (session.matchType !== 'arenaDraft' || session.arenaDraftRunApplied) return;
+  const tm = session.turnManager;
+  if (!tm || !tm.gameOver) return;
+  for (const side of ['A', 'B']) {
+    const arenaRunId = session.sides[side].arenaRunId;
+    if (!arenaRunId) continue;
+    const result = applyArenaDraftMatchResult(arenaRunId, tm.winner === session.states[side]);
+    if (result) {
+      session.arenaRunResult = session.arenaRunResult || {};
+      session.arenaRunResult[side] = result;
+    }
+  }
+  session.arenaDraftRunApplied = true;
 }
 
 // Aplica pontos de rank 1x só por partida Arena — tanto no fim natural (aqui) quanto no W.O. por
@@ -418,9 +477,12 @@ function emitMatchState(session) {
       gameOver: tm.gameOver,
       winner: tm.winner ? tm.winner.playerName : null,
       youWon: tm.winner ? tm.winner === self : null,
-      // Só existe em partida Arena, só depois do jogo acabar — quanto ESSE lado ganhou (positivo) ou
-      // perdeu (negativo) de pontos de rank nessa partida (ver finishArenaRankPoints).
+      // Só existe em partida Arena (ranqueada), só depois do jogo acabar — quanto ESSE lado ganhou
+      // (positivo) ou perdeu (negativo) de pontos de rank nessa partida (ver finishArenaRankPoints).
       arenaPointsChange: session.arenaPointsChange ? session.arenaPointsChange[side] : null,
+      // Só existe em partida Arena (draft), só depois do jogo acabar — placar atualizado da run e
+      // se ela já terminou (3 derrotas/12 vitórias) — ver finishArenaDraftRun.
+      arenaRunResult: session.arenaRunResult ? session.arenaRunResult[side] : null,
       log: tm.log.slice(-MATCH_LOG_TAIL),
       logTotal: tm.log.length,
       pendingEffect: pending ? {
@@ -487,6 +549,34 @@ async function runOnlineBotTurn(session) {
   });
 }
 
+// Soul Deck fixo do modo Arena (draft) — só existe 1 carta de tipo Soul no catálogo hoje, então
+// não há variedade real pra draftar; toda run usa sempre os mesmos 10x SOUL-001.
+const ARENA_SOUL_DECK = Array(10).fill('SOUL-001');
+
+// Resolve as cartas (mão + Souls) de um lado da partida, a partir de 3 origens possíveis: um deck
+// salvo (entry.deckId — fluxo Normal/Ranqueada), uma run de Arena já draftada (entry.arenaRunId) ou
+// um deck temporário gerado na hora pro bot substituto da fila de Arena (entry.arenaTempDeck).
+function resolveEntryCards(entry) {
+  if (entry.arenaRunId) {
+    const run = db.prepare('SELECT main_deck FROM arena_runs WHERE id = ?').get(entry.arenaRunId);
+    return {
+      mainCards: shuffle(getCardsByNumbers(JSON.parse(run.main_deck))),
+      soulCards: shuffle(getCardsByNumbers(ARENA_SOUL_DECK))
+    };
+  }
+  if (entry.arenaTempDeck) {
+    return {
+      mainCards: shuffle(getCardsByNumbers(entry.arenaTempDeck.mainDeck)),
+      soulCards: shuffle(getCardsByNumbers(ARENA_SOUL_DECK))
+    };
+  }
+  const deckRow = db.prepare('SELECT * FROM decks WHERE id = ?').get(entry.deckId);
+  return {
+    mainCards: shuffle(getCardsByNumbers(JSON.parse(deckRow.main_deck))),
+    soulCards: shuffle(getCardsByNumbers(JSON.parse(deckRow.soul_deck)))
+  };
+}
+
 // Monta os 2 PlayerState (a partir dos decks escolhidos na fila) e entra na sessão pareada — o
 // TurnManager só é criado depois do Jokenpô (ver match:chooseOrder), igual ao fluxo do modo Bot.
 function startOnlineMatch(matchType, a, b) {
@@ -510,11 +600,15 @@ function startOnlineMatch(matchType, a, b) {
 
   for (const side of ['A', 'B']) {
     const entry = session.sides[side];
-    const deckRow = db.prepare('SELECT * FROM decks WHERE id = ?').get(entry.deckId);
-    const mainCards = shuffle(getCardsByNumbers(JSON.parse(deckRow.main_deck)));
-    const soulCards = shuffle(getCardsByNumbers(JSON.parse(deckRow.soul_deck)));
+    const { mainCards, soulCards } = resolveEntryCards(entry);
     session.states[side] = new PlayerState(getUsernameForPlayer(entry.playerId), mainCards, soulCards);
     socketRoomMap.set(entry.socket.id, roomId);
+    // A run de Arena (draft) vira "em partida" assim que a partida começa de verdade — impede o
+    // jogador de comprar outro ingresso ou reabrir o draft enquanto essa run está em jogo. Só o
+    // lado humano tem arenaRunId de verdade (o bot substituto usa um deck temporário sem run).
+    if (entry.arenaRunId) {
+      db.prepare("UPDATE arena_runs SET status = 'in_progress' WHERE id = ?").run(entry.arenaRunId);
+    }
   }
 
   onlineSessions.set(roomId, session);
@@ -652,6 +746,15 @@ function pickAvailableBot() {
   return available[Math.floor(Math.random() * available.length)];
 }
 
+// Variante pro substituto da fila de Arena (draft): não exige `deckId` — o deck usado nunca é o
+// preset do bot, é sempre um temporário sorteado na hora (ver startArenaDraftBotFallbackMatch). Só
+// a identidade (nick, contagem no online) vem do BOT_REGISTRY.
+function pickAvailableBotForArenaDraft() {
+  const available = BOT_REGISTRY.filter(b => !botsInMatch.has(b.playerId));
+  if (available.length === 0) return null;
+  return available[Math.floor(Math.random() * available.length)];
+}
+
 // Libera o bot pra próxima partida — chamado tanto no fim natural (checkOnlineWinMissions) quanto
 // na desconexão do humano (socket.on('disconnect')). Idempotente via _botReleased: sem isso, um
 // humano que fica na tela de fim de jogo aberta (a sessão só é destruída no disconnect) e o
@@ -681,6 +784,30 @@ function startBotFallbackMatch(entry) {
   session = startOnlineMatch('normal', entry, { socket: shim, playerId: bot.playerId, deckId: bot.deckId, isBot: true });
 
   console.log(`[bots] "${bot.username}" entrou na fila Normal no lugar de um humano (sem oponente em ${BOT_QUEUE_FALLBACK_MS / 1000}s).`);
+}
+
+// 15s sem parear com humano na fila de Arena (draft): um dos 3 bots permanentes assume o lugar,
+// mas com um deck TEMPORÁRIO sorteado na hora (2 cores + 50 cartas) — nunca o preset do bot, que
+// não faz sentido aqui (a run de Arena de quem ficou na fila também nasceu de um draft aleatório).
+function startArenaDraftBotFallbackMatch(entry) {
+  if (queuedPlayers.get(entry.playerId) !== 'arenaDraft') return;
+  if (!entry.socket.connected) return;
+
+  const bot = pickAvailableBotForArenaDraft();
+  if (!bot) return; // nenhum bot livre agora — deixa o jogador na fila, ainda pode aparecer um humano
+
+  removeFromQueue(entry.playerId);
+  botsInMatch.add(bot.playerId);
+
+  const { colors, mainDeck } = arenaDraft.draftRandomDeck(getAllCardsHydrated());
+
+  let session;
+  const shim = createBotSocketShim((event, payload) => handleBotDriverEvent(session, 'B', event, payload));
+  session = startOnlineMatch('arenaDraft', entry, {
+    socket: shim, playerId: bot.playerId, arenaTempDeck: { mainDeck }, isBot: true
+  });
+
+  console.log(`[bots] "${bot.username}" entrou na fila de Arena no lugar de um humano, com deck temporário aleatório (${colors.join('/')}).`);
 }
 
 app.get('/api/health', (req, res) => {
@@ -2469,14 +2596,11 @@ app.post('/api/market/listings/:id/buy', requirePlayer, (req, res) => {
   res.json({ message: 'Carta comprada com sucesso.', newQuantity, goldCoins: updatedBuyer.gold_coins, palFluid: updatedBuyer.pal_fluid });
 });
 
-// Abre 1 booster pack: sorteia 5 cartas do set BP01, respeitando raridade.
-// Cópias além da 4ª viram Fluido de Pal em vez de empilhar.
-app.post('/api/shop/open-booster', requirePlayer, (req, res) => {
-  const player = db.prepare('SELECT * FROM players WHERE id = ?').get(req.playerId);
-  if (player.gold_coins < BOOSTER_PRICE) {
-    return res.status(400).json({ error: 'Moedas de ouro insuficientes.' });
-  }
-
+// Abre 1 pacote de BP01 pra um jogador: sorteia CARDS_PER_PACK cartas ponderadas por raridade,
+// credita 1 cópia (ou converte em Fluido de Pal se já tem 4). NÃO mexe em gold_coins — quem chama
+// decide se cobra por isso (a loja) ou não (recompensa de baú do modo Arena). Reaproveitado por
+// /api/shop/open-booster e por /api/arena/claim-reward.
+function openBoosterPackFor(playerId) {
   // Exclui variantes de arte paralela (ex: BP01-001-SR), só cartas base do set
   const pool = db.prepare("SELECT * FROM cards WHERE set_code = ? AND card_number NOT LIKE '%-%-%'").all(BOOSTER_SET);
 
@@ -2493,27 +2617,225 @@ app.post('/api/shop/open-booster', requirePlayer, (req, res) => {
     const card = maybeUpgradeToVariant(weightedRandomCard(pool));
     revealed.push(card);
 
-    const current = getQty.get(req.playerId, card.card_number)?.quantity || 0;
+    const current = getQty.get(playerId, card.card_number)?.quantity || 0;
     if (current >= 4) {
       fluidGained += RARITY_FLUID[card.rarity] || 5;
     } else {
-      upsertQty.run(req.playerId, card.card_number, current + 1);
+      upsertQty.run(playerId, card.card_number, current + 1);
     }
   }
+
+  return {
+    cards: revealed.map(c => ({
+      ...c, colors: JSON.parse(c.colors), keywords: JSON.parse(c.keywords), is_lucky: !!c.is_lucky,
+      image_url: `/${c.image_path}`
+    })),
+    fluidGained
+  };
+}
+
+// Abre 1 booster pack: sorteia 5 cartas do set BP01, respeitando raridade.
+// Cópias além da 4ª viram Fluido de Pal em vez de empilhar.
+app.post('/api/shop/open-booster', requirePlayer, (req, res) => {
+  const player = db.prepare('SELECT * FROM players WHERE id = ?').get(req.playerId);
+  if (player.gold_coins < BOOSTER_PRICE) {
+    return res.status(400).json({ error: 'Moedas de ouro insuficientes.' });
+  }
+
+  const { cards, fluidGained } = openBoosterPackFor(req.playerId);
 
   const newGold = player.gold_coins - BOOSTER_PRICE;
   const newFluid = player.pal_fluid + fluidGained;
   db.prepare('UPDATE players SET gold_coins = ?, pal_fluid = ? WHERE id = ?').run(newGold, newFluid, req.playerId);
 
+  res.json({ cards, fluidGained, goldCoins: newGold, palFluid: newFluid });
+});
+
+// ---------- Modo Arena: draft temporário estilo Hearthstone ----------
+const ARENA_TICKET_PRICE = 100; // gold_coins por run
+
+function getAllCardsHydrated() {
+  const numbers = db.prepare('SELECT card_number FROM cards').all().map(r => r.card_number);
+  return getCardsByNumbers(numbers);
+}
+
+function getActiveArenaRun(playerId) {
+  return db.prepare("SELECT * FROM arena_runs WHERE player_id = ? AND status != 'finished' ORDER BY id DESC LIMIT 1").get(playerId);
+}
+
+// Run finalizada cujo baú ainda não foi resgatado (reward_tier só é preenchido no resgate, ver
+// /api/arena/claim-reward) — sem isso o jogador que termina uma run nunca teria como ver a tela de
+// resultado, já que getActiveArenaRun exclui runs 'finished' de propósito.
+function getUnclaimedFinishedArenaRun(playerId) {
+  return db.prepare("SELECT * FROM arena_runs WHERE player_id = ? AND status = 'finished' AND reward_tier IS NULL ORDER BY id DESC LIMIT 1").get(playerId);
+}
+
+// A run "relevante" agora: em andamento (retomável) tem prioridade; senão, a mais recente com baú
+// pendente de resgate; senão nenhuma (mostra a tela de comprar ingresso).
+function getRelevantArenaRun(playerId) {
+  return getActiveArenaRun(playerId) || getUnclaimedFinishedArenaRun(playerId);
+}
+
+// Faixa de recompensa por vitórias na run (fixa nos limites exatos combinados: 0-4 Madeira,
+// 5-8 Bronze, 9-11 Prata, 12 Ouro — nunca lida do banco, é sempre uma função pura de `wins`).
+function computeArenaRewardTier(wins) {
+  if (wins >= 12) return 'gold';
+  if (wins >= 9) return 'silver';
+  if (wins >= 5) return 'bronze';
+  return 'wood';
+}
+
+// Conteúdo de cada baú — ouro/fluido/ingredientes fixos por tier, pacotes de BP01 só a partir da
+// Prata. Ingrediente é o mesmo valor pras 3 colheitas (trigo/alface/tomate), ver /api/arena/claim-reward.
+const ARENA_REWARD_TIERS = {
+  wood: { gold: 50, fluid: 0, ingredient: 5, boosterPacks: 0 },
+  bronze: { gold: 150, fluid: 10, ingredient: 10, boosterPacks: 0 },
+  silver: { gold: 300, fluid: 30, ingredient: 15, boosterPacks: 1 },
+  gold: { gold: 500, fluid: 60, ingredient: 20, boosterPacks: 2 }
+};
+
+// Monta a resposta que o front usa pra decidir qual sub-tela mostrar. A "próxima oferta" (cores ou
+// cartas) nunca é persistida — é recalculada aqui na hora a cada chamada (ver comentário da tabela
+// arena_runs), então funciona também pra retomar depois de um F5 no meio do draft.
+function buildArenaRunPayload(run) {
+  if (!run) return { active: false };
+  const colors = JSON.parse(run.colors);
+  const mainDeck = JSON.parse(run.main_deck);
+  const payload = {
+    active: true,
+    id: run.id,
+    status: run.status,
+    colors,
+    deckCount: mainDeck.length,
+    wins: run.wins,
+    losses: run.losses
+  };
+
+  if (run.status === 'drafting_color1') {
+    payload.colorOffer = arenaDraft.offerFirstColorTrio();
+  } else if (run.status === 'drafting_color2') {
+    payload.colorOffer = arenaDraft.offerSecondColorTrio(colors[0]);
+  } else if (run.status === 'drafting_cards') {
+    const pool = arenaDraft.buildEligiblePool(getAllCardsHydrated(), colors);
+    payload.cardOffer = arenaDraft.offerCardTrio(pool, mainDeck).map(c => ({
+      cardNumber: c.card_number, name: c.name, imageUrl: c.image_url, cost: c.cost, colors: c.colors
+    }));
+  } else if (run.status === 'finished') {
+    // Só chega aqui quando o baú ainda não foi resgatado (ver getUnclaimedFinishedArenaRun) — a
+    // faixa é só uma prévia pro front mostrar qual baú vai abrir; o resgate de verdade acontece em
+    // /api/arena/claim-reward.
+    payload.rewardTier = computeArenaRewardTier(run.wins);
+  }
+
+  return payload;
+}
+
+app.get('/api/arena/status', requirePlayer, (req, res) => {
+  res.json(buildArenaRunPayload(getRelevantArenaRun(req.playerId)));
+});
+
+// Compra o ingresso (100 gold) e cria a run. Se já existe uma run em andamento OU uma run
+// terminada com baú pendente, não cobra de novo — só devolve o estado dela (cobre o clique duplo,
+// o F5, e evita deixar uma recompensa pra trás sem querer ao comprar outro ingresso).
+app.post('/api/arena/start', requirePlayer, (req, res) => {
+  const existing = getRelevantArenaRun(req.playerId);
+  if (existing) return res.json(buildArenaRunPayload(existing));
+
+  const player = db.prepare('SELECT gold_coins FROM players WHERE id = ?').get(req.playerId);
+  if (player.gold_coins < ARENA_TICKET_PRICE) {
+    return res.status(400).json({ error: 'Ouro insuficiente pra comprar o ingresso.' });
+  }
+
+  db.prepare('UPDATE players SET gold_coins = gold_coins - ? WHERE id = ?').run(ARENA_TICKET_PRICE, req.playerId);
+  const result = db.prepare('INSERT INTO arena_runs (player_id) VALUES (?)').run(req.playerId);
+  res.json(buildArenaRunPayload(db.prepare('SELECT * FROM arena_runs WHERE id = ?').get(result.lastInsertRowid)));
+});
+
+// Resgata o baú da run mais recente que terminou e ainda não foi resgatada. Concede ouro/fluido/
+// ingredientes fixos por faixa (ver ARENA_REWARD_TIERS) mais N pacotes de BP01 (reaproveitando
+// openBoosterPackFor, o mesmo sorteio ponderado por raridade da loja) — e marca reward_tier, que é
+// o que faz essa run parar de aparecer (ver getUnclaimedFinishedArenaRun).
+app.post('/api/arena/claim-reward', requirePlayer, (req, res) => {
+  const run = getUnclaimedFinishedArenaRun(req.playerId);
+  if (!run) return res.status(404).json({ error: 'Nenhuma recompensa de Arena pra resgatar agora.' });
+
+  const tier = computeArenaRewardTier(run.wins);
+  const reward = ARENA_REWARD_TIERS[tier];
+
+  const cards = [];
+  let fluidGained = reward.fluid;
+  for (let i = 0; i < reward.boosterPacks; i++) {
+    const pack = openBoosterPackFor(req.playerId);
+    cards.push(...pack.cards);
+    fluidGained += pack.fluidGained;
+  }
+
+  db.prepare(`
+    UPDATE players SET gold_coins = gold_coins + ?, pal_fluid = pal_fluid + ?,
+      wheat = wheat + ?, lettuce = lettuce + ?, tomato = tomato + ?
+    WHERE id = ?
+  `).run(reward.gold, fluidGained, reward.ingredient, reward.ingredient, reward.ingredient, req.playerId);
+
+  db.prepare('UPDATE arena_runs SET reward_tier = ? WHERE id = ?').run(tier, run.id);
+
+  const player = db.prepare('SELECT gold_coins, pal_fluid FROM players WHERE id = ?').get(req.playerId);
   res.json({
-    cards: revealed.map(c => ({
-      ...c, colors: JSON.parse(c.colors), keywords: JSON.parse(c.keywords), is_lucky: !!c.is_lucky,
-      image_url: `/${c.image_path}`
-    })),
-    fluidGained,
-    goldCoins: newGold,
-    palFluid: newFluid
+    tier,
+    wins: run.wins,
+    losses: run.losses,
+    gold: reward.gold,
+    fluid: fluidGained,
+    ingredient: reward.ingredient,
+    cards,
+    goldCoins: player.gold_coins,
+    palFluid: player.pal_fluid
   });
+});
+
+// Escolhe 1ª ou 2ª cor (o status da run diz qual das duas é). Revalida no servidor que a cor é uma
+// das 4 possíveis e, na 2ª escolha, que não repete a 1ª — nunca confia soltamente no valor mandado.
+app.post('/api/arena/pick-color', requirePlayer, (req, res) => {
+  const { color } = req.body;
+  const run = getActiveArenaRun(req.playerId);
+  if (!run) return res.status(404).json({ error: 'Nenhuma run de Arena em andamento.' });
+  if (!arenaDraft.ARENA_COLORS.includes(color)) return res.status(400).json({ error: 'Cor inválida.' });
+
+  const colors = JSON.parse(run.colors);
+  if (run.status === 'drafting_color1') {
+    db.prepare("UPDATE arena_runs SET colors = ?, status = 'drafting_color2' WHERE id = ?")
+      .run(JSON.stringify([color]), run.id);
+  } else if (run.status === 'drafting_color2') {
+    if (color === colors[0]) return res.status(400).json({ error: 'Essa cor já foi escolhida.' });
+    db.prepare("UPDATE arena_runs SET colors = ?, status = 'drafting_cards' WHERE id = ?")
+      .run(JSON.stringify([colors[0], color]), run.id);
+  } else {
+    return res.status(400).json({ error: 'Essa run não está escolhendo cor agora.' });
+  }
+
+  res.json(buildArenaRunPayload(db.prepare('SELECT * FROM arena_runs WHERE id = ?').get(run.id)));
+});
+
+// Escolhe 1 carta do draft (até fechar as 50). Revalida no servidor que a carta é elegível pras
+// cores da run e ainda cabe nos tetos de cópias/Lucky Pals — nunca confia no card_number sozinho.
+app.post('/api/arena/pick-card', requirePlayer, (req, res) => {
+  const { cardNumber } = req.body;
+  const run = getActiveArenaRun(req.playerId);
+  if (!run) return res.status(404).json({ error: 'Nenhuma run de Arena em andamento.' });
+  if (run.status !== 'drafting_cards') return res.status(400).json({ error: 'Essa run não está draftando cartas agora.' });
+
+  const colors = JSON.parse(run.colors);
+  const mainDeck = JSON.parse(run.main_deck);
+  const pool = arenaDraft.buildEligiblePool(getAllCardsHydrated(), colors);
+  if (!arenaDraft.isCardNumberLegalPick(pool, mainDeck, cardNumber)) {
+    return res.status(400).json({ error: 'Essa carta não é uma escolha válida agora.' });
+  }
+
+  mainDeck.push(cardNumber);
+  const newStatus = mainDeck.length >= arenaDraft.ARENA_MAIN_DECK_SIZE ? 'ready' : 'drafting_cards';
+  db.prepare('UPDATE arena_runs SET main_deck = ?, status = ? WHERE id = ?')
+    .run(JSON.stringify(mainDeck), newStatus, run.id);
+
+  res.json(buildArenaRunPayload(db.prepare('SELECT * FROM arena_runs WHERE id = ?').get(run.id)));
 });
 
 // Contagem de "gente online" pro badge do menu — conexões WebSocket ativas, não contas
@@ -2655,27 +2977,41 @@ io.on('connection', (socket) => {
   });
 
   // ---------- Matchmaking online: entrar/sair da fila de "Encontrar Partida" ----------
-  socket.on('match:findMatch', ({ deckId, matchType }) => {
-    const type = matchType === 'arena' ? 'arena' : 'normal';
+  socket.on('match:findMatch', ({ deckId, matchType, arenaRunId }) => {
+    const type = matchType === 'arena' ? 'arena' : (matchType === 'arenaDraft' ? 'arenaDraft' : 'normal');
     if (queuedPlayers.has(playerId)) return; // já está numa fila (ex.: clique duplo)
 
-    const validation = validateDeckForMatch(playerId, deckId, type);
-    if (!validation.ok) {
-      socket.emit('match:error', { message: validation.message });
-      return;
+    let entry;
+    if (type === 'arenaDraft') {
+      // Deck aqui nunca vem de `decks` — é o main_deck já draftado da run (ver Fase 1). Só o dono
+      // da run pode usá-la, e só depois que o draft chegou nas 50 cartas (status 'ready').
+      const run = db.prepare('SELECT * FROM arena_runs WHERE id = ? AND player_id = ?').get(arenaRunId, playerId);
+      if (!run || run.status !== 'ready') {
+        socket.emit('match:error', { message: 'Seu deck de Arena ainda não está pronto.' });
+        return;
+      }
+      entry = { socket, playerId, arenaRunId };
+    } else {
+      const validation = validateDeckForMatch(playerId, deckId, type);
+      if (!validation.ok) {
+        socket.emit('match:error', { message: validation.message });
+        return;
+      }
+      entry = { socket, playerId, deckId };
     }
 
-    const entry = { socket, playerId, deckId };
     matchQueues[type].push(entry);
     queuedPlayers.set(playerId, type);
     socket.emit('match:queued', { matchType: type });
     tryPairQueue(type);
 
-    // Só a fila Normal ganha substituto de bot — Arena fica só entre jogadores reais (ver
-    // BOT_QUEUE_FALLBACK_MS). Confere se ainda está na fila DEPOIS do tryPairQueue: pode já ter
-    // sido pareado com um humano na mesma tick.
+    // Normal e Arena (draft) ganham substituto de bot — a Arena ranqueada fica só entre jogadores
+    // reais (ver BOT_QUEUE_FALLBACK_MS/ARENA_DRAFT_BOT_FALLBACK_MS). Confere se ainda está na fila
+    // DEPOIS do tryPairQueue: pode já ter sido pareado com um humano na mesma tick.
     if (type === 'normal' && queuedPlayers.get(playerId) === 'normal') {
       entry.botFallbackTimer = setTimeout(() => startBotFallbackMatch(entry), BOT_QUEUE_FALLBACK_MS);
+    } else if (type === 'arenaDraft' && queuedPlayers.get(playerId) === 'arenaDraft') {
+      entry.botFallbackTimer = setTimeout(() => startArenaDraftBotFallbackMatch(entry), ARENA_DRAFT_BOT_FALLBACK_MS);
     }
   });
 
@@ -3530,6 +3866,17 @@ io.on('connection', (socket) => {
         const { gained } = applyArenaRankPoints(session.sides[remainingSide].playerId, session.sides[side].playerId);
         arenaPointsChange = gained;
         session.rankPointsApplied = true;
+      }
+
+      // Mesma regra pra Arena (draft): só conta como partida jogada se o jogo já tinha começado.
+      // Quem ficou ganha por W.O.; atualiza a run de quem tiver arenaRunId (o bot substituto nunca
+      // tem — o deck dele é temporário, sem run nenhuma pra atualizar).
+      if (session.matchType === 'arenaDraft' && session.turnManager && !session.arenaDraftRunApplied) {
+        for (const s of ['A', 'B']) {
+          const arenaRunId = session.sides[s].arenaRunId;
+          if (arenaRunId) applyArenaDraftMatchResult(arenaRunId, s === remainingSide);
+        }
+        session.arenaDraftRunApplied = true;
       }
 
       session.sides[remainingSide].socket.emit('match:opponentLeft', {

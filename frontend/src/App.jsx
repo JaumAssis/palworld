@@ -13,6 +13,7 @@ import TutorialSelect from './TutorialSelect'
 import TutorialMatch from './TutorialMatch'
 import FindMatchSelect from './FindMatchSelect'
 import FindMatchDeckSelect from './FindMatchDeckSelect'
+import Arena from './Arena'
 import { useLanguage } from './i18n/LanguageContext'
 import { translations } from './i18n/translations'
 import { useAuth } from './auth/AuthContext'
@@ -592,6 +593,7 @@ function MainMenu() {
         <Link to="/mydecks" onClick={guardedLinkClick}><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuMyDecks')}</button></Link>
         <Link to="/findmatch" onClick={guardedLinkClick}><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuFindMatch')}</button></Link>
         <Link to="/game" onClick={guardedLinkClick}><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuBotMatch')}</button></Link>
+        <Link to="/arena" onClick={guardedLinkClick}><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuArena')}</button></Link>
       </div>
 
       <div style={{ position: 'fixed', bottom: 'var(--sp-lg)', left: 'var(--sp-lg)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-sm)', alignItems: 'flex-start' }}>
@@ -674,6 +676,7 @@ function App() {
         <Route path="/mydecks" element={<RequireAuth><DeckList /></RequireAuth>} />
         <Route path="/mydecks/:id" element={<RequireAuth><DeckDetail /></RequireAuth>} />
         <Route path="/game" element={<RequireAuth><GameBoard /></RequireAuth>} />
+        <Route path="/arena" element={<RequireAuth><Arena /></RequireAuth>} />
       </Routes>
     </BrowserRouter>
   )
