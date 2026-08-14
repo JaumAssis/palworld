@@ -240,6 +240,29 @@ function HudStat({ icon, value, feedback }) {
   )
 }
 
+const EXPEDITION_LENGTH_KEYS = ['short', 'medium', 'long']
+
+// Seletor de duração da expedição (Rápida/Média/Longa) — escolhido junto com o deck-personagem,
+// antes de iniciar a run. Cada tamanho gera um mapa com mais ou menos camadas antes do Boss (ver
+// EXPEDITION_LENGTHS em roguelikeMap.js), sempre 3 trilhas por camada.
+function ExpeditionLengthSelector({ value, onChange, busy, t }) {
+  return (
+    <div style={{ display: 'flex', gap: 'var(--sp-sm)', justifyContent: 'center', marginTop: 'var(--sp-md)', flexWrap: 'wrap' }}>
+      {EXPEDITION_LENGTH_KEYS.map(key => (
+        <button
+          key={key}
+          className="sign-button sign-button-fluid"
+          disabled={busy}
+          onClick={() => onChange(key)}
+          style={{ opacity: value === key ? 1 : 0.55, outline: value === key ? '3px solid #ffd76a' : 'none' }}
+        >
+          {t(`roguelikeExpeditionLength_${key}`)}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 // Preview das 16 cartas de um deck-personagem, com zoom de 500ms ao passar o mouse — mesmo
 // padrão de hover-zoom já usado em Arena.jsx/DeckBuilder.jsx.
 function StarterDeckCard({ deck, onChoose, busy, startHoverZoom, cancelHoverZoom, t }) {
@@ -599,8 +622,9 @@ function ShopPanel({ pendingChoice, dogecoins, busy, onBuy, onLeave, t }) {
 }
 
 // Tela de resultado final — vitória sobre o Boss ou vidas esgotadas. Mostra o deck que a run
-// terminou tendo, quanto os dogecoins renderam em gold_coins (já creditado no momento em que a run
-// terminou, ver convertRoguelikeDogecoinsToGold no backend) e libera uma expedição nova ao confirmar.
+// terminou tendo, quanto os dogecoins renderam em gold_coins + ingredientes (já creditado no
+// momento em que a run terminou, ver computeRoguelikeDogecoinConversion no backend) e libera uma
+// expedição nova ao confirmar.
 function FinishedRunSummary({ run, busy, onAcknowledge, t }) {
   const won = run.status === 'finished_win'
   return (
@@ -610,7 +634,7 @@ function FinishedRunSummary({ run, busy, onAcknowledge, t }) {
       </h2>
       <p style={{ fontSize: 'var(--fs-md)' }}>
         <img src="/dogecoin.webp" alt="dogecoin" style={{ width: '1.2em', height: '1.2em', verticalAlign: 'middle', marginRight: '4px' }} />
-        {t('roguelikeGoldConvertedLabel', { gold: run.goldConverted })}
+        {t('roguelikeGoldConvertedLabel', { gold: run.goldConverted, ingredient: run.ingredientConverted })}
       </p>
       <DeckPanel draftedCards={run.draftedCards} t={t} />
       <button className="sign-button sign-button-fluid" style={{ marginTop: 'var(--sp-lg)' }} disabled={busy} onClick={onAcknowledge}>
@@ -692,10 +716,11 @@ function Roguelike() {
   }
   useEffect(() => { loadStatus() }, [])
 
+  const [expeditionLength, setExpeditionLength] = useState('medium')
   const chooseDeck = (starterDeckKey) => {
     setError('')
     setBusy(true)
-    apiJson('/api/roguelike/start', { method: 'POST', body: JSON.stringify({ starterDeckKey }) })
+    apiJson('/api/roguelike/start', { method: 'POST', body: JSON.stringify({ starterDeckKey, expeditionLength }) })
       .then(setRun)
       .catch(err => setError(err.message))
       .finally(() => setBusy(false))
@@ -757,6 +782,10 @@ function Roguelike() {
       {!run.active && (
         <div style={{ maxWidth: 'var(--panel-w-lg)', margin: '2rem auto', color: '#f3e2b3' }}>
           <p style={{ fontSize: 'var(--fs-sm)', lineHeight: 1.5 }}>{t('roguelikeChooseDeckIntro')}</p>
+
+          <h3 style={{ fontSize: 'var(--fs-md)', margin: '0' }}>{t('roguelikeExpeditionLengthTitle')}</h3>
+          <ExpeditionLengthSelector value={expeditionLength} onChange={setExpeditionLength} busy={busy} t={t} />
+
           <div style={{ display: 'flex', gap: 'var(--sp-lg)', justifyContent: 'center', flexWrap: 'wrap', marginTop: 'var(--sp-lg)' }}>
             {run.starterDecks.map(deck => (
               <StarterDeckCard

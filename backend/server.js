@@ -453,11 +453,25 @@ function finishArenaDraftRun(session) {
 // Chamado 1x por partida via checkRoguelikeBattleResult, dentro do emitState() do socket vs Bot.
 const ROGUELIKE_BATTLE_WIN_DOGECOINS = 25; // por vitória em batalha — proposta, ajustável
 
-// Converte os dogecoins da run em gold_coins reais (1:1, proposta ajustável) — chamado sempre que
-// uma run termina (vitória sobre o Boss ou vidas esgotadas), seja pelo fim de uma batalha ou por um
-// evento de risco (Encontro Selvagem) que zere as vidas. Dogecoin nunca persiste além da run em si.
-function convertRoguelikeDogecoinsToGold(playerId, dogecoins) {
-  if (dogecoins > 0) db.prepare('UPDATE players SET gold_coins = gold_coins + ? WHERE id = ?').run(dogecoins, playerId);
+// Fórmula de conversão ao fim de uma run — ajustada depois do feedback de que gold estava fácil
+// demais de farmar no Modo Expedição (run começa de graça e derrota não apaga o que já foi
+// ganho): 0,25 gold por dogecoin (arredondado pra cima) + 1 de cada ingrediente de farming
+// (trigo/alface/tomate) por dogecoin. Função pura — reaproveitada tanto na conversão de verdade
+// quanto no preview mostrado em buildRoguelikeRunPayload, pra nunca haver 2 fórmulas divergentes.
+function computeRoguelikeDogecoinConversion(dogecoins) {
+  return { gold: Math.ceil(dogecoins * 0.25), ingredient: dogecoins };
+}
+
+// Converte os dogecoins da run em gold_coins + ingredientes reais — chamado sempre que uma run
+// termina (vitória sobre o Boss ou vidas esgotadas), seja pelo fim de uma batalha ou por um evento
+// de risco (Encontro Selvagem) que zere as vidas. Dogecoin nunca persiste além da run em si.
+function convertRoguelikeDogecoins(playerId, dogecoins) {
+  if (dogecoins <= 0) return;
+  const { gold, ingredient } = computeRoguelikeDogecoinConversion(dogecoins);
+  db.prepare(`
+    UPDATE players SET gold_coins = gold_coins + ?, wheat = wheat + ?, lettuce = lettuce + ?, tomato = tomato + ?
+    WHERE id = ?
+  `).run(gold, ingredient, ingredient, ingredient, playerId);
 }
 
 function applyRoguelikeBattleResult(runId, won) {
@@ -470,7 +484,7 @@ function applyRoguelikeBattleResult(runId, won) {
     const lives = run.lives - 1;
     roguelikeMap.markNodeCleared(map, run.current_node_id);
     if (lives <= 0) {
-      convertRoguelikeDogecoinsToGold(run.player_id, run.dogecoins);
+      convertRoguelikeDogecoins(run.player_id, run.dogecoins);
       db.prepare("UPDATE roguelike_runs SET status = 'finished_dead', lives = 0, map = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ?")
         .run(JSON.stringify(map), runId);
       return { outcome: 'finished_dead' };
@@ -482,7 +496,7 @@ function applyRoguelikeBattleResult(runId, won) {
   const dogecoins = run.dogecoins + ROGUELIKE_BATTLE_WIN_DOGECOINS;
 
   if (node && node.type === 'boss') {
-    convertRoguelikeDogecoinsToGold(run.player_id, dogecoins);
+    convertRoguelikeDogecoins(run.player_id, dogecoins);
     db.prepare("UPDATE roguelike_runs SET status = 'finished_win', dogecoins = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ?").run(dogecoins, runId);
     return { outcome: 'finished_win' };
   }
@@ -2960,8 +2974,9 @@ function getRelevantRoguelikeRun(playerId) {
 
 // Sem run relevante: devolve os 5 decks-personagem (com preview das 16 cartas já hidratadas) pra
 // tela de escolha. Com run relevante: mapa atual, vidas, dogecoins e o deck (que cresce durante a
-// run) — se já terminou, `goldConverted` mostra quanto os dogecoins renderam (1:1, ver
-// convertRoguelikeDogecoinsToGold), já creditado em gold_coins no momento em que a run terminou.
+// run) — se já terminou, `goldConverted`/`ingredientConverted` mostram quanto os dogecoins
+// renderam (ver computeRoguelikeDogecoinConversion), já creditado nos atributos do jogador no
+// momento em que a run terminou.
 function buildRoguelikeRunPayload(run) {
   if (!run) {
     const allCards = getAllCardsHydrated();
@@ -2977,6 +2992,7 @@ function buildRoguelikeRunPayload(run) {
   const map = JSON.parse(run.map);
   const mainDeck = JSON.parse(run.main_deck);
   const isFinished = run.status === 'finished_win' || run.status === 'finished_dead';
+  const conversion = isFinished ? computeRoguelikeDogecoinConversion(run.dogecoins) : null;
   return {
     active: true,
     id: run.id,
@@ -2986,7 +3002,8 @@ function buildRoguelikeRunPayload(run) {
     draftedCards: buildDraftedCardsList(getAllCardsHydrated(), mainDeck, JSON.parse(run.card_modifiers)),
     lives: run.lives,
     dogecoins: run.dogecoins,
-    goldConverted: isFinished ? run.dogecoins : null,
+    goldConverted: conversion ? conversion.gold : null,
+    ingredientConverted: conversion ? conversion.ingredient : null,
     map,
     currentNodeId: run.current_node_id,
     pendingChoice: run.pending_choice ? JSON.parse(run.pending_choice) : null
@@ -3014,12 +3031,12 @@ app.post('/api/roguelike/start', requirePlayer, (req, res) => {
   const existing = getRelevantRoguelikeRun(req.playerId);
   if (existing) return res.json(buildRoguelikeRunPayload(existing));
 
-  const { starterDeckKey } = req.body;
+  const { starterDeckKey, expeditionLength } = req.body;
   const starterDeck = roguelikeStarterDecks.getStarterDeck(starterDeckKey);
   if (!starterDeck) return res.status(400).json({ error: 'Deck inicial inválido.' });
 
   const mainDeck = roguelikeStarterDecks.expandStarterDeck(starterDeck);
-  const map = roguelikeMap.generateMap();
+  const map = roguelikeMap.generateMap(expeditionLength);
 
   const result = db.prepare(`
     INSERT INTO roguelike_runs (player_id, starter_deck_key, main_deck, map)
@@ -3202,7 +3219,7 @@ app.post('/api/roguelike/resolve-choice', requirePlayer, (req, res) => {
       const lossMap = JSON.parse(run.map);
       roguelikeMap.markNodeCleared(lossMap, run.current_node_id);
       if (lives <= 0) {
-        convertRoguelikeDogecoinsToGold(run.player_id, run.dogecoins);
+        convertRoguelikeDogecoins(run.player_id, run.dogecoins);
         db.prepare("UPDATE roguelike_runs SET status = 'finished_dead', lives = 0, map = ?, pending_choice = NULL, finished_at = CURRENT_TIMESTAMP WHERE id = ?")
           .run(JSON.stringify(lossMap), run.id);
       } else {
@@ -3867,7 +3884,7 @@ io.on('connection', (socket) => {
       }
       const map = JSON.parse(run.map);
       const node = map.nodes[run.current_node_id];
-      const tier = roguelikeBattle.getDepthTier(node);
+      const tier = roguelikeBattle.getDepthTier(node, map.commonLayerCount);
       const mainDeckNumbers = JSON.parse(run.main_deck);
       const modifiers = JSON.parse(run.card_modifiers);
       const allCards = getAllCardsHydrated();

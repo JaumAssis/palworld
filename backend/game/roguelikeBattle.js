@@ -4,13 +4,16 @@ const { shuffle } = require('./PlayerState')
 const MAX_COPIES_PER_NAME = 4
 const REAL_COLORS = ['Red', 'Blue', 'Green', 'Purple']
 
-// Camadas 0-1 (early): fácil, custo <=4. Camadas 2-3 (mid): médio, custo <=6. Última camada comum
-// (pre-boss): difícil, sem teto. Boss: difícil, sem teto, viés de cor pra Purple — lore: todos os
-// "vilões" do jogo são contrabandistas de Pals e usam roxo (ver decisão registrada no plano).
-function getDepthTier(node) {
+// Por PROGRESSO na expedição (0 = primeira camada, 1 = última camada comum antes do Boss) em vez
+// de número fixo de camada — assim a curva de dificuldade escala igual não importa se a run é
+// curta/média/longa (ver EXPEDITION_LENGTHS em roguelikeMap.js). Primeiros 35%: fácil, custo <=4.
+// Meio (até 75%): médio, custo <=6. Reta final: difícil, sem teto. Boss: difícil, sem teto, viés
+// de cor pra Purple — lore: todos os "vilões" do jogo são contrabandistas de Pals e usam roxo.
+function getDepthTier(node, totalLayers) {
   if (node.type === 'boss') return { skill: 'hard', costCap: null, forcePurple: true }
-  if (node.layer <= 1) return { skill: 'easy', costCap: 4, forcePurple: false }
-  if (node.layer <= 3) return { skill: 'medium', costCap: 6, forcePurple: false }
+  const progress = totalLayers > 1 ? node.layer / (totalLayers - 1) : 1
+  if (progress <= 0.35) return { skill: 'easy', costCap: 4, forcePurple: false }
+  if (progress <= 0.75) return { skill: 'medium', costCap: 6, forcePurple: false }
   return { skill: 'hard', costCap: null, forcePurple: false }
 }
 

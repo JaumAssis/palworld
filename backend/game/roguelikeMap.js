@@ -1,22 +1,24 @@
 const { shuffle } = require('./PlayerState')
 
-// 5 camadas de nós comuns + 1 camada final só com o Boss — mapa curto (~15-16 nós antes do Boss).
-// Cada camada comum sempre tem exatamente 3 nós ("três caminhos" pedidos pelo usuário) — 3 trilhas
-// que se cruzam ocasionalmente (ver connectLayers), em vez de um número variável por camada.
-const NODE_LAYERS = 5
+// Tamanho de expedição escolhido junto com o deck-personagem — número de camadas comuns antes do
+// Boss (sempre 3 trilhas por camada, ver NODES_PER_LAYER). Curta ~12 nós+Boss, Média ~18 nós+Boss
+// (era o único tamanho antes disso existir), Longa ~27 nós+Boss.
+const EXPEDITION_LENGTHS = { short: 4, medium: 6, long: 9 }
+const DEFAULT_EXPEDITION_LENGTH = 'medium'
 const NODES_PER_LAYER = 3
 const NODE_TYPES = ['battle', 'medicine_bench', 'shop', 'event']
 
-// Pesos por camada — early favorece Battle/Event, mid introduz Shop/Medicine Bench com mais
-// força, pre-boss (última camada comum) dá a maior chance de Shop/Medicine Bench (última
-// chance de preparar o deck antes do chefe).
-const LAYER_WEIGHTS = [
-  { battle: 45, event: 35, shop: 10, medicine_bench: 10 },
-  { battle: 45, event: 35, shop: 10, medicine_bench: 10 },
-  { battle: 35, event: 30, shop: 20, medicine_bench: 15 },
-  { battle: 35, event: 30, shop: 20, medicine_bench: 15 },
-  { battle: 30, event: 20, shop: 25, medicine_bench: 25 }
-]
+// Pesos por PROGRESSO na expedição (0 = primeira camada, 1 = última camada comum, pré-Boss) em vez
+// de por índice fixo de camada — assim funciona igual pra qualquer tamanho de expedição. Early
+// favorece Battle/Event, tardio favorece Shop/Medicine Bench (última chance de preparar o deck).
+function weightsForProgress(progress) {
+  return {
+    battle: 45 - 15 * progress,
+    event: 35 - 15 * progress,
+    shop: 10 + 15 * progress,
+    medicine_bench: 10 + 15 * progress
+  }
+}
 
 function weightedNodeType(weights) {
   const total = Object.values(weights).reduce((sum, w) => sum + w, 0)
@@ -28,14 +30,15 @@ function weightedNodeType(weights) {
   return NODE_TYPES[NODE_TYPES.length - 1]
 }
 
-function nodesInLayer(count, layerIndex) {
+function nodesInLayer(count, layerIndex, progress) {
+  const weights = weightsForProgress(progress)
   const nodes = []
   for (let i = 0; i < count; i++) {
     nodes.push({
       id: `L${layerIndex}N${i}`,
       layer: layerIndex,
       lane: i, // posição da trilha dentro da camada (0=topo, count-1=base) — só usado pro layout/braiding
-      type: weightedNodeType(LAYER_WEIGHTS[layerIndex]),
+      type: weightedNodeType(weights),
       edgesTo: [],
       status: layerIndex === 0 ? 'available' : 'locked'
     })
@@ -81,22 +84,31 @@ function guaranteeUtilityNodes(commonNodes) {
   }
 }
 
-// Gera o grafo inteiro de uma run nova. Devolve { nodes: {id: node} } — formato indexado por id
-// pra facilitar lookup/mutação nas rotas, mesmo formato que vai direto pra coluna JSON `map`.
-function generateMap() {
+// Gera o grafo inteiro de uma run nova pro tamanho de expedição escolhido (curta/média/longa, ver
+// EXPEDITION_LENGTHS — cai pra 'medium' se vier um valor inválido/ausente). Devolve
+// { nodes: {id: node}, expeditionLength, commonLayerCount } — os 2 últimos campos viajam junto na
+// coluna JSON `map` e são usados por getDepthTier (roguelikeBattle.js) pra escalar a dificuldade
+// do bot proporcionalmente ao tamanho de CADA run, não a um número fixo de camadas.
+function generateMap(expeditionLength) {
+  const nodeLayers = EXPEDITION_LENGTHS[expeditionLength] || EXPEDITION_LENGTHS[DEFAULT_EXPEDITION_LENGTH]
+  const resolvedLength = EXPEDITION_LENGTHS[expeditionLength] ? expeditionLength : DEFAULT_EXPEDITION_LENGTH
+
   const layers = []
-  for (let i = 0; i < NODE_LAYERS; i++) layers.push(nodesInLayer(NODES_PER_LAYER, i))
+  for (let i = 0; i < nodeLayers; i++) {
+    const progress = nodeLayers <= 1 ? 1 : i / (nodeLayers - 1)
+    layers.push(nodesInLayer(NODES_PER_LAYER, i, progress))
+  }
   for (let i = 0; i < layers.length - 1; i++) connectLayers(layers[i], layers[i + 1])
 
   const commonNodes = layers.flat()
   guaranteeUtilityNodes(commonNodes)
 
-  const bossNode = { id: 'BOSS', layer: NODE_LAYERS, lane: 0, type: 'boss', edgesTo: [], status: 'locked' }
+  const bossNode = { id: 'BOSS', layer: nodeLayers, lane: 0, type: 'boss', edgesTo: [], status: 'locked' }
   for (const node of layers[layers.length - 1]) node.edgesTo = [bossNode.id]
 
   const nodes = {}
   for (const node of [...commonNodes, bossNode]) nodes[node.id] = node
-  return { nodes }
+  return { nodes, expeditionLength: resolvedLength, commonLayerCount: nodeLayers }
 }
 
 function getAvailableNodeIds(map) {
@@ -130,7 +142,8 @@ function markNodeCleared(map, nodeId) {
 }
 
 module.exports = {
-  NODE_LAYERS,
+  EXPEDITION_LENGTHS,
+  DEFAULT_EXPEDITION_LENGTH,
   NODES_PER_LAYER,
   NODE_TYPES,
   generateMap,
