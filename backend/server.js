@@ -16,6 +16,10 @@ const EffectEngine = require('./game/effects/EffectEngine');
 const BotBrain = require('./game/BotBrain');
 const { createBotSocketShim } = require('./game/BotSocketShim');
 const arenaDraft = require('./game/arenaDraft');
+const roguelikeStarterDecks = require('./game/roguelikeStarterDecks');
+const roguelikeMap = require('./game/roguelikeMap');
+const roguelikeBattle = require('./game/roguelikeBattle');
+const roguelikeEvents = require('./game/roguelikeEvents');
 const { createAuthRouter } = require('./auth/routes');
 const { unusableHash } = require('./auth/passwords');
 const SqliteSessionStore = require('./auth/SqliteSessionStore');
@@ -165,6 +169,28 @@ db.exec(`
     wins INTEGER NOT NULL DEFAULT 0,
     losses INTEGER NOT NULL DEFAULT 0,
     reward_tier TEXT,                     -- 'wood'|'bronze'|'silver'|'gold' — só preenchido ao terminar
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    finished_at TEXT
+  )
+`);
+
+// ---------- Modo Expedição: roguelike solo estilo Slay the Spire ----------
+// Também nunca toca `decks` — o deck de uma run nasce de um dos 5 decks-personagem fixos
+// (roguelikeStarterDecks.js) e cresce durante a run, morrendo com ela.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS roguelike_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'traveling', -- traveling|in_battle|in_event|finished_win|finished_dead
+    starter_deck_key TEXT NOT NULL,
+    main_deck TEXT NOT NULL DEFAULT '[]',      -- JSON com array de card_number (cresce durante a run)
+    card_modifiers TEXT NOT NULL DEFAULT '{}', -- JSON: { [card_number]: {powerBonus, strikeBonus, grantedKeywords:[]} }
+    lives INTEGER NOT NULL DEFAULT 3,
+    dogecoins INTEGER NOT NULL DEFAULT 0,      -- moeda isolada da run, nunca persiste além dela
+    map TEXT NOT NULL,                         -- JSON do grafo gerado (ver roguelikeMap.js)
+    current_node_id TEXT,
+    pending_choice TEXT,                       -- JSON: opções já sorteadas esperando o clique do jogador
+    result_seen INTEGER NOT NULL DEFAULT 0,    -- vira 1 quando o jogador vê a tela de resultado final (ver acknowledge-result)
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     finished_at TEXT
   )
@@ -418,6 +444,54 @@ function finishArenaDraftRun(session) {
     }
   }
   session.arenaDraftRunApplied = true;
+}
+
+// Aplica o resultado de 1 batalha do Modo Expedição na run: derrota tira 1 vida e já libera o
+// próximo trecho do mapa (não há recompensa nem escolha pendente pra resolver); vitória de Boss
+// encerra a run em vitória; vitória normal abre a escolha de recompensa (1-de-3, só Structure/
+// Gear/Event) — o nó só vira 'cleared' quando o pick for resolvido (ver /api/roguelike/resolve-choice).
+// Chamado 1x por partida via checkRoguelikeBattleResult, dentro do emitState() do socket vs Bot.
+const ROGUELIKE_BATTLE_WIN_DOGECOINS = 25; // por vitória em batalha — proposta, ajustável
+
+// Converte os dogecoins da run em gold_coins reais (1:1, proposta ajustável) — chamado sempre que
+// uma run termina (vitória sobre o Boss ou vidas esgotadas), seja pelo fim de uma batalha ou por um
+// evento de risco (Encontro Selvagem) que zere as vidas. Dogecoin nunca persiste além da run em si.
+function convertRoguelikeDogecoinsToGold(playerId, dogecoins) {
+  if (dogecoins > 0) db.prepare('UPDATE players SET gold_coins = gold_coins + ? WHERE id = ?').run(dogecoins, playerId);
+}
+
+function applyRoguelikeBattleResult(runId, won) {
+  const run = db.prepare('SELECT * FROM roguelike_runs WHERE id = ?').get(runId);
+  if (!run) return null;
+  const map = JSON.parse(run.map);
+  const node = map.nodes[run.current_node_id];
+
+  if (!won) {
+    const lives = run.lives - 1;
+    roguelikeMap.markNodeCleared(map, run.current_node_id);
+    if (lives <= 0) {
+      convertRoguelikeDogecoinsToGold(run.player_id, run.dogecoins);
+      db.prepare("UPDATE roguelike_runs SET status = 'finished_dead', lives = 0, map = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .run(JSON.stringify(map), runId);
+      return { outcome: 'finished_dead' };
+    }
+    db.prepare("UPDATE roguelike_runs SET status = 'traveling', lives = ?, map = ? WHERE id = ?").run(lives, JSON.stringify(map), runId);
+    return { outcome: 'lost', lives };
+  }
+
+  const dogecoins = run.dogecoins + ROGUELIKE_BATTLE_WIN_DOGECOINS;
+
+  if (node && node.type === 'boss') {
+    convertRoguelikeDogecoinsToGold(run.player_id, dogecoins);
+    db.prepare("UPDATE roguelike_runs SET status = 'finished_win', dogecoins = ?, finished_at = CURRENT_TIMESTAMP WHERE id = ?").run(dogecoins, runId);
+    return { outcome: 'finished_win' };
+  }
+
+  const mainDeck = JSON.parse(run.main_deck);
+  const options = roguelikeBattle.offerBattleReward(getAllCardsHydrated(), mainDeck);
+  const pendingChoice = { kind: 'battle_reward', options };
+  db.prepare("UPDATE roguelike_runs SET status = 'in_event', dogecoins = ?, pending_choice = ? WHERE id = ?").run(dogecoins, JSON.stringify(pendingChoice), runId);
+  return { outcome: 'won', pendingChoice };
 }
 
 // Aplica pontos de rank 1x só por partida Arena — tanto no fim natural (aqui) quanto no W.O. por
@@ -2672,11 +2746,15 @@ function getAllCardsHydrated() {
 // Lista enxuta (nome + custo + tipo + is_lucky) na ordem dos picks, com repetição — o front usa
 // isso pra montar a lista agrupada, a curva de custo e a contagem por tipo/Lucky Pal, tanto durante
 // o draft quanto na tela de "deck pronto".
-function buildDraftedCardsList(allCards, mainDeck) {
+// `modifiers` é opcional — só o Modo Expedição tem card_modifiers (ex: Bancada de Remédios
+// convertendo um Pal em Lucky); Arena nunca passa esse argumento, então isLucky cai no valor
+// impresso na carta como sempre.
+function buildDraftedCardsList(allCards, mainDeck, modifiers = {}) {
   const byNumber = new Map(allCards.map(c => [c.card_number, c]));
   return mainDeck.map(num => {
     const c = byNumber.get(num);
-    return { cardNumber: c.card_number, name: c.name, cost: c.cost, cardType: c.card_type, isLucky: c.is_lucky };
+    const mod = modifiers[num];
+    return { cardNumber: c.card_number, name: c.name, cost: c.cost, cardType: c.card_type, isLucky: (mod && mod.isLucky) || c.is_lucky, imageUrl: c.image_url };
   });
 }
 
@@ -2859,6 +2937,311 @@ app.post('/api/arena/pick-card', requirePlayer, (req, res) => {
     .run(JSON.stringify(mainDeck), JSON.stringify(newColors), newStatus, run.id);
 
   res.json(buildArenaRunPayload(db.prepare('SELECT * FROM arena_runs WHERE id = ?').get(run.id)));
+});
+
+// ---------- Modo Expedição: rotas de progressão (Fase 1 — escolha de deck e mapa) ----------
+
+function getActiveRoguelikeRun(playerId) {
+  return db.prepare("SELECT * FROM roguelike_runs WHERE player_id = ? AND status NOT IN ('finished_win','finished_dead') ORDER BY id DESC LIMIT 1").get(playerId);
+}
+
+// Run terminada (vitória ou derrota) cujo resultado o jogador ainda não viu (ver
+// /api/roguelike/acknowledge-result) — sem isso a run some de vista assim que termina, já que
+// getActiveRoguelikeRun exclui runs finalizadas de propósito.
+function getUnclaimedFinishedRoguelikeRun(playerId) {
+  return db.prepare("SELECT * FROM roguelike_runs WHERE player_id = ? AND status IN ('finished_win','finished_dead') AND result_seen = 0 ORDER BY id DESC LIMIT 1").get(playerId);
+}
+
+// A run "relevante" agora: em andamento (retomável) tem prioridade; senão, a mais recente com
+// resultado ainda não visto; senão nenhuma (mostra a tela de escolha de personagem).
+function getRelevantRoguelikeRun(playerId) {
+  return getActiveRoguelikeRun(playerId) || getUnclaimedFinishedRoguelikeRun(playerId);
+}
+
+// Sem run relevante: devolve os 5 decks-personagem (com preview das 16 cartas já hidratadas) pra
+// tela de escolha. Com run relevante: mapa atual, vidas, dogecoins e o deck (que cresce durante a
+// run) — se já terminou, `goldConverted` mostra quanto os dogecoins renderam (1:1, ver
+// convertRoguelikeDogecoinsToGold), já creditado em gold_coins no momento em que a run terminou.
+function buildRoguelikeRunPayload(run) {
+  if (!run) {
+    const allCards = getAllCardsHydrated();
+    return {
+      active: false,
+      starterDecks: roguelikeStarterDecks.ROGUELIKE_STARTER_DECKS.map(d => ({
+        key: d.key,
+        cards: buildDraftedCardsList(allCards, roguelikeStarterDecks.expandStarterDeck(d))
+      }))
+    };
+  }
+
+  const map = JSON.parse(run.map);
+  const mainDeck = JSON.parse(run.main_deck);
+  const isFinished = run.status === 'finished_win' || run.status === 'finished_dead';
+  return {
+    active: true,
+    id: run.id,
+    status: run.status,
+    starterDeckKey: run.starter_deck_key,
+    deckCount: mainDeck.length,
+    draftedCards: buildDraftedCardsList(getAllCardsHydrated(), mainDeck, JSON.parse(run.card_modifiers)),
+    lives: run.lives,
+    dogecoins: run.dogecoins,
+    goldConverted: isFinished ? run.dogecoins : null,
+    map,
+    currentNodeId: run.current_node_id,
+    pendingChoice: run.pending_choice ? JSON.parse(run.pending_choice) : null
+  };
+}
+
+app.get('/api/roguelike/status', requirePlayer, (req, res) => {
+  res.json(buildRoguelikeRunPayload(getRelevantRoguelikeRun(req.playerId)));
+});
+
+// Marca o resultado da run finalizada como visto — some da tela de status depois disso, liberando
+// a escolha de personagem pra uma expedição nova (mesmo padrão do resgate de baú da Arena, só que
+// aqui não há nada pra resgatar de verdade: o ouro já foi creditado no momento em que a run terminou).
+app.post('/api/roguelike/acknowledge-result', requirePlayer, (req, res) => {
+  const run = getUnclaimedFinishedRoguelikeRun(req.playerId);
+  if (!run) return res.status(404).json({ error: 'Nenhum resultado de Expedição pra confirmar agora.' });
+  db.prepare('UPDATE roguelike_runs SET result_seen = 1 WHERE id = ?').run(run.id);
+  res.json(buildRoguelikeRunPayload(getRelevantRoguelikeRun(req.playerId)));
+});
+
+// Inicia uma run nova a partir de um dos 5 decks-personagem fixos. Se já existe uma run em
+// andamento OU uma run terminada com resultado ainda não visto, não recria — só devolve o estado
+// dela (cobre F5 no meio da run e força ver o resultado antes de começar outra expedição).
+app.post('/api/roguelike/start', requirePlayer, (req, res) => {
+  const existing = getRelevantRoguelikeRun(req.playerId);
+  if (existing) return res.json(buildRoguelikeRunPayload(existing));
+
+  const { starterDeckKey } = req.body;
+  const starterDeck = roguelikeStarterDecks.getStarterDeck(starterDeckKey);
+  if (!starterDeck) return res.status(400).json({ error: 'Deck inicial inválido.' });
+
+  const mainDeck = roguelikeStarterDecks.expandStarterDeck(starterDeck);
+  const map = roguelikeMap.generateMap();
+
+  const result = db.prepare(`
+    INSERT INTO roguelike_runs (player_id, starter_deck_key, main_deck, map)
+    VALUES (?, ?, ?, ?)
+  `).run(req.playerId, starterDeckKey, JSON.stringify(mainDeck), JSON.stringify(map));
+
+  res.json(buildRoguelikeRunPayload(db.prepare('SELECT * FROM roguelike_runs WHERE id = ?').get(result.lastInsertRowid)));
+});
+
+// Entra num nó disponível do mapa. Battle/Boss só marcam a run como 'in_battle' — quem realmente
+// inicia a partida é o socket 'bot:start' com roguelikeRunId (o cliente navega pro tabuleiro em
+// seguida, ver GameBoard.jsx). Os demais tipos (event/shop/medicine_bench) ainda geram um
+// pending_choice provisório "em breve" — Fases 3/4 implementam cada mecânica de verdade.
+app.post('/api/roguelike/enter-node', requirePlayer, (req, res) => {
+  const { nodeId } = req.body;
+  const run = getActiveRoguelikeRun(req.playerId);
+  if (!run) return res.status(404).json({ error: 'Nenhuma run de Expedição em andamento.' });
+  if (run.status !== 'traveling') return res.status(400).json({ error: 'Essa run não está livre pra viajar agora.' });
+
+  const map = JSON.parse(run.map);
+  if (!roguelikeMap.canEnterNode(map, nodeId)) {
+    return res.status(400).json({ error: 'Esse nó não está disponível agora.' });
+  }
+
+  const node = map.nodes[nodeId];
+  if (node.type === 'battle' || node.type === 'boss') {
+    db.prepare("UPDATE roguelike_runs SET status = 'in_battle', current_node_id = ? WHERE id = ?").run(nodeId, run.id);
+    return res.json(buildRoguelikeRunPayload(db.prepare('SELECT * FROM roguelike_runs WHERE id = ?').get(run.id)));
+  }
+
+  let pendingChoice;
+  if (node.type === 'medicine_bench') {
+    pendingChoice = { kind: 'medicine_bench', step: 'choose_option', options: roguelikeEvents.offerMedicineBenchOptions() };
+  } else if (node.type === 'shop') {
+    const mainDeck = JSON.parse(run.main_deck);
+    pendingChoice = { kind: 'shop', options: roguelikeEvents.offerShopStock(getAllCardsHydrated(), mainDeck) };
+  } else {
+    // node.type === 'event' — sorteia 1 dos 5 subtipos e monta o pending_choice inicial dele.
+    const allCards = getAllCardsHydrated();
+    const mainDeck = JSON.parse(run.main_deck);
+    const subtype = roguelikeEvents.pickEventSubtype(allCards, mainDeck);
+    if (subtype === 'sacrifice') {
+      pendingChoice = { kind: 'sacrifice', step: 'choose_sacrifice', targets: roguelikeEvents.buildDeckPalTargets(allCards, mainDeck) };
+    } else if (subtype === 'black_market') {
+      pendingChoice = { kind: 'black_market', step: 'choose_color', colorOptions: roguelikeEvents.offerBlackMarketColorChoices() };
+    } else if (subtype === 'rare_chest') {
+      // Sem escolha — aplica a recompensa na hora (ver offerRareChestReward); o pending_choice só
+      // existe pra mostrar o que foi ganho antes do jogador clicar em continuar.
+      const reward = roguelikeEvents.offerRareChestReward(allCards);
+      const rewardedDeck = [...mainDeck, ...reward.cards.map(c => c.cardNumber)];
+      db.prepare('UPDATE roguelike_runs SET main_deck = ?, dogecoins = dogecoins + ? WHERE id = ?')
+        .run(JSON.stringify(rewardedDeck), reward.dogecoins, run.id);
+      pendingChoice = { kind: 'rare_chest', cards: reward.cards, dogecoins: reward.dogecoins };
+    } else if (subtype === 'wild_encounter') {
+      pendingChoice = {
+        kind: 'wild_encounter',
+        encounterCard: roguelikeEvents.pickWildEncounterCard(allCards),
+        deckCards: roguelikeEvents.buildWildEncounterDeckCards(allCards, mainDeck)
+      };
+    } else {
+      pendingChoice = { kind: 'breeding', step: 'choose_parent1', targets: roguelikeEvents.buildDeckPalTargets(allCards, mainDeck) };
+    }
+  }
+
+  db.prepare("UPDATE roguelike_runs SET status = 'in_event', current_node_id = ?, pending_choice = ? WHERE id = ?")
+    .run(nodeId, JSON.stringify(pendingChoice), run.id);
+
+  res.json(buildRoguelikeRunPayload(db.prepare('SELECT * FROM roguelike_runs WHERE id = ?').get(run.id)));
+});
+
+// Resolve a escolha pendente do nó atual. Kinds:
+// - 'battle_reward': exige cardNumber (1 das 3 opções) -> soma ao deck -> libera o mapa.
+// - 'medicine_bench': 2 passos — 1º pick escolhe a opção (optionIndex) e pede o alvo; 2º pick
+//   (cardNumber) aplica o modificador nesse Pal -> libera o mapa.
+// - 'shop': action 'buy' (compra 1 item, permanece na loja) ou 'leave' (sai e libera o mapa).
+// - 'coming_soon': evento ainda não implementado (Fase 4) — sem corpo, só libera o mapa.
+app.post('/api/roguelike/resolve-choice', requirePlayer, (req, res) => {
+  const run = getActiveRoguelikeRun(req.playerId);
+  if (!run) return res.status(404).json({ error: 'Nenhuma run de Expedição em andamento.' });
+  if (run.status !== 'in_event' || !run.pending_choice) {
+    return res.status(400).json({ error: 'Não há nada pendente pra resolver agora.' });
+  }
+
+  const pendingChoice = JSON.parse(run.pending_choice);
+  let mainDeck = JSON.parse(run.main_deck);
+
+  if (pendingChoice.kind === 'battle_reward') {
+    const { cardNumber } = req.body;
+    const picked = pendingChoice.options.find(o => o.cardNumber === cardNumber);
+    if (!picked) return res.status(400).json({ error: 'Essa carta não é uma opção válida agora.' });
+    mainDeck.push(cardNumber);
+  } else if (pendingChoice.kind === 'medicine_bench') {
+    if (pendingChoice.step === 'choose_option') {
+      const { optionIndex } = req.body;
+      const chosenOption = pendingChoice.options[optionIndex];
+      if (!chosenOption) return res.status(400).json({ error: 'Essa opção não é válida agora.' });
+      const targets = roguelikeEvents.buildMedicineBenchTargets(getAllCardsHydrated(), mainDeck);
+      if (targets.length === 0) return res.status(400).json({ error: 'Você não tem nenhum Pal no deck pra receber esse efeito.' });
+      const nextPendingChoice = { kind: 'medicine_bench', step: 'choose_target', chosenOption, targets };
+      db.prepare('UPDATE roguelike_runs SET pending_choice = ? WHERE id = ?').run(JSON.stringify(nextPendingChoice), run.id);
+      return res.json(buildRoguelikeRunPayload(db.prepare('SELECT * FROM roguelike_runs WHERE id = ?').get(run.id)));
+    }
+    if (pendingChoice.step === 'choose_target') {
+      const { cardNumber } = req.body;
+      const target = pendingChoice.targets.find(t => t.cardNumber === cardNumber);
+      if (!target) return res.status(400).json({ error: 'Esse Pal não é um alvo válido agora.' });
+      const modifiers = JSON.parse(run.card_modifiers);
+      const updatedModifiers = roguelikeEvents.applyMedicineBenchOption(modifiers, pendingChoice.chosenOption, cardNumber);
+      db.prepare('UPDATE roguelike_runs SET card_modifiers = ? WHERE id = ?').run(JSON.stringify(updatedModifiers), run.id);
+    } else {
+      return res.status(400).json({ error: 'Estado inválido da Bancada de Remédios.' });
+    }
+  } else if (pendingChoice.kind === 'shop') {
+    const { action, cardNumber } = req.body;
+    if (action === 'buy') {
+      const item = pendingChoice.options.find(o => o.cardNumber === cardNumber && !o.purchased);
+      if (!item) return res.status(400).json({ error: 'Esse item não está disponível na loja agora.' });
+      if (run.dogecoins < item.price) return res.status(400).json({ error: 'Dogecoins insuficientes.' });
+      mainDeck.push(cardNumber);
+      item.purchased = true;
+      db.prepare('UPDATE roguelike_runs SET main_deck = ?, dogecoins = ?, pending_choice = ? WHERE id = ?')
+        .run(JSON.stringify(mainDeck), run.dogecoins - item.price, JSON.stringify(pendingChoice), run.id);
+      return res.json(buildRoguelikeRunPayload(db.prepare('SELECT * FROM roguelike_runs WHERE id = ?').get(run.id)));
+    }
+    if (action !== 'leave') return res.status(400).json({ error: 'Ação inválida na loja.' });
+    // action === 'leave' cai pro fechamento genérico do nó, abaixo.
+  } else if (pendingChoice.kind === 'sacrifice') {
+    if (pendingChoice.step === 'choose_sacrifice') {
+      const { cardNumber } = req.body;
+      const target = pendingChoice.targets.find(t => t.cardNumber === cardNumber);
+      if (!target) return res.status(400).json({ error: 'Esse Pal não pode ser sacrificado agora.' });
+      const nextPendingChoice = { kind: 'sacrifice', step: 'choose_new', sacrificedCardNumber: cardNumber, options: roguelikeEvents.offerSacrificeReplacements(getAllCardsHydrated()) };
+      db.prepare('UPDATE roguelike_runs SET pending_choice = ? WHERE id = ?').run(JSON.stringify(nextPendingChoice), run.id);
+      return res.json(buildRoguelikeRunPayload(db.prepare('SELECT * FROM roguelike_runs WHERE id = ?').get(run.id)));
+    }
+    if (pendingChoice.step === 'choose_new') {
+      const { cardNumber } = req.body;
+      const picked = pendingChoice.options.find(o => o.cardNumber === cardNumber);
+      if (!picked) return res.status(400).json({ error: 'Essa carta não é uma opção válida agora.' });
+      const sacrificeIndex = mainDeck.indexOf(pendingChoice.sacrificedCardNumber);
+      if (sacrificeIndex !== -1) mainDeck.splice(sacrificeIndex, 1);
+      mainDeck.push(cardNumber);
+    } else {
+      return res.status(400).json({ error: 'Estado inválido do Sacrifício.' });
+    }
+  } else if (pendingChoice.kind === 'black_market') {
+    if (pendingChoice.step === 'choose_color') {
+      const { choice } = req.body;
+      const color = roguelikeEvents.resolveBlackMarketColor(pendingChoice.colorOptions, choice);
+      if (!color) return res.status(400).json({ error: 'Escolha de cor inválida.' });
+      const options = roguelikeEvents.offerBlackMarketPalsByColor(getAllCardsHydrated(), color);
+      if (options.length === 0) return res.status(400).json({ error: 'Não há Pals dessa cor disponíveis agora.' });
+      const nextPendingChoice = { kind: 'black_market', step: 'choose_cost', color, options };
+      db.prepare('UPDATE roguelike_runs SET pending_choice = ? WHERE id = ?').run(JSON.stringify(nextPendingChoice), run.id);
+      return res.json(buildRoguelikeRunPayload(db.prepare('SELECT * FROM roguelike_runs WHERE id = ?').get(run.id)));
+    }
+    if (pendingChoice.step === 'choose_cost') {
+      const { cardNumber } = req.body;
+      const picked = pendingChoice.options.find(o => o.cardNumber === cardNumber);
+      if (!picked) return res.status(400).json({ error: 'Essa carta não é uma opção válida agora.' });
+      mainDeck.push(cardNumber);
+    } else {
+      return res.status(400).json({ error: 'Estado inválido da Loja Clandestina.' });
+    }
+  } else if (pendingChoice.kind === 'wild_encounter') {
+    const { selectedIndexes } = req.body;
+    const indexSet = new Set(Array.isArray(selectedIndexes) ? selectedIndexes : []);
+    const validEntries = pendingChoice.deckCards.filter(c => indexSet.has(c.index));
+    const powerSum = validEntries.reduce((sum, c) => sum + (c.power || 0), 0);
+    const targetPower = pendingChoice.encounterCard.power;
+
+    if (powerSum >= targetPower) {
+      mainDeck.push(pendingChoice.encounterCard.cardNumber);
+    } else if (powerSum >= targetPower / 2) {
+      db.prepare('UPDATE roguelike_runs SET dogecoins = dogecoins + ? WHERE id = ?').run(roguelikeEvents.WILD_ENCOUNTER_PARTIAL_DOGECOINS, run.id);
+    } else {
+      // Não conseguiu nem metade do Power — perde 1 vida, mesma checagem de fim de run que uma
+      // derrota de batalha usa (ver applyRoguelikeBattleResult).
+      const lives = run.lives - 1;
+      const lossMap = JSON.parse(run.map);
+      roguelikeMap.markNodeCleared(lossMap, run.current_node_id);
+      if (lives <= 0) {
+        convertRoguelikeDogecoinsToGold(run.player_id, run.dogecoins);
+        db.prepare("UPDATE roguelike_runs SET status = 'finished_dead', lives = 0, map = ?, pending_choice = NULL, finished_at = CURRENT_TIMESTAMP WHERE id = ?")
+          .run(JSON.stringify(lossMap), run.id);
+      } else {
+        db.prepare("UPDATE roguelike_runs SET status = 'traveling', lives = ?, map = ?, pending_choice = NULL WHERE id = ?")
+          .run(lives, JSON.stringify(lossMap), run.id);
+      }
+      return res.json(buildRoguelikeRunPayload(db.prepare('SELECT * FROM roguelike_runs WHERE id = ?').get(run.id)));
+    }
+  } else if (pendingChoice.kind === 'breeding') {
+    if (pendingChoice.step === 'choose_parent1') {
+      const { cardNumber } = req.body;
+      const target = pendingChoice.targets.find(t => t.cardNumber === cardNumber);
+      if (!target) return res.status(400).json({ error: 'Esse Pal não é um pai válido agora.' });
+      const secondTargets = roguelikeEvents.buildSecondParentTargets(pendingChoice.targets, cardNumber);
+      const nextPendingChoice = { kind: 'breeding', step: 'choose_parent2', parent1CardNumber: cardNumber, targets: secondTargets };
+      db.prepare('UPDATE roguelike_runs SET pending_choice = ? WHERE id = ?').run(JSON.stringify(nextPendingChoice), run.id);
+      return res.json(buildRoguelikeRunPayload(db.prepare('SELECT * FROM roguelike_runs WHERE id = ?').get(run.id)));
+    }
+    if (pendingChoice.step === 'choose_parent2') {
+      const { cardNumber } = req.body;
+      const target = pendingChoice.targets.find(t => t.cardNumber === cardNumber);
+      if (!target) return res.status(400).json({ error: 'Esse Pal não é um 2º pai válido agora.' });
+      const parent1Row = db.prepare("SELECT * FROM cards WHERE card_number = ? AND card_type = 'Pal'").get(pendingChoice.parent1CardNumber);
+      const parent2Row = db.prepare("SELECT * FROM cards WHERE card_number = ? AND card_type = 'Pal'").get(cardNumber);
+      const { card: resultCard } = computeBreedingResult(parent1Row, parent2Row);
+      mainDeck.push(resultCard.card_number);
+    } else {
+      return res.status(400).json({ error: 'Estado inválido do Breeding.' });
+    }
+  }
+  // pendingChoice.kind === 'rare_chest' (recompensa já aplicada no enter-node) ou 'coming_soon'
+  // (Fase 4 ainda incompleta) caem direto no fechamento genérico abaixo, sem nada extra pra fazer.
+
+  const map = JSON.parse(run.map);
+  roguelikeMap.markNodeCleared(map, run.current_node_id);
+  db.prepare("UPDATE roguelike_runs SET status = 'traveling', map = ?, main_deck = ?, pending_choice = NULL WHERE id = ?")
+    .run(JSON.stringify(map), JSON.stringify(mainDeck), run.id);
+
+  res.json(buildRoguelikeRunPayload(db.prepare('SELECT * FROM roguelike_runs WHERE id = ?').get(run.id)));
 });
 
 // Contagem de "gente online" pro badge do menu — conexões WebSocket ativas, não contas
@@ -3392,6 +3775,7 @@ io.on('connection', (socket) => {
   let match = null; // { turnManager, playerIsP1, botIsP1 }
 
   let winCounted = false;
+  let roguelikeResultApplied = false;
 
   function checkWinMission() {
     if (match && match.turnManager.gameOver && match.turnManager.winner === match.playerState && !winCounted) {
@@ -3400,9 +3784,19 @@ io.on('connection', (socket) => {
     }
   }
 
+  // Aplica o resultado da batalha na run do Modo Expedição (vidas, recompensa, fim de run) 1x só
+  // por partida — equivalente ao checkWinMission acima, mas só dispara quando a partida nasceu de
+  // um roguelikeRunId (ver bot:start). Bot de batalha comum (deckId) nunca tem essa propriedade.
+  function checkRoguelikeBattleResult() {
+    if (!match || !match.roguelikeRunId || roguelikeResultApplied || !match.turnManager.gameOver) return;
+    applyRoguelikeBattleResult(match.roguelikeRunId, match.turnManager.winner === match.playerState);
+    roguelikeResultApplied = true;
+  }
+
   function emitState() {
     if (!match) return;
     checkWinMission();
+    checkRoguelikeBattleResult();
     const { turnManager } = match;
 
     // Night (5.3) é um estado contínuo (ex: Shadowbeak "enquanto descansada, é noite") — não é uma
@@ -3461,8 +3855,44 @@ io.on('connection', (socket) => {
     });
   }
 
-  // 1. Cliente pede pra iniciar partida contra bot, passando o id do deck escolhido
-  socket.on('bot:start', ({ deckId }) => {
+  // 1. Cliente pede pra iniciar partida contra bot, passando o id do deck escolhido — OU o id de
+  // uma run do Modo Expedição em vez de deckId (batalha/chefe de um nó do mapa, ver
+  // /api/roguelike/enter-node). Nunca toca `decks`: o deck vem do main_deck da própria run.
+  socket.on('bot:start', ({ deckId, roguelikeRunId }) => {
+    if (roguelikeRunId) {
+      const run = db.prepare('SELECT * FROM roguelike_runs WHERE id = ? AND player_id = ?').get(roguelikeRunId, playerId);
+      if (!run || run.status !== 'in_battle') {
+        socket.emit('bot:error', { message: 'Essa expedição não está pronta pra uma batalha agora.' });
+        return;
+      }
+      const map = JSON.parse(run.map);
+      const node = map.nodes[run.current_node_id];
+      const tier = roguelikeBattle.getDepthTier(node);
+      const mainDeckNumbers = JSON.parse(run.main_deck);
+      const modifiers = JSON.parse(run.card_modifiers);
+      const allCards = getAllCardsHydrated();
+
+      const mainCards = shuffle(roguelikeBattle.applyCardModifiers(getCardsByNumbers(mainDeckNumbers), modifiers));
+      const soulCards = shuffle(getCardsByNumbers(ARENA_SOUL_DECK));
+
+      const botColors = roguelikeBattle.pickBotColors(tier);
+      const botDeckNumbers = roguelikeBattle.generateBotDeck(allCards, { size: mainDeckNumbers.length, tier, colors: botColors });
+      const botMainCards = shuffle(getCardsByNumbers(botDeckNumbers));
+      const botSoulCards = shuffle(getCardsByNumbers(ARENA_SOUL_DECK));
+
+      const playerState = new PlayerState('Você', mainCards, soulCards);
+      // Nome genérico igual à partida direta normal — o bot de batalha da Expedição não tem
+      // identidade de conta nenhuma (não conta pro online, não é um dos 3 bots permanentes).
+      const botState = new PlayerState('Bot', botMainCards, botSoulCards);
+
+      match = { playerState, botState, turnManager: null, botPlayerId: null, botSkill: tier.skill, roguelikeRunId: run.id };
+      winCounted = false;
+      roguelikeResultApplied = false;
+
+      socket.emit('bot:rpsPrompt', { message: 'Jokenpô! Escolha pedra, papel ou tesoura.' });
+      return;
+    }
+
     // Mesma checagem de dono/preset usada no matchmaking online — sem isso, qualquer jogador
     // logado conseguia iniciar uma partida vs Bot com o ID de deck de OUTRO jogador (e ver o
     // conteúdo dele na mão/tabuleiro). Partida vs Bot é sempre 'normal' pra fins de validação.
@@ -3497,6 +3927,7 @@ io.on('connection', (socket) => {
     // ainda varia, mas a habilidade não). O substituto de fila (Normal/Arena) já usa bot.skill.
     match = { playerState, botState, turnManager: null, botPlayerId: bot.playerId, botSkill: 'easy' };
     winCounted = false;
+    roguelikeResultApplied = false;
 
     socket.emit('bot:rpsPrompt', { message: 'Jokenpô! Escolha pedra, papel ou tesoura.' });
   });

@@ -14,6 +14,7 @@ import TutorialMatch from './TutorialMatch'
 import FindMatchSelect from './FindMatchSelect'
 import FindMatchDeckSelect from './FindMatchDeckSelect'
 import Arena from './Arena'
+import Roguelike from './Roguelike'
 import { useLanguage } from './i18n/LanguageContext'
 import { translations } from './i18n/translations'
 import { useAuth } from './auth/AuthContext'
@@ -589,11 +590,18 @@ function MainMenu() {
         <Link to="/tutorial"><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuTutorial')}</button></Link>
         <Link to="/catalog"><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuCatalog')}</button></Link>
         <Link to="/mycollection" onClick={guardedLinkClick}><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuCollection')}</button></Link>
-        <Link to="/deckbuilder" onClick={guardedLinkClick}><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuDeckBuilder')}</button></Link>
-        <Link to="/mydecks" onClick={guardedLinkClick}><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuMyDecks')}</button></Link>
-        <Link to="/findmatch" onClick={guardedLinkClick}><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuFindMatch')}</button></Link>
-        <Link to="/game" onClick={guardedLinkClick}><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuBotMatch')}</button></Link>
-        <Link to="/arena" onClick={guardedLinkClick}><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuArena')}</button></Link>
+        <div style={{ display: 'flex', gap: 'var(--sp-sm)' }}>
+          <Link to="/deckbuilder" onClick={guardedLinkClick} style={{ flex: 1 }}><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuDeckBuilder')}</button></Link>
+          <Link to="/mydecks" onClick={guardedLinkClick} style={{ flex: 1 }}><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuMyDecks')}</button></Link>
+        </div>
+        <div style={{ display: 'flex', gap: 'var(--sp-sm)' }}>
+          <Link to="/findmatch" onClick={guardedLinkClick} style={{ flex: 1 }}><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuFindMatch')}</button></Link>
+          <Link to="/game" onClick={guardedLinkClick} style={{ flex: 1 }}><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuBotMatch')}</button></Link>
+        </div>
+        <div style={{ display: 'flex', gap: 'var(--sp-sm)' }}>
+          <Link to="/arena" onClick={guardedLinkClick} style={{ flex: 1 }}><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuArena')}</button></Link>
+          <Link to="/roguelike" onClick={guardedLinkClick} style={{ flex: 1 }}><button className="sign-button sign-button-fluid" style={{ width: '100%' }}>{t('menuRoguelike')}</button></Link>
+        </div>
       </div>
 
       <div style={{ position: 'fixed', bottom: 'var(--sp-lg)', left: 'var(--sp-lg)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-sm)', alignItems: 'flex-start' }}>
@@ -677,6 +685,7 @@ function App() {
         <Route path="/mydecks/:id" element={<RequireAuth><DeckDetail /></RequireAuth>} />
         <Route path="/game" element={<RequireAuth><GameBoard /></RequireAuth>} />
         <Route path="/arena" element={<RequireAuth><Arena /></RequireAuth>} />
+        <Route path="/roguelike" element={<RequireAuth><Roguelike /></RequireAuth>} />
       </Routes>
     </BrowserRouter>
   )

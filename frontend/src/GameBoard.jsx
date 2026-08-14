@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useLanguage } from './i18n/LanguageContext'
 import { apiFetch } from './api'
 import { socket } from './socket'
@@ -11,8 +11,13 @@ import {
 
 function GameBoard() {
   const { t } = useLanguage()
+  const location = useLocation()
+  const navigate = useNavigate()
+  // Batalha/chefe de um nó do Modo Expedição (ver Roguelike.jsx) — o deck já vem pronto da run,
+  // então pula a etapa de escolher deck e já inicia direto contra o bot gerado pra esse nó.
+  const roguelikeRunId = location.state?.roguelikeRunId || null
   const CHOICE_LABELS = { rock: t('rockLabel'), paper: t('paperLabel'), scissors: t('scissorsLabel') }
-  const [stage, setStage] = useState('selectDeck')
+  const [stage, setStage] = useState(roguelikeRunId ? 'connecting' : 'selectDeck')
   const [decks, setDecks] = useState([])
   const [rpsResult, setRpsResult] = useState(null)
   const [mulliganHand, setMulliganHand] = useState([])
@@ -50,7 +55,13 @@ function GameBoard() {
   }, [])
 
   useEffect(() => {
-    apiFetch('/api/decks').then(r => r.json()).then(setDecks)
+    // Modo Expedição não tem escolha de deck nenhuma (já vem pronto da run) — pula direto pro
+    // Jokenpô. Partida direta normal continua buscando os decks do jogador pra tela de escolha.
+    if (roguelikeRunId) {
+      socket.emit('bot:start', { roguelikeRunId })
+    } else {
+      apiFetch('/api/decks').then(r => r.json()).then(setDecks)
+    }
     apiFetch('/api/cards/SOUL-001').then(r => r.json()).then(c => setSoulImageUrl(c.image_url)).catch(() => {})
 
     socket.on('bot:rpsPrompt', () => setStage('rps'))
@@ -85,6 +96,9 @@ function GameBoard() {
 
     socket.on('bot:error', (err) => {
       alert(err.message)
+      // Run inválida/já resolvida (F5 tardio, dupla aba etc.) — sem isso o jogador ficava preso na
+      // tela "conectando..." sem eventos nem botão nenhum pra sair.
+      if (roguelikeRunId) navigate('/roguelike')
     })
 
     return () => {
@@ -211,6 +225,14 @@ function GameBoard() {
     setZoomCard(null)
   }
 
+  if (stage === 'connecting') {
+    return (
+      <div style={{ minHeight: '100vh', boxSizing: 'border-box', padding: '2rem', textAlign: 'center', background: WOOD_PAGE_BACKGROUND }}>
+        <p style={WOOD_P}>{t('roguelikeLoading')}</p>
+      </div>
+    )
+  }
+
   if (stage === 'selectDeck') {
     return (
       <div style={{ minHeight: '100vh', boxSizing: 'border-box', padding: '2rem', textAlign: 'center', background: WOOD_PAGE_BACKGROUND }}>
@@ -307,7 +329,11 @@ function GameBoard() {
     return (
       <Overlay accent={won ? 'win' : 'lose'}>
         <h2 style={won ? THEMED_RESULT_WIN : THEMED_RESULT_LOSE}>{won ? t('gbYouWin') : t('gbYouLose')}</h2>
-        <Link to="/"><button className="sign-button" style={{ marginTop: '18px' }}>{t('backToMenu')}</button></Link>
+        {roguelikeRunId ? (
+          <Link to="/roguelike"><button className="sign-button" style={{ marginTop: '18px' }}>{t('roguelikeBackToMapButton')}</button></Link>
+        ) : (
+          <Link to="/"><button className="sign-button" style={{ marginTop: '18px' }}>{t('backToMenu')}</button></Link>
+        )}
       </Overlay>
     )
   }
