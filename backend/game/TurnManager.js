@@ -284,9 +284,19 @@ class TurnManager {
       this.pendingBattle = battle
       return
     }
-    // Fila de gatilhos da resolução de dano (onAttacked/onGraveyard/onLeaveBase/onEndOfBattleAttacked)
-    // — ex: Leezpunk perguntando qual carta descartar, seguido de Bushi perguntando se volta pra mão;
-    // sem isso, o 2o atropelava o pendingEffect do 1o (ver _resolveDamage/_runDamageTriggerQueue).
+    // "AUTO When this card is attacked, ..." (Fuack – Manic Wave Ripper) pausou antes do dano ser
+    // calculado (raro — só se abrisse uma escolha, o que essa carta não faz, mas outra pode) — precisa
+    // terminar de resolver ANTES de seguir pra conta de dano de verdade (ver _resolveDamage).
+    const onAttackedCont = this._pendingOnAttackedContinuation
+    if (onAttackedCont) {
+      this._pendingOnAttackedContinuation = null
+      const result = this._resolveDamageAfterOnAttacked(onAttackedCont.battle)
+      if (!result.paused && !this.pendingEffect) this._resumeAttackAfterTrigger()
+      return
+    }
+    // Fila de gatilhos DEPOIS do dano (onGraveyard/onLeaveBase/onEndOfBattleAttacked) — ex: Leezpunk
+    // perguntando qual carta descartar, seguido de Bushi perguntando se volta pra mão; sem isso, o 2o
+    // atropelava o pendingEffect do 1o (ver _resolveDamageAfterOnAttacked/_runDamageTriggerQueue).
     const damageCont = this._pendingDamageTriggerContinuation
     if (damageCont) {
       this._pendingDamageTriggerContinuation = null
@@ -498,18 +508,29 @@ class TurnManager {
     return this._advanceBattle(battle)
   }
 
-  // Passo 9.6 — resolve o dano depois que Block e Quick Step já foram decididos. Os gatilhos que essa
-  // resolução pode disparar (onAttacked, onGraveyard/onLeaveBase de quem morreu, onEndOfBattleAttacked)
-  // vão todos numa FILA (ver _runDamageTriggerQueue) em vez de rodarem soltos um atrás do outro — um
-  // deles pode abrir uma escolha do jogador (ex: Leezpunk perguntando qual carta o oponente descarta),
-  // e o próximo da fila só roda DEPOIS que essa escolha for resolvida, nunca por cima dela.
+  // Passo 9.6 — resolve o dano depois que Block e Quick Step já foram decididos. "AUTO When this card
+  // is attacked, ..." (ex: Fuack – Manic Wave Ripper, +300 Power) precisa rodar ANTES do dano ser
+  // calculado — o efeito dela pode mudar o próprio Power usado na conta — por isso corre sozinha aqui
+  // fora, nunca dentro da fila pós-dano (ver _resolveDamageAfterOnAttacked/_runDamageTriggerQueue, que
+  // é pra onGraveyard/onLeaveBase/onEndOfBattleAttacked — esses sim, só depois que o dano já rolou).
   _resolveDamage(battle) {
+    if (battle.target.type === 'pal') {
+      const { defenderState, attackerState } = battle
+      const result = EffectEngine.runTrigger(this, 'onAttacked', battle.target.instance, defenderState, attackerState, { isBot: this.player2IsBot && defenderState === this.player2 })
+      if (result.paused) {
+        this._pendingOnAttackedContinuation = { battle }
+        return { paused: true }
+      }
+    }
+    return this._resolveDamageAfterOnAttacked(battle)
+  }
+
+  _resolveDamageAfterOnAttacked(battle) {
     const { attackerInstance, attackerState, defenderState, target } = battle
     const queue = []
     let syncResult
 
     if (target.type === 'pal') {
-      queue.push({ name: 'onAttacked', instance: target.instance, casterState: defenderState, opponentState: attackerState, isBot: this.player2IsBot && defenderState === this.player2 })
       syncResult = this._resolveBattle(attackerInstance, target.instance, queue)
     } else if (target.type === 'structure') {
       // 9.6.3.2 — dano unidirecional, a Structure não bate de volta no atacante

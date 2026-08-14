@@ -547,7 +547,8 @@ async function runOnlineBotTurn(session) {
     emit: () => emitMatchState(session),
     isAlive: () => onlineSessions.get(session.roomId) === session && !session.turnManager.gameOver,
     delay,
-    timing: BotBrain.DEFAULT_TIMING
+    timing: BotBrain.DEFAULT_TIMING,
+    skill: session.botSkill
   });
 }
 
@@ -597,7 +598,10 @@ function startOnlineMatch(matchType, a, b) {
     // b.isBot vem de startBotFallbackMatch — 'a' é sempre o humano (a fila nunca pareia bot com
     // bot), então só o lado B precisa ser checado. null/undefined em toda partida PvP normal.
     botSide: b.isBot ? 'B' : null,
-    botPlayerId: b.isBot ? b.playerId : null
+    botPlayerId: b.isBot ? b.playerId : null,
+    // 'easy'|'medium'|'hard' — ver BOT_PLAYERS/BotBrain.hasSmartDefense/hasSmartResources. null
+    // em toda partida PvP normal (sem lado bot nenhum).
+    botSkill: b.isBot ? b.skill : null
   };
 
   for (const side of ['A', 'B']) {
@@ -783,7 +787,7 @@ function startBotFallbackMatch(entry) {
 
   let session; // atribuída logo abaixo, síncrono — o driver só roda depois (setImmediate no shim)
   const shim = createBotSocketShim((event, payload) => handleBotDriverEvent(session, 'B', event, payload));
-  session = startOnlineMatch('normal', entry, { socket: shim, playerId: bot.playerId, deckId: bot.deckId, isBot: true });
+  session = startOnlineMatch('normal', entry, { socket: shim, playerId: bot.playerId, deckId: bot.deckId, skill: bot.skill, isBot: true });
 
   console.log(`[bots] "${bot.username}" entrou na fila Normal no lugar de um humano (sem oponente em ${BOT_QUEUE_FALLBACK_MS / 1000}s).`);
 }
@@ -806,7 +810,7 @@ function startArenaDraftBotFallbackMatch(entry) {
   let session;
   const shim = createBotSocketShim((event, payload) => handleBotDriverEvent(session, 'B', event, payload));
   session = startOnlineMatch('arenaDraft', entry, {
-    socket: shim, playerId: bot.playerId, arenaTempDeck: { mainDeck }, isBot: true
+    socket: shim, playerId: bot.playerId, arenaTempDeck: { mainDeck }, skill: bot.skill, isBot: true
   });
 
   console.log(`[bots] "${bot.username}" entrou na fila de Arena no lugar de um humano, com deck temporário aleatório (${colors.join('/')}).`);
@@ -2114,10 +2118,14 @@ function getCardsByNumbers(numbers) {
 // copiado 1x da conta do usuário (nunca lido de novo dali em diante — trocar/apagar o deck
 // original depois não afeta o bot). Roda 1x no boot, depois de `players`/`users` existirem
 // (colunas is_bot/rank_points) e de getCardsByNumbers existir (usada pra validar a cópia).
+// skill ('easy'|'medium'|'hard') alimenta o BotBrain (ver hasSmartDefense/hasSmartResources lá) —
+// segue a mesma ordem do rank_points (bibs22 > dudu07 > kaiozin), então o bot mais forte no quadro
+// de Ranks também joga melhor. Vale pro substituto de fila (Normal e Arena); a partida direta vs
+// Bot ignora isso de propósito e força 'easy' sempre (ver bot:start), por ser modo de aprendizado.
 const BOT_PLAYERS = [
-  { username: 'dudu07', deckName: 'vermelho', fallbackDeckName: 'Red/Blue First Deck', rankPoints: 320 },
-  { username: 'kaiozin', deckName: 'penguins', fallbackDeckName: 'Green/Purple First Deck', rankPoints: 180 },
-  { username: 'bibs22', deckName: 'purple night', fallbackDeckName: 'Green/Purple First Deck', rankPoints: 540 }
+  { username: 'dudu07', deckName: 'vermelho', fallbackDeckName: 'Red/Blue First Deck', rankPoints: 320, skill: 'medium' },
+  { username: 'kaiozin', deckName: 'penguins', fallbackDeckName: 'Green/Purple First Deck', rankPoints: 180, skill: 'easy' },
+  { username: 'bibs22', deckName: 'purple night', fallbackDeckName: 'Green/Purple First Deck', rankPoints: 540, skill: 'hard' }
 ];
 
 function seedBotPlayers() {
@@ -2173,7 +2181,7 @@ function seedBotPlayers() {
         }
       }
 
-      BOT_REGISTRY.push({ playerId: playerRow.id, username: bot.username, deckId: deckRow ? deckRow.id : null });
+      BOT_REGISTRY.push({ playerId: playerRow.id, username: bot.username, deckId: deckRow ? deckRow.id : null, skill: bot.skill });
     } catch (e) {
       // Nunca deixa um bot com problema derrubar o boot do servidor inteiro.
       console.warn(`[bots] falha ao semear "${bot.username}":`, e.message);
@@ -3484,7 +3492,10 @@ io.on('connection', (socket) => {
     // contra a IA — mas o nick real (dudu07/kaiozin/bibs22) não deve aparecer aqui, só nos Ranks.
     const botState = new PlayerState('Bot', botMainCards, botSoulCards);
 
-    match = { playerState, botState, turnManager: null, botPlayerId: bot.playerId };
+    // Sempre 'easy' aqui, de propósito — esse modo é onde o jogador aprende/pratica, então o bot
+    // fica no nível mais fácil independente de qual dos 3 permanentes foi sorteado (o nick real
+    // ainda varia, mas a habilidade não). O substituto de fila (Normal/Arena) já usa bot.skill.
+    match = { playerState, botState, turnManager: null, botPlayerId: bot.playerId, botSkill: 'easy' };
     winCounted = false;
 
     socket.emit('bot:rpsPrompt', { message: 'Jokenpô! Escolha pedra, papel ou tesoura.' });
@@ -3554,7 +3565,8 @@ io.on('connection', (socket) => {
       emit: emitState,
       isAlive: () => !!match && !match.turnManager.gameOver && socket.connected,
       delay,
-      timing: BotBrain.VS_PLAYER_TIMING
+      timing: BotBrain.VS_PLAYER_TIMING,
+      skill: match.botSkill
     });
   }
 

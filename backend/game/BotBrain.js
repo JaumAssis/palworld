@@ -10,6 +10,16 @@ const EffectEngine = require('./effects/EffectEngine')
 const VS_PLAYER_TIMING = { deploy: 5000, act: 3000, attack: 5000, endTurn: 2000 }
 const DEFAULT_TIMING = { deploy: 1500, act: 1200, attack: 1500, endTurn: 1200 }
 
+// Dificuldade do bot: 2 chaves independentes, cada uma liga/desliga um grupo de heurísticas —
+// nunca um "% de chance de errar" (isso tornaria o comportamento não-determinístico demais pra
+// testar). 'hard' = exatamente o comportamento de sempre (nenhuma regressão pros bots existentes,
+// já que todo chamador que não passa `skill` cai no default 'hard'). 'medium' perde só a parte de
+// otimizar recursos (ACT/soul draw); 'easy' perde isso E a parte tática de combate (reserva de
+// bloqueador, mirar pra "abater de graça") — vira um bot bem mais fácil de punir, de propósito
+// (é o nível forçado na partida direta vs Bot, que é modo de aprendizado).
+function hasSmartDefense(skill) { return skill !== 'easy' }
+function hasSmartResources(skill) { return skill === 'hard' }
+
 // Sempre escolhe ir primeiro ao ganhar o Jokenpô — extraído aqui só pra não repetir a mesma
 // constante hardcoded em mais de um lugar (bot:chooseOrder e o driver da fila online).
 function decideGoFirst() {
@@ -67,7 +77,9 @@ function chooseDeploy(self) {
 }
 
 // Escolhe a próxima habilidade ACT a ativar, se houver alguma que valha a pena e seja pagável.
-function chooseAct(self) {
+// Em 'easy'/'medium' (sem hasSmartResources), o bot simplesmente não usa ACT nenhuma.
+function chooseAct(self, skill) {
+  if (!hasSmartResources(skill)) return null
   const zones = [
     ['basePals', self.basePals, 55],
     ['baseStructures', self.baseStructures, 70],
@@ -93,7 +105,7 @@ function chooseAct(self) {
 // subconjunto de MAIOR power entre os Pals em pé, e Pals reservados nunca atacam nem saem do
 // campo por conta própria — então o conjunto não muda entre uma chamada e a próxima, só encolhe
 // conforme os atacantes vão descansando).
-function planAttacks(tm, self, opponent) {
+function planAttacks(tm, self, opponent, skill) {
   const standing = self.basePals.filter(p => p.isStanding)
   if (standing.length === 0) return { attackers: [], reserved: [] }
 
@@ -101,7 +113,12 @@ function planAttacks(tm, self, opponent) {
 
   // "must attack as much as possible" (Alarm Bell) — TurnManager.endMainPhase() recusa terminar o
   // turno enquanto sobrar Pal em pé nesse estado; reservar bloqueador aqui quebraria essa regra.
+  // Regra do jogo, não escolha de dificuldade — vale pra qualquer skill.
   if (self.mustAttackAllUntilEndOfTurn) return { attackers: byPowerDesc, reserved: [] }
+
+  // 'easy' nunca reserva bloqueador — ataca sempre com tudo, mesmo com vida baixa. É a peça
+  // principal do que torna esse nível bem mais fácil de punir.
+  if (!hasSmartDefense(skill)) return { attackers: byPowerDesc, reserved: [] }
 
   const totalStrike = standing.reduce((sum, p) => sum + p.effectiveStrike(self, opponent), 0)
   const isLethal = totalStrike >= opponent.life
@@ -123,9 +140,13 @@ function planAttacks(tm, self, opponent) {
 // Alvo do ataque: Taunt é obrigatório quando presente; senão prefere abater de graça (o Pal
 // descansado mais forte do oponente que esse atacante consegue destruir sem perder a troca);
 // sem alvo assim, ataca a cara do oponente.
-function chooseAttackTarget(self, opponent, attackerPal) {
+function chooseAttackTarget(self, opponent, attackerPal, skill) {
   const forced = EffectEngine.getForcedTauntTargets(opponent, attackerPal)
   if (forced.length > 0) return forced[0]
+
+  // 'easy' não procura "abater de graça" — sempre ataca a cara do oponente (a não ser que Taunt
+  // obrigue, checado acima). Mesma peça de "sem tática de combate" que planAttacks aplica.
+  if (!hasSmartDefense(skill)) return { type: 'player' }
 
   const attackerPower = attackerPal.effectivePower(self, opponent)
   const freeKills = opponent.basePals
@@ -137,22 +158,24 @@ function chooseAttackTarget(self, opponent, attackerPal) {
 }
 
 // Decisão pura — só lê o estado do motor, nenhum efeito colateral. Devolve a próxima ação a
-// executar neste turno, ou { kind: 'endTurn' } quando não sobra nada melhor a fazer.
-function chooseAction(tm, self, opponent) {
+// executar neste turno, ou { kind: 'endTurn' } quando não sobra nada melhor a fazer. `skill`
+// ('easy'|'medium'|'hard', default 'hard') controla só as heurísticas de combate/recursos — ver
+// hasSmartDefense/hasSmartResources; qual carta jogar (chooseDeploy) não varia por dificuldade.
+function chooseAction(tm, self, opponent, skill = 'hard') {
   const deploy = chooseDeploy(self)
   if (deploy) return deploy
 
-  const act = chooseAct(self)
+  const act = chooseAct(self, skill)
   if (act) return act
 
-  if (self.soulsStanding >= 3 && !self.soulDrawUsedThisTurn) {
+  if (hasSmartResources(skill) && self.soulsStanding >= 3 && !self.soulDrawUsedThisTurn) {
     return { kind: 'soulDraw' }
   }
 
-  const { attackers } = planAttacks(tm, self, opponent)
+  const { attackers } = planAttacks(tm, self, opponent, skill)
   if (attackers.length > 0) {
     const pal = attackers[0]
-    return { kind: 'attack', pal, target: chooseAttackTarget(self, opponent, pal) }
+    return { kind: 'attack', pal, target: chooseAttackTarget(self, opponent, pal, skill) }
   }
 
   return { kind: 'endTurn' }
@@ -230,10 +253,10 @@ async function performAction(action, { tm, self, opponent, emit }) {
 // teto de iterações é só uma rede de segurança contra um card mal pontuado girar pra sempre.
 const MAX_TURN_ITERATIONS = 30
 
-async function playTurn({ tm, self, opponent, emit, isAlive, delay, timing = DEFAULT_TIMING }) {
+async function playTurn({ tm, self, opponent, emit, isAlive, delay, timing = DEFAULT_TIMING, skill = 'hard' }) {
   for (let i = 0; i < MAX_TURN_ITERATIONS; i++) {
     if (!isAlive() || tm.gameOver) return
-    const action = chooseAction(tm, self, opponent)
+    const action = chooseAction(tm, self, opponent, skill)
 
     if (action.kind === 'endTurn') {
       await delay(timing.endTurn)
