@@ -3903,6 +3903,19 @@ io.on('connection', (socket) => {
   // uma run do Modo Expedição em vez de deckId (batalha/chefe de um nó do mapa, ver
   // /api/roguelike/enter-node). Nunca toca `decks`: o deck vem do main_deck da própria run.
   socket.on('bot:start', ({ deckId, roguelikeRunId }) => {
+    // Já existe uma partida em andamento nesse socket (RPS/mulligan em aberto ou jogo já rolando)
+    // — nunca reinicia do zero num 2º bot:start. Sem essa trava, qualquer caminho que remonte
+    // GameBoard.jsx no meio de uma partida (ex: o jogador aperta "voltar" do navegador durante uma
+    // luta do Modo Expedição, cai de volta em /roguelike, que reemite `navigate('/game', ...)`
+    // sozinho porque a run continua 'in_battle', remontando GameBoard e reemitindo bot:start)
+    // apagava silenciosamente a partida real e começava outra do zero — parecia "o duelo reinicia
+    // sozinho". Se o jogo já começou, só resincroniza o estado atual; se ainda está no
+    // RPS/mulligan, ignora (o cliente já tem o prompt certo na tela).
+    if (match && (!match.turnManager || !match.turnManager.gameOver)) {
+      if (match.turnManager) emitState();
+      return;
+    }
+
     if (roguelikeRunId) {
       const run = db.prepare('SELECT * FROM roguelike_runs WHERE id = ? AND player_id = ?').get(roguelikeRunId, playerId);
       if (!run || run.status !== 'in_battle') {

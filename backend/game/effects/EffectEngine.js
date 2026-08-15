@@ -637,6 +637,11 @@ function applyAction(turnManager, action, sourceInstance, casterState, opponentS
         if (!hasName(t, action.palName)) continue
         t.grantedTriggers = t.grantedTriggers || {}
         t.grantedTriggers[action.triggerType] = t.grantedTriggers[action.triggerType] || []
+        // Guarda de quem é a habilidade cedida (ex: Foxparks' Harness) direto na cláusula — sem isso,
+        // o popup de escolha de alvo mostrava sempre o nome/texto do PRÓPRIO Pal (ex: "Foxparks –
+        // Light of Courage... Brave"), nunca o da carta que de fato cedeu esse efeito (ver resolveChooseAction).
+        action.grantedActions.sourceCardName = sourceInstance.data.name
+        action.grantedActions.sourceDescription = sourceInstance.data.effect_text
         t.grantedTriggers[action.triggerType].push(action.grantedActions)
         turnManager._addLog(`${t.data.name} ganhou uma habilidade temporária (efeito de ${sourceInstance.data.name}).`)
         granted = true
@@ -969,10 +974,13 @@ function resolveChooseAction(turnManager, clauseActions, chooseAction, instance,
     return { paused: false }
   }
 
+  // Habilidade CEDIDA por outra carta (ex: Foxparks' Harness) — mostra pro jogador de quem é o efeito
+  // de verdade, não sempre o nome/texto do Pal que está com a habilidade emprestada (ver
+  // grantSkillIfMainName, que anota isso na própria cláusula).
   turnManager.pendingEffect = {
     kind: 'effect',
-    sourceCardName: instance.data.name,
-    description: instance.data.effect_text,
+    sourceCardName: clauseActions.sourceCardName || instance.data.name,
+    description: clauseActions.sourceDescription || instance.data.effect_text,
     optional: !!spec.upTo,
     actions: siblingActions,
     then: clauseActions.then || null,
