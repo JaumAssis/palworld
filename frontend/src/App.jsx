@@ -480,17 +480,14 @@ function LoginStreakPopup({ onClose }) {
 
         {result && (
           <div style={{ marginTop: '16px', textAlign: 'center' }}>
-            {result.boosterCards ? (
+            {result.boosterPending ? (
+              // Não abre mais na hora — mesmo fluxo da recompensa de baú da Arena: só credita em
+              // pending_boosters, e o player abre quando quiser na Loja (com a animação de lá).
               <>
                 <p style={{ fontWeight: 600, color: '#222', fontSize: 'var(--fs-base)' }}>{t('loginStreakBoosterWon')}</p>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                  {result.boosterCards.map((c, i) => (
-                    <div key={i} style={{ width: 'clamp(60px, 6vw, 90px)' }}>
-                      <img src={c.image_url} alt={c.name} style={{ width: '100%', borderRadius: '6px' }} />
-                      <p style={{ fontSize: 'var(--fs-2xs)', margin: '4px 0 0' }}>{c.rarity}</p>
-                    </div>
-                  ))}
-                </div>
+                <Link to="/shop">
+                  <button className="sign-button sign-button-fluid" style={{ marginTop: '8px' }}>{t('arenaGoOpenBoostersButton')}</button>
+                </Link>
               </>
             ) : (
               <p style={{ fontWeight: 600, color: '#222', fontSize: 'var(--fs-base)' }}>{t('loginStreakGoldWon', { amount: result.goldGained, fluid: result.fluidGained })}</p>

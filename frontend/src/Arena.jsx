@@ -255,14 +255,17 @@ function Arena() {
           <p style={{ fontSize: 'var(--fs-sm)' }}>
             {t('arenaRewardSummary', { gold: claimResult.gold, fluid: claimResult.fluid, ingredient: claimResult.ingredient })}
           </p>
-          {claimResult.cards.length > 0 && (
+          {/* Pacotes não vêm mais abertos na hora — só creditados como pendentes (ver
+              pending_boosters em server.js). O player abre 1 de cada vez na Loja, com a mesma
+              animação de abertura de booster já usada lá. */}
+          {claimResult.boosterPacksGranted > 0 && (
             <>
-              <p style={{ fontSize: 'var(--fs-sm)' }}>{t('arenaRewardCardsLabel')}</p>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                {claimResult.cards.map((c, i) => (
-                  <img key={i} src={c.image_url} alt={c.name} style={{ width: 'clamp(56px, 6vw, 80px)', borderRadius: '6px' }} />
-                ))}
-              </div>
+              <p style={{ fontSize: 'var(--fs-sm)' }}>
+                {t('arenaRewardBoosterPendingMsg', { count: claimResult.boosterPacksGranted })}
+              </p>
+              <Link to="/shop">
+                <button className="sign-button sign-button-fluid">{t('arenaGoOpenBoostersButton')}</button>
+              </Link>
             </>
           )}
           <button className="sign-button sign-button-fluid" style={{ marginTop: 'var(--sp-md)' }} onClick={() => setClaimResult(null)}>

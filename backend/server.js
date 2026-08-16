@@ -1248,6 +1248,9 @@ try { db.exec('ALTER TABLE players ADD COLUMN rank_points INTEGER NOT NULL DEFAU
 // Marca os players dos 3 bots permanentes (ver seedBotPlayers, mais abaixo) — hoje só usado pra
 // nunca deixar um bot herdar a linha legada id=1 (reservada pro 1º humano a se registrar).
 try { db.exec('ALTER TABLE players ADD COLUMN is_bot INTEGER NOT NULL DEFAULT 0'); } catch (e) {}
+// Pacotes de booster ganhos (baú da Arena) e ainda não abertos — não abrem mais na hora do
+// resgate, o player abre 1 de cada vez depois (ver /api/shop/open-pending-booster).
+try { db.exec('ALTER TABLE players ADD COLUMN pending_boosters INTEGER NOT NULL DEFAULT 0'); } catch (e) {}
 
 // ---------- ARENA: ranks (Bronze → Lenda) ----------
 // Limiar (pontos mínimos) pra entrar em cada rank. Pensado pra ~70 vitórias seguidas (sem nenhuma
@@ -2425,37 +2428,6 @@ function getOrAdvanceLoginStreak(playerId) {
   return { currentDay: newDay, claimedToday: false };
 }
 
-// Sorteia cartas do booster BP01 e credita na coleção do jogador (cópias além da 4ª viram Fluido
-// de Pal) — mesma mecânica do /api/shop/open-booster, reaproveitada aqui pra recompensa do dia 7.
-function grantFreeBoosterPack(playerId) {
-  const pool = db.prepare("SELECT * FROM cards WHERE set_code = ? AND card_number NOT LIKE '%-%-%'").all(BOOSTER_SET);
-  const getQty = db.prepare('SELECT quantity FROM player_cards WHERE player_id = ? AND card_number = ?');
-  const upsertQty = db.prepare(`
-    INSERT INTO player_cards (player_id, card_number, quantity) VALUES (?, ?, ?)
-    ON CONFLICT(player_id, card_number) DO UPDATE SET quantity = excluded.quantity
-  `);
-
-  const revealed = [];
-  let fluidGained = 0;
-  for (let i = 0; i < CARDS_PER_PACK; i++) {
-    const card = maybeUpgradeToVariant(weightedRandomCard(pool));
-    revealed.push(card);
-    const current = getQty.get(playerId, card.card_number)?.quantity || 0;
-    if (current >= 4) {
-      fluidGained += RARITY_FLUID[card.rarity] || 5;
-    } else {
-      upsertQty.run(playerId, card.card_number, current + 1);
-    }
-  }
-  return {
-    cards: revealed.map(c => ({
-      ...c, colors: JSON.parse(c.colors), keywords: JSON.parse(c.keywords), is_lucky: !!c.is_lucky,
-      image_url: `/${c.image_path}`
-    })),
-    fluidGained
-  };
-}
-
 // Estado da sequência de hoje + a tabela dos 7 dias (pra desenhar a "cartela" no popup)
 app.get('/api/login-streak/today', requirePlayer, (req, res) => {
   const { currentDay, claimedToday } = getOrAdvanceLoginStreak(req.playerId);
@@ -2477,10 +2449,12 @@ app.post('/api/login-streak/claim', requirePlayer, (req, res) => {
   const player = db.prepare('SELECT * FROM players WHERE id = ?').get(req.playerId);
 
   if (reward.booster) {
-    const { cards, fluidGained } = grantFreeBoosterPack(req.playerId);
-    const newFluid = player.pal_fluid + fluidGained;
-    db.prepare('UPDATE players SET pal_fluid = ? WHERE id = ?').run(newFluid, req.playerId);
-    return res.json({ currentDay, boosterCards: cards, fluidGained, goldCoins: player.gold_coins, palFluid: newFluid });
+    // Não abre mais na hora — só credita em pending_boosters, mesmo fluxo da recompensa da Arena
+    // (ver /api/arena/claim-reward e /api/shop/open-pending-booster). O player abre quando quiser,
+    // na Loja, com a mesma animação de abertura.
+    const newPending = player.pending_boosters + 1;
+    db.prepare('UPDATE players SET pending_boosters = ? WHERE id = ?').run(newPending, req.playerId);
+    return res.json({ currentDay, boosterPending: true, goldCoins: player.gold_coins, palFluid: player.pal_fluid, pendingBoosters: newPending });
   }
 
   const newGold = player.gold_coins + reward.gold;
@@ -2778,6 +2752,24 @@ app.post('/api/shop/open-booster', requirePlayer, (req, res) => {
   res.json({ cards, fluidGained, goldCoins: newGold, palFluid: newFluid });
 });
 
+// Abre 1 dos pacotes pendentes (ganhos como recompensa do baú da Arena, nunca comprados) — mesmo
+// sorteio de /api/shop/open-booster, sem cobrar gold_coins, descontando 1 de pending_boosters em
+// vez de abrir tudo de uma vez no resgate (ver /api/arena/claim-reward).
+app.post('/api/shop/open-pending-booster', requirePlayer, (req, res) => {
+  const player = db.prepare('SELECT * FROM players WHERE id = ?').get(req.playerId);
+  if (player.pending_boosters <= 0) {
+    return res.status(400).json({ error: 'Você não tem pacotes pendentes pra abrir.' });
+  }
+
+  const { cards, fluidGained } = openBoosterPackFor(req.playerId);
+
+  const newFluid = player.pal_fluid + fluidGained;
+  const newPending = player.pending_boosters - 1;
+  db.prepare('UPDATE players SET pal_fluid = ?, pending_boosters = ? WHERE id = ?').run(newFluid, newPending, req.playerId);
+
+  res.json({ cards, fluidGained, palFluid: newFluid, pendingBoosters: newPending });
+});
+
 // ---------- Modo Arena: draft temporário estilo Hearthstone ----------
 const ARENA_TICKET_PRICE = 100; // gold_coins por run
 
@@ -2835,14 +2827,45 @@ function computeArenaRewardTier(wins) {
   return 'wood';
 }
 
-// Conteúdo de cada baú — ouro/fluido/ingredientes fixos por tier, pacotes de BP01 só a partir da
-// Prata. Ingrediente é o mesmo valor pras 3 colheitas (trigo/alface/tomate), ver /api/arena/claim-reward.
-const ARENA_REWARD_TIERS = {
-  wood: { gold: 50, fluid: 0, ingredient: 5, boosterPacks: 0 },
-  bronze: { gold: 150, fluid: 10, ingredient: 10, boosterPacks: 0 },
-  silver: { gold: 300, fluid: 30, ingredient: 15, boosterPacks: 1 },
-  gold: { gold: 500, fluid: 60, ingredient: 20, boosterPacks: 2 }
+// Recompensa EXATA por número de vitórias na run (não mais uma faixa de 4 em 4 — cada contagem de
+// 0 a 12 tem seu próprio valor combinado). Ingrediente é o mesmo valor pras 3 colheitas (trigo/
+// alface/tomate), ver /api/arena/claim-reward. `gold: null` na entrada de 12 vitórias é de
+// propósito — esse valor é sorteado (ver randomArenaGoldTier12), não fixo como as demais faixas.
+const ARENA_REWARD_BY_WINS = {
+  0: { gold: 20, fluid: 10, ingredient: 15, boosterPacks: 0 },
+  1: { gold: 25, fluid: 15, ingredient: 20, boosterPacks: 0 },
+  2: { gold: 30, fluid: 20, ingredient: 25, boosterPacks: 0 },
+  3: { gold: 35, fluid: 25, ingredient: 30, boosterPacks: 0 },
+  4: { gold: 50, fluid: 30, ingredient: 35, boosterPacks: 0 },
+  5: { gold: 100, fluid: 50, ingredient: 50, boosterPacks: 0 },
+  6: { gold: 120, fluid: 60, ingredient: 60, boosterPacks: 0 },
+  7: { gold: 140, fluid: 65, ingredient: 65, boosterPacks: 0 },
+  8: { gold: 150, fluid: 70, ingredient: 70, boosterPacks: 0 },
+  9: { gold: 200, fluid: 70, ingredient: 70, boosterPacks: 1 },
+  10: { gold: 220, fluid: 70, ingredient: 70, boosterPacks: 1 },
+  11: { gold: 250, fluid: 80, ingredient: 70, boosterPacks: 1 },
+  12: { gold: null, fluid: 100, ingredient: 100, boosterPacks: 2 }
 };
+
+// 12 vitórias sorteia o gold entre 305 e 400, sempre múltiplo de 5 (20 valores possíveis) — pedido
+// explícito do usuário, não dá pra fixar num número só como as outras faixas.
+function randomArenaGoldTier12() {
+  const steps = (400 - 305) / 5 + 1;
+  return 305 + 5 * Math.floor(Math.random() * steps);
+}
+
+// wins nunca deveria passar de 12 (a run termina assim que bate 12 vitórias, ver `ended` em
+// applyArenaMatchResult), mas o clamp protege mesmo assim contra qualquer valor fora da tabela.
+function computeArenaReward(wins) {
+  const w = Math.min(Math.max(wins, 0), 12);
+  const base = ARENA_REWARD_BY_WINS[w];
+  return {
+    gold: w === 12 ? randomArenaGoldTier12() : base.gold,
+    fluid: base.fluid,
+    ingredient: base.ingredient,
+    boosterPacks: base.boosterPacks
+  };
+}
 
 // Monta a resposta que o front usa pra decidir qual sub-tela mostrar. A "próxima oferta" (cores ou
 // cartas) nunca é persistida — é recalculada aqui na hora a cada chamada (ver comentário da tabela
@@ -2921,43 +2944,39 @@ app.post('/api/arena/forfeit', requirePlayer, (req, res) => {
 });
 
 // Resgata o baú da run mais recente que terminou e ainda não foi resgatada. Concede ouro/fluido/
-// ingredientes fixos por faixa (ver ARENA_REWARD_TIERS) mais N pacotes de BP01 (reaproveitando
-// openBoosterPackFor, o mesmo sorteio ponderado por raridade da loja) — e marca reward_tier, que é
-// o que faz essa run parar de aparecer (ver getUnclaimedFinishedArenaRun).
+// ingredientes exatos pro número de vitórias (ver ARENA_REWARD_BY_WINS/computeArenaReward) e marca
+// reward_tier (só o nome/ícone do baú, ver computeArenaRewardTier) — que é o que faz essa run parar
+// de aparecer (ver getUnclaimedFinishedArenaRun). Pacotes de booster NÃO abrem mais na hora —
+// só creditam em pending_boosters, pro player abrir 1 de cada vez na Loja depois (ver
+// /api/shop/open-pending-booster) em vez de já vir tudo revelado de uma vez.
 app.post('/api/arena/claim-reward', requirePlayer, (req, res) => {
   const run = getUnclaimedFinishedArenaRun(req.playerId);
   if (!run) return res.status(404).json({ error: 'Nenhuma recompensa de Arena pra resgatar agora.' });
 
   const tier = computeArenaRewardTier(run.wins);
-  const reward = ARENA_REWARD_TIERS[tier];
-
-  const cards = [];
-  let fluidGained = reward.fluid;
-  for (let i = 0; i < reward.boosterPacks; i++) {
-    const pack = openBoosterPackFor(req.playerId);
-    cards.push(...pack.cards);
-    fluidGained += pack.fluidGained;
-  }
+  const reward = computeArenaReward(run.wins);
 
   db.prepare(`
     UPDATE players SET gold_coins = gold_coins + ?, pal_fluid = pal_fluid + ?,
-      wheat = wheat + ?, lettuce = lettuce + ?, tomato = tomato + ?
+      wheat = wheat + ?, lettuce = lettuce + ?, tomato = tomato + ?,
+      pending_boosters = pending_boosters + ?
     WHERE id = ?
-  `).run(reward.gold, fluidGained, reward.ingredient, reward.ingredient, reward.ingredient, req.playerId);
+  `).run(reward.gold, reward.fluid, reward.ingredient, reward.ingredient, reward.ingredient, reward.boosterPacks, req.playerId);
 
   db.prepare('UPDATE arena_runs SET reward_tier = ? WHERE id = ?').run(tier, run.id);
 
-  const player = db.prepare('SELECT gold_coins, pal_fluid FROM players WHERE id = ?').get(req.playerId);
+  const player = db.prepare('SELECT gold_coins, pal_fluid, pending_boosters FROM players WHERE id = ?').get(req.playerId);
   res.json({
     tier,
     wins: run.wins,
     losses: run.losses,
     gold: reward.gold,
-    fluid: fluidGained,
+    fluid: reward.fluid,
     ingredient: reward.ingredient,
-    cards,
+    boosterPacksGranted: reward.boosterPacks,
     goldCoins: player.gold_coins,
-    palFluid: player.pal_fluid
+    palFluid: player.pal_fluid,
+    pendingBoosters: player.pending_boosters
   });
 });
 

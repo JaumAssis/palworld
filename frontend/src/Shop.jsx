@@ -73,6 +73,7 @@ function Shop({ onClose } = {}) {
   const [isOpen, setIsOpen] = useState(false)
   const [player, setPlayer] = useState(null)
   const [buying, setBuying] = useState(false)
+  const [openingPending, setOpeningPending] = useState(false)
   const [openingAnimation, setOpeningAnimation] = useState(false)
   const [revealedCards, setRevealedCards] = useState(null)
   const [zoomedCard, setZoomedCard] = useState(null)
@@ -159,6 +160,25 @@ function Shop({ onClose } = {}) {
       .catch(err => {
         setError(err.message)
         setBuying(false)
+      })
+  }
+
+  // Pacotes ganhos de baú da Arena (nunca comprados) — abre 1 de cada vez, mesma animação de
+  // revelação do booster comprado, só que sem custar gold (ver pending_boosters em server.js).
+  const openPendingBooster = () => {
+    setError('')
+    setOpeningPending(true)
+    apiFetch('/api/shop/open-pending-booster', { method: 'POST' })
+      .then(async res => {
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || t('buyError'))
+        setPlayer(p => ({ ...p, pal_fluid: data.palFluid, pending_boosters: data.pendingBoosters }))
+        revealAfterAnimation(data.cards)
+        setOpeningPending(false)
+      })
+      .catch(err => {
+        setError(err.message)
+        setOpeningPending(false)
       })
   }
 
@@ -261,6 +281,32 @@ function Shop({ onClose } = {}) {
 
               {error && <p style={{ color: 'red', fontSize: 'var(--fs-2xs)', marginTop: '8px' }}>{error}</p>}
             </div>
+
+            {/* ---------- PACOTES PENDENTES (ganhos, ex: baú da Arena) ---------- */}
+            {player && player.pending_boosters > 0 && (
+              <div style={{
+                background: '#fff8e1', border: '2px solid #ffcf7a', borderRadius: '16px', padding: 'var(--sp-lg)',
+                textAlign: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.1)', marginTop: '12px'
+              }}>
+                <img src="/booster-bp01.png" alt="Dawn of Palpagos Booster Pack"
+                     style={{ width: 'clamp(100px, 11vw, 150px)', margin: '0 auto 10px', display: 'block' }} />
+                <h3 style={{ margin: '0 0 4px', fontSize: 'var(--fs-md)' }}>{t('pendingBoostersTitle')}</h3>
+                <p style={{ fontSize: 'var(--fs-2xs)', color: '#777', margin: '0 0 12px' }}>
+                  {t('pendingBoostersCount', { count: player.pending_boosters })}
+                </p>
+                <button
+                  onClick={openPendingBooster}
+                  disabled={openingPending}
+                  style={{
+                    width: '100%', padding: 'var(--sp-sm)', borderRadius: '10px', border: 'none',
+                    background: '#a5541b', color: '#fff', fontWeight: 600, fontSize: 'var(--fs-sm)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                    cursor: 'pointer', opacity: openingPending ? 0.5 : 1
+                  }}>
+                  {openingPending ? t('opening') : t('openPendingBoosterButton')}
+                </button>
+              </div>
+            )}
 
             {/* ---------- TRIAL DECKS ---------- */}
             <div style={{ display: 'flex', gap: '10px', marginTop: '12px', marginBottom: '16px' }}>

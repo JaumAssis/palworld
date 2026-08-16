@@ -260,6 +260,9 @@ const pt = {
   boosterPackDesc: 'Booster Pack — 7 cartas por pacote',
   opening: 'Abrindo...',
   buyFor100: 'Comprar por 100',
+  pendingBoostersTitle: '📦 Pacotes ganhos',
+  pendingBoostersCount: ({ count }) => count === 1 ? 'Você tem 1 pacote esperando pra abrir.' : `Você tem ${count} pacotes esperando pra abrir.`,
+  openPendingBoosterButton: 'Abrir 1 pacote',
   buyError: 'Erro ao comprar',
   alreadyBought: 'Já comprado',
   cardsObtained: '🎉 Cartas obtidas!',
@@ -452,7 +455,10 @@ const pt = {
   arenaClaimRewardButton: '📦 Resgatar Recompensa',
   arenaRewardTitle: '🎉 Recompensa resgatada!',
   arenaRewardSummary: ({ gold, fluid, ingredient }) => `🪙 ${gold} de ouro · 💧 ${fluid} de fluido · 🌾 ${ingredient} de trigo/alface/tomate`,
-  arenaRewardCardsLabel: 'Cartas dos pacotes:',
+  arenaRewardBoosterPendingMsg: ({ count }) => count === 1
+    ? 'Você ganhou 1 pacote de booster! Vá até a Loja pra abrir quando quiser.'
+    : `Você ganhou ${count} pacotes de booster! Vá até a Loja pra abrir um de cada vez, quando quiser.`,
+  arenaGoOpenBoostersButton: '📦 Ir abrir na Loja',
   arenaBackToTicketButton: 'Comprar novo ingresso',
 
   // ---------- Modo Expedição ----------
@@ -835,6 +841,9 @@ const en = {
   boosterPackDesc: 'Booster Pack — 7 cards per pack',
   opening: 'Opening...',
   buyFor100: 'Buy for 100',
+  pendingBoostersTitle: '📦 Packs you earned',
+  pendingBoostersCount: ({ count }) => count === 1 ? 'You have 1 pack waiting to be opened.' : `You have ${count} packs waiting to be opened.`,
+  openPendingBoosterButton: 'Open 1 pack',
   buyError: 'Error purchasing',
   alreadyBought: 'Already bought',
   cardsObtained: '🎉 Cards obtained!',
@@ -1027,7 +1036,10 @@ const en = {
   arenaClaimRewardButton: '📦 Claim Reward',
   arenaRewardTitle: '🎉 Reward claimed!',
   arenaRewardSummary: ({ gold, fluid, ingredient }) => `🪙 ${gold} gold · 💧 ${fluid} fluid · 🌾 ${ingredient} wheat/lettuce/tomato`,
-  arenaRewardCardsLabel: 'Cards from packs:',
+  arenaRewardBoosterPendingMsg: ({ count }) => count === 1
+    ? 'You got 1 booster pack! Head to the Shop to open it whenever you like.'
+    : `You got ${count} booster packs! Head to the Shop to open them one at a time, whenever you like.`,
+  arenaGoOpenBoostersButton: '📦 Go open it in the Shop',
   arenaBackToTicketButton: 'Buy a new ticket',
 
   // ---------- Expedition Mode ----------
