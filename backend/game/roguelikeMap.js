@@ -1,22 +1,24 @@
 const { shuffle } = require('./PlayerState')
 
 // Tamanho de expedição escolhido junto com o deck-personagem — número de camadas comuns antes do
-// Boss (sempre 3 trilhas por camada, ver NODES_PER_LAYER). Curta ~12 nós+Boss, Média ~18 nós+Boss
-// (era o único tamanho antes disso existir), Longa ~27 nós+Boss.
-const EXPEDITION_LENGTHS = { short: 4, medium: 6, long: 9 }
+// Boss (sempre 3 trilhas por camada, ver NODES_PER_LAYER). Curta ~19 nós+Boss, Média ~28 nós+Boss,
+// Longa ~40 nós+Boss.
+const EXPEDITION_LENGTHS = { short: 6, medium: 9, long: 13 }
 const DEFAULT_EXPEDITION_LENGTH = 'medium'
 const NODES_PER_LAYER = 3
-const NODE_TYPES = ['battle', 'medicine_bench', 'shop', 'event']
+// Medicine Bench NUNCA é sorteada aqui — tem contagem exata por tamanho de expedição, colocada à
+// parte por placeMedicineBenches (senão o sorteio aleatório podia dar 0, 1 ou vários por run).
+const NODE_TYPES = ['battle', 'shop', 'event']
+const MEDICINE_BENCH_COUNT_BY_LENGTH = { short: 1, medium: 1, long: 2 }
 
 // Pesos por PROGRESSO na expedição (0 = primeira camada, 1 = última camada comum, pré-Boss) em vez
 // de por índice fixo de camada — assim funciona igual pra qualquer tamanho de expedição. Early
-// favorece Battle/Event, tardio favorece Shop/Medicine Bench (última chance de preparar o deck).
+// favorece Battle/Event, tardio favorece Shop (última chance de gastar dogecoin antes do chefe).
 function weightsForProgress(progress) {
   return {
     battle: 45 - 15 * progress,
     event: 35 - 15 * progress,
-    shop: 10 + 15 * progress,
-    medicine_bench: 10 + 15 * progress
+    shop: 20 + 30 * progress
   }
 }
 
@@ -72,15 +74,28 @@ function connectLayers(fromNodes, toNodes) {
   }
 }
 
-// Garante pelo menos 1 Shop e 1 Medicine Bench em algum lugar do mapa antes do Boss — sem isso
-// uma run azarada poderia nunca ver loja nem bancada de remédios. Converte um Battle/Event
-// sorteado (preferindo camadas mais tardias) se nenhum apareceu organicamente.
+// Garante pelo menos 1 Shop em algum lugar do mapa antes do Boss — sem isso uma run azarada
+// poderia nunca ver loja. Converte um Battle/Event sorteado (preferindo camadas mais tardias) se
+// nenhum apareceu organicamente. Medicine Bench não passa por aqui — ver placeMedicineBenches.
 function guaranteeUtilityNodes(commonNodes) {
-  for (const requiredType of ['shop', 'medicine_bench']) {
-    if (commonNodes.some(n => n.type === requiredType)) continue
-    const candidates = commonNodes.filter(n => n.type === 'battle' || n.type === 'event')
-    const sortedByLayerDesc = candidates.sort((a, b) => b.layer - a.layer)
-    if (sortedByLayerDesc.length > 0) sortedByLayerDesc[0].type = requiredType
+  if (commonNodes.some(n => n.type === 'shop')) return
+  const candidates = commonNodes.filter(n => n.type === 'battle' || n.type === 'event')
+  const sortedByLayerDesc = candidates.sort((a, b) => b.layer - a.layer)
+  if (sortedByLayerDesc.length > 0) sortedByLayerDesc[0].type = 'shop'
+}
+
+// Converte exatamente `count` nós comuns em Bancada de Remédios, espalhados o mais uniformemente
+// possível pelas camadas (nunca a camada 0, pra não estragar a abertura da run com uma bancada
+// logo de cara) — 1 na curta/média, 2 na longa (ver MEDICINE_BENCH_COUNT_BY_LENGTH).
+function placeMedicineBenches(layers, count) {
+  const eligibleLayers = layers.slice(1)
+  if (eligibleLayers.length === 0 || count <= 0) return
+  const step = eligibleLayers.length / count
+  for (let i = 0; i < count; i++) {
+    const layerIdx = Math.min(eligibleLayers.length - 1, Math.floor(i * step))
+    const targetLayer = eligibleLayers[layerIdx]
+    const candidate = shuffle(targetLayer.filter(n => n.type !== 'medicine_bench'))[0]
+    if (candidate) candidate.type = 'medicine_bench'
   }
 }
 
@@ -102,6 +117,7 @@ function generateMap(expeditionLength) {
 
   const commonNodes = layers.flat()
   guaranteeUtilityNodes(commonNodes)
+  placeMedicineBenches(layers, MEDICINE_BENCH_COUNT_BY_LENGTH[resolvedLength])
 
   const bossNode = { id: 'BOSS', layer: nodeLayers, lane: 0, type: 'boss', edgesTo: [], status: 'locked' }
   for (const node of layers[layers.length - 1]) node.edgesTo = [bossNode.id]
@@ -146,6 +162,7 @@ module.exports = {
   DEFAULT_EXPEDITION_LENGTH,
   NODES_PER_LAYER,
   NODE_TYPES,
+  MEDICINE_BENCH_COUNT_BY_LENGTH,
   generateMap,
   getAvailableNodeIds,
   canEnterNode,

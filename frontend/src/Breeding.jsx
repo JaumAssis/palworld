@@ -2,9 +2,12 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useLanguage } from './i18n/LanguageContext'
 import { apiFetch } from './api'
+import { cardMatchesSearch } from './cardSearch'
 
 function CardPicker({ onSelect, onClose, ownedPals }) {
   const { t } = useLanguage()
+  const [search, setSearch] = useState('')
+  const filtered = ownedPals.filter(c => cardMatchesSearch(c, search))
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={onClose}>
       <div onClick={e => e.stopPropagation()} style={{
@@ -15,9 +18,18 @@ function CardPicker({ onSelect, onClose, ownedPals }) {
           <h3 style={{ margin: 0, fontSize: 'var(--fs-lg)' }}>{t('choosePalTitle')}</h3>
           <button onClick={onClose} title={t('close')} style={{ background: 'none', border: 'none', fontSize: 'var(--fs-lg)', lineHeight: 1, color: '#666', cursor: 'pointer', padding: '4px' }}>✕</button>
         </div>
+        <div style={{ padding: '0 20px 10px', flexShrink: 0 }}>
+          <input
+            type="text"
+            placeholder={t('searchCard')}
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{ width: '100%', boxSizing: 'border-box', padding: 'var(--sp-xs)', fontSize: 'var(--fs-sm)' }}
+          />
+        </div>
         <div style={{ padding: '0 20px 20px', overflowY: 'auto' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(clamp(75px, 8vw, 110px), 1fr))', gap: 'var(--sp-sm)' }}>
-            {ownedPals.map(card => (
+            {filtered.map(card => (
               <div key={card.card_number} onClick={() => onSelect(card)} style={{ cursor: 'pointer', textAlign: 'center' }}>
                 <div style={{ width: '100%', aspectRatio: '5 / 7', borderRadius: '6px', overflow: 'hidden', background: '#eee' }}>
                   <img src={card.image_url} alt={card.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }}
@@ -27,7 +39,7 @@ function CardPicker({ onSelect, onClose, ownedPals }) {
               </div>
             ))}
           </div>
-          {ownedPals.length === 0 && <p style={{ color: '#999', fontSize: 'var(--fs-sm)' }}>{t('noPalsOwned')}</p>}
+          {filtered.length === 0 && <p style={{ color: '#999', fontSize: 'var(--fs-sm)' }}>{t('noPalsOwned')}</p>}
         </div>
       </div>
     </div>

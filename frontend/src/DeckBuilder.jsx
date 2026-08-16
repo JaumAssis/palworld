@@ -219,10 +219,12 @@ function DeckBuilder() {
   }
 
   // Só importa no modo Rank — Normal ignora a coleção de propósito, nunca fica incompleto.
+  // Conta Main Deck E Soul Deck — antes só olhava o Main Deck, então um Soul Deck incompleto
+  // nunca acendia o aviso de rascunho aqui (mesmo gap corrigido no backend, computeDeckIsDraft).
   const missingCount = () => {
     if (deckMode !== 'rank') return 0
     const counts = {}
-    for (const c of mainDeck) counts[c.card_number] = (counts[c.card_number] || 0) + 1
+    for (const c of [...mainDeck, ...soulDeck]) counts[c.card_number] = (counts[c.card_number] || 0) + 1
     let missing = 0
     for (const [num, needed] of Object.entries(counts)) {
       missing += Math.max(0, needed - getAvailable(num))
@@ -289,23 +291,50 @@ function DeckBuilder() {
   // igual a Coleção), e o filtro "Não possuído" é só mais um filtro que soma aos outros.
   // Modo Rank: por padrão só mostra o que o jogador tem (igual antes); o toggle "Não possuído"
   // inverte pra mostrar só o que falta na coleção — as duas visões são exclusivas, não somam.
+  // Soul não é mais exceção aqui: agora que Soul nunca é craftável, a posse de verdade importa
+  // (senão um deck Rank podia "completar" o Soul Deck com cópias que o jogador nem tem, sem
+  // nenhum jeito de resolver isso depois via craft).
   const filteredCollection = allCards.filter(c =>
     (filterType === 'Todos' || c.card_type === filterType) &&
     (selectedCosts.size === 0 || selectedCosts.has(c.cost)) &&
     (selectedColors.size === 0 || (c.colors || []).some(col => selectedColors.has(col))) &&
     cardMatchesSearch(c, search) &&
-    (deckMode !== 'rank' || c.card_type === 'Soul' ||
+    (deckMode !== 'rank' ||
       (showOnlyNotOwned ? getAvailable(c.card_number) === 0 : getAvailable(c.card_number) > 0))
   )
   const luckyCount = mainDeck.filter(c => c.is_lucky).length
 
+  // Curva de custo + contagem por tipo do Main Deck em montagem — mesma ideia (e mesmas chaves de
+  // i18n) que Arena.jsx/Roguelike.jsx já usam, só num layout mais compacto pra caber na coluna
+  // estreita do painel de resumo.
+  const costBuckets = {}
+  for (const c of mainDeck) if (c.cost != null) costBuckets[c.cost] = (costBuckets[c.cost] || 0) + 1
+  const maxAxisCost = Math.max(8, ...mainDeck.map(c => c.cost || 0))
+  const costCurve = Array.from({ length: maxAxisCost }, (_, i) => ({ cost: i + 1, count: costBuckets[i + 1] || 0 }))
+  const costCurveMax = Math.max(1, ...costCurve.map(b => b.count))
+  const typeCounts = mainDeck.reduce((acc, c) => {
+    if (c.card_type === 'Pal') acc.pals++
+    else if (c.card_type === 'Structure') acc.structures++
+    else if (c.card_type === 'Gear') acc.gear++
+    else if (c.card_type === 'Event') acc.event++
+    return acc
+  }, { pals: 0, structures: 0, gear: 0, event: 0 })
+
+  // Agrupado por card_number (não por nome) — 2 variantes de arte do mesmo Pal (normal + arte
+  // alterada) precisam virar linhas SEPARADAS aqui, senão o botão "-" fica ambíguo: ele sempre
+  // remove a cópia que apareceu primeiro no array, então trocar a arte alterada pela normal podia
+  // acabar removendo a normal por engano e salvando o deck com uma arte que você nem possui.
   const groupedDeck = Object.values(
     mainDeck.reduce((acc, card) => {
-      if (!acc[card.name]) acc[card.name] = { card, count: 0 }
-      acc[card.name].count++
+      if (!acc[card.card_number]) acc[card.card_number] = { card, count: 0 }
+      acc[card.card_number].count++
       return acc
     }, {})
   )
+  // Só mostra o card_number entre parênteses quando existe mais de 1 variante com o MESMO nome no
+  // deck (ex: normal + arte alterada do mesmo Pal) — na imensa maioria dos decks isso nunca aparece.
+  const nameOccurrences = {}
+  for (const { card } of groupedDeck) nameOccurrences[card.name] = (nameOccurrences[card.name] || 0) + 1
 
   return (
     <div style={{
@@ -363,12 +392,11 @@ function DeckBuilder() {
           </button>
         </div>
 
-        {/* Linha 3, condicional: subfiltros de Custo e Cor — só com um tipo específico selecionado.
-            Multi-seleção dentro de cada grupo; os dois grupos se combinam em E (mesmo padrão do
-            Catálogo, CardGrid.jsx). */}
-        {filterType !== 'Todos' && (
-          <div style={{ display: 'flex', gap: 'var(--sp-lg)', flexWrap: 'wrap', alignItems: 'center', marginBottom: '12px' }}>
-            {availableCosts.length > 0 && (
+        {/* Linha 3: subfiltros de Custo e Cor — agora aparecem em qualquer tipo, incluindo "Todos"
+            (antes só apareciam com um tipo específico selecionado). Multi-seleção dentro de cada
+            grupo; os dois grupos se combinam em E (mesmo padrão do Catálogo, CardGrid.jsx). */}
+        <div style={{ display: 'flex', gap: 'var(--sp-lg)', flexWrap: 'wrap', alignItems: 'center', marginBottom: '12px' }}>
+          {availableCosts.length > 0 && (
               <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
                 <span style={{ color: '#d9c4a3', fontSize: 'var(--fs-2xs)' }}>{t('costFilterLabel')}</span>
                 {availableCosts.map(cost => (
@@ -398,20 +426,18 @@ function DeckBuilder() {
               ))}
             </div>
           </div>
-        )}
-
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(clamp(95px, 9vw, 150px), 1fr))', gap: 'var(--sp-sm)' }}>
           {filteredCollection.map(card => {
             const isSoul = card.card_type === 'Soul'
             const copies = countCopies(isSoul ? soulDeck : mainDeck, card)
             const maxed = isSoul ? soulDeck.length >= SOUL_DECK_SIZE : copies >= MAX_COPIES_PER_NAME
-            const notOwned = deckMode === 'rank' && !isSoul && getAvailable(card.card_number) === 0
+            const notOwned = deckMode === 'rank' && getAvailable(card.card_number) === 0
             return (
               <div key={card.card_number}
                    onClick={() => !maxed && addCard(card)}
                    onMouseEnter={() => setHoveredCard(card)}
                    onMouseLeave={() => setHoveredCard(null)}
-                   title={!isSoul && deckMode === 'rank' ? t('availableTitle', { n: getAvailable(card.card_number) }) : undefined}
+                   title={deckMode === 'rank' ? t('availableTitle', { n: getAvailable(card.card_number) }) : undefined}
                    style={{ cursor: maxed ? 'not-allowed' : 'pointer', opacity: maxed ? 0.4 : 1, textAlign: 'center', border: '1px solid #ccc', borderRadius: '8px', padding: 'var(--sp-2xs)', position: 'relative' }}>
                 <img src={card.image_url} alt={card.name}
                      style={{
@@ -421,7 +447,7 @@ function DeckBuilder() {
                      }}
                      onError={e => e.target.style.display = 'none'} />
                 <p style={{ fontSize: 'var(--fs-2xs)', margin: '4px 0 0' }}>{card.name} {copies > 0 && `x${copies}`}</p>
-                {!isSoul && deckMode === 'rank' && (
+                {deckMode === 'rank' && (
                   <p style={{ fontSize: 'var(--fs-2xs)', margin: 0, color: '#8a5a2b' }}>{t('availLabel', { n: getAvailable(card.card_number) })}</p>
                 )}
               </div>
@@ -459,7 +485,12 @@ function DeckBuilder() {
           {groupedDeck.map(({ card, count }) => (
             <div key={card.card_number}
                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 'var(--fs-xs)', padding: '4px' }}>
-              <span>{card.name}</span>
+              <span>
+                {card.name}
+                {nameOccurrences[card.name] > 1 && (
+                  <span style={{ color: '#999', fontSize: 'var(--fs-2xs)' }}> ({card.card_number})</span>
+                )}
+              </span>
               <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 x{count}
                 <button
@@ -475,6 +506,29 @@ function DeckBuilder() {
               </span>
             </div>
           ))}
+        </div>
+
+        <div style={{ borderTop: '1px solid #ddd', paddingTop: '8px', marginBottom: '10px' }}>
+          <p style={{ fontSize: 'var(--fs-2xs)', fontWeight: 700, margin: '0 0 4px' }}>{t('arenaCostCurveTitle')}</p>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: 'clamp(50px, 8vh, 80px)' }}>
+            {costCurve.map(({ cost, count }) => (
+              <div key={cost} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
+                <span style={{ fontSize: '9px', minHeight: '1.1em' }}>{count > 0 ? count : ''}</span>
+                <div style={{
+                  width: '100%', background: 'linear-gradient(180deg, #ffb74d, #a5541b)', borderRadius: '2px 2px 0 0',
+                  height: `${(count / costCurveMax) * 100}%`, minHeight: count > 0 ? '3px' : '0'
+                }} />
+                <span style={{ fontSize: '9px', marginTop: '2px', color: '#777' }}>{cost}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '6px', fontSize: '9px', color: '#555' }}>
+            <span>🍀 {t('arenaStatLuckyPals')}: <strong>{luckyCount}</strong></span>
+            <span>🐾 {t('arenaStatPals')}: <strong>{typeCounts.pals}</strong></span>
+            <span>🏛️ {t('arenaStatStructures')}: <strong>{typeCounts.structures}</strong></span>
+            <span>⚙️ {t('arenaStatGear')}: <strong>{typeCounts.gear}</strong></span>
+            <span>📜 {t('arenaStatEvent')}: <strong>{typeCounts.event}</strong></span>
+          </div>
         </div>
 
         <button onClick={handleSave} style={{ width: '100%', padding: 'var(--sp-sm)', fontSize: 'var(--fs-sm)' }}>{t('saveDeck')}</button>

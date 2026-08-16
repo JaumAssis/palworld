@@ -5,7 +5,7 @@ import { apiFetch } from './api'
 import { socket } from './socket'
 import LobbyChat from './LobbyChat'
 import {
-  CardSlot, PalCard, StructureGearRow, CardChoiceModal, DamageRevealModal, GraveyardModal,
+  CardSlot, PalCard, StructureGearRow, CardChoiceModal, DamageRevealModal, GraveyardModal, ExileModal,
   MatchLogPanel, Overlay, AttackBadge, canAttackPal, THEMED_H2, THEMED_P, THEMED_RESULT_WIN, THEMED_RESULT_LOSE, THEMED_RESULT_NEUTRAL,
   WOOD_H2, WOOD_P, WOOD_PAGE_BACKGROUND, BOARD_WIDTH, BOARD_HEIGHT
 } from './GameBoardUI'
@@ -55,6 +55,7 @@ function FindMatchDeckSelect() {
   const [amountInput, setAmountInput] = useState(1)
   const [actPicker, setActPicker] = useState(null)
   const [graveyardView, setGraveyardView] = useState(null)
+  const [exileView, setExileView] = useState(null)
   const [zoomCard, setZoomCard] = useState(null)
   const [damageRevealShown, setDamageRevealShown] = useState(null)
   const [boardScale, setBoardScale] = useState(1)
@@ -698,6 +699,8 @@ function FindMatchDeckSelect() {
             <CardSlot label={t('gbDeckCount', { n: opponent.deckCount })} width="56px" height="76px" imageUrl="/card_fundo.png" />
             <CardSlot label={t('gbGraveyard', { n: opponent.graveyardCount })} width="56px" height="76px"
                       onClick={() => setGraveyardView({ ownerName: opponent.playerName, cards: opponent.graveyard || [] })} />
+            <CardSlot label={t('gbExile', { n: (opponent.exileZone || []).length })} width="56px" height="76px"
+                      onClick={() => setExileView({ ownerName: opponent.playerName, cards: opponent.exileZone || [] })} />
           </div>
           <SoulRow standing={opponent.soulsStanding} rested={opponent.soulsRested} />
           <SoulCount standing={opponent.soulsStanding} rested={opponent.soulsRested} />
@@ -786,6 +789,8 @@ function FindMatchDeckSelect() {
             <CardSlot label={t('gbDeckCount', { n: player.deckCount })} width="56px" height="76px" imageUrl="/card_fundo.png" />
             <CardSlot label={t('gbGraveyard', { n: player.graveyardCount })} width="56px" height="76px"
                       onClick={() => setGraveyardView({ ownerName: t('youLabel'), cards: player.graveyard || [] })} />
+            <CardSlot label={t('gbExile', { n: (player.exileZone || []).length })} width="56px" height="76px"
+                      onClick={() => setExileView({ ownerName: t('youLabel'), cards: player.exileZone || [] })} />
           </div>
           <span style={{ color: '#fff', fontSize: '12px', textShadow: '0 1px 3px rgba(0,0,0,0.6)' }}>
             {t('gbMaterial', { n: player.material ?? 0 })} · {t('gbIngredient', { n: player.ingredient ?? 0 })}
@@ -897,6 +902,11 @@ function FindMatchDeckSelect() {
       {/* ---------- POPOUT: ver as cartas do cemitério (clique no contador) ---------- */}
       {graveyardView && (
         <GraveyardModal view={graveyardView} onClose={() => setGraveyardView(null)} t={t} />
+      )}
+
+      {/* ---------- POPOUT: ver as cartas exiladas (clique no contador) ---------- */}
+      {exileView && (
+        <ExileModal view={exileView} onClose={() => setExileView(null)} t={t} />
       )}
 
       {/* ---------- BLOCK DECLARATION STEP ---------- */}

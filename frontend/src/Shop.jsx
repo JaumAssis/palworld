@@ -4,18 +4,78 @@ import { useLanguage } from './i18n/LanguageContext'
 import { apiFetch } from './api'
 import BlackMarket from './BlackMarket'
 
+// Ângulos fixos das faíscas da animação de abertura (não Math.random() a cada render, senão elas
+// "pulariam" de posição toda vez que algo no componente atualizasse durante a animação).
+const BOOSTER_SPARKLES = Array.from({ length: 10 }, (_, i) => ({ angle: i * 36, delay: (i % 5) * 0.06 }))
+const BOOSTER_OPEN_ANIMATION_MS = 1300
+
+const SHOP_STYLE_TAG = (
+  <style>{`
+    @keyframes shopPackSpin { 0% { transform: rotate(0deg) scale(0.75); } 60% { transform: rotate(620deg) scale(1.2); } 100% { transform: rotate(720deg) scale(1); } }
+    @keyframes shopPackGlow { 0%, 100% { box-shadow: 0 0 22px 6px rgba(255,215,106,0.45); } 50% { box-shadow: 0 0 55px 20px rgba(255,215,106,0.95); } }
+    @keyframes shopSparkleBurst { 0% { transform: translate(0, 0) scale(0); opacity: 1; } 70% { opacity: 1; } 100% { transform: translate(var(--sx), var(--sy)) scale(1); opacity: 0; } }
+    .shop-pack-icon { animation: shopPackSpin ${BOOSTER_OPEN_ANIMATION_MS}ms cubic-bezier(0.34, 1.56, 0.64, 1), shopPackGlow 0.6s ease-in-out infinite; }
+    .shop-sparkle { animation: shopSparkleBurst ${BOOSTER_OPEN_ANIMATION_MS}ms ease-out; }
+  `}</style>
+)
+
+// Ícone girando + brilhando, soltando faíscas — mostrado por BOOSTER_OPEN_ANIMATION_MS antes da
+// revelação de verdade das cartas (em vez de aparecerem instantaneamente sem nenhum efeito).
+function BoosterOpeningAnimation() {
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2100
+    }}>
+      {SHOP_STYLE_TAG}
+      <div style={{ position: 'relative', width: '160px', height: '160px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        {BOOSTER_SPARKLES.map(({ angle, delay }, i) => {
+          const rad = (angle * Math.PI) / 180
+          const sx = Math.cos(rad) * 110
+          const sy = Math.sin(rad) * 110
+          return (
+            <span
+              key={i}
+              className="shop-sparkle"
+              style={{
+                position: 'absolute', fontSize: '22px', animationDelay: `${delay}s`,
+                '--sx': `${sx}px`, '--sy': `${sy}px`
+              }}
+            >✨</span>
+          )
+        })}
+        <div className="shop-pack-icon" style={{
+          fontSize: '64px', width: '90px', height: '90px', borderRadius: '18px',
+          background: 'linear-gradient(145deg, #ffe08a, #c99a4e)', display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }}>📦</div>
+      </div>
+    </div>
+  )
+}
+
 function Shop({ onClose } = {}) {
   const { t } = useLanguage()
   const navigate = useNavigate()
   const [isOpen, setIsOpen] = useState(false)
   const [player, setPlayer] = useState(null)
   const [buying, setBuying] = useState(false)
+  const [openingAnimation, setOpeningAnimation] = useState(false)
   const [revealedCards, setRevealedCards] = useState(null)
   const [error, setError] = useState('')
   const [buyingTD, setBuyingTD] = useState(null)
   const [view, setView] = useState('boosters')
   const [showMarket, setShowMarket] = useState(false)
   const [spinning, setSpinning] = useState(false)
+
+  // Segura a revelação de verdade até a animação de abrir o pacote terminar — os dados já
+  // chegaram do servidor, só a exibição é adiada pro efeito ficar visível por completo.
+  const revealAfterAnimation = (cards) => {
+    setOpeningAnimation(true)
+    setTimeout(() => {
+      setOpeningAnimation(false)
+      setRevealedCards(cards)
+    }, BOOSTER_OPEN_ANIMATION_MS)
+  }
 
   // Giro de "passagem secreta": troca o conteúdo no meio da animação, quando o painel está de perfil.
   const toggleMarket = () => {
@@ -43,7 +103,7 @@ function Shop({ onClose } = {}) {
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || t('buyError'))
         setPlayer(p => ({ ...p, gold_coins: data.goldCoins, pal_fluid: data.palFluid, [`bought_${setCode.toLowerCase()}`]: 1 }))
-        setRevealedCards(data.cards)
+        revealAfterAnimation(data.cards)
         setBuyingTD(null)
       })
       .catch(err => {
@@ -73,7 +133,7 @@ function Shop({ onClose } = {}) {
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || t('buyError'))
         setPlayer(p => ({ ...p, gold_coins: data.goldCoins, pal_fluid: data.palFluid }))
-        setRevealedCards(data.cards)
+        revealAfterAnimation(data.cards)
         setBuying(false)
       })
       .catch(err => {
@@ -208,6 +268,8 @@ function Shop({ onClose } = {}) {
         </div>
         </div>
       </div>
+
+      {openingAnimation && <BoosterOpeningAnimation />}
 
       {revealedCards && (
         <div style={{

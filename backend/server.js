@@ -948,7 +948,7 @@ app.post('/api/decks', requirePlayer, (req, res) => {
   }
 
   const deckMode = mode === 'rank' ? 'rank' : 'normal';
-  const isDraft = computeDeckIsDraft(req.playerId, deckMode, mainDeckCardNumbers);
+  const isDraft = computeDeckIsDraft(req.playerId, deckMode, mainDeckCardNumbers, soulDeckCardNumbers);
 
   const stmt = db.prepare(`
     INSERT INTO decks (name, main_deck, soul_deck, colors, mode, player_id, is_draft)
@@ -1060,7 +1060,7 @@ app.put('/api/decks/:id', requirePlayer, (req, res) => {
   }
 
   const deckMode = mode === 'rank' ? 'rank' : 'normal';
-  const isDraft = computeDeckIsDraft(req.playerId, deckMode, mainDeckCardNumbers);
+  const isDraft = computeDeckIsDraft(req.playerId, deckMode, mainDeckCardNumbers, soulDeckCardNumbers);
 
   db.prepare(`
     UPDATE decks SET name = ?, main_deck = ?, soul_deck = ?, colors = ?, mode = ?, is_draft = ? WHERE id = ?
@@ -1124,7 +1124,7 @@ app.post('/api/decks/:id/craft-missing', requirePlayer, (req, res) => {
     }
     db.prepare('UPDATE players SET pal_fluid = pal_fluid - ? WHERE id = ?').run(totalCost, req.playerId);
 
-    const stillDraft = computeDeckIsDraft(req.playerId, deck.mode, mainNumbers);
+    const stillDraft = computeDeckIsDraft(req.playerId, deck.mode, mainNumbers, JSON.parse(deck.soul_deck));
     db.prepare('UPDATE decks SET is_draft = ? WHERE id = ?').run(stillDraft ? 1 : 0, deck.id);
     return stillDraft;
   });
@@ -1189,13 +1189,15 @@ function getAvailableQuantity(playerId, cardNumber) {
   return row.quantity - row.reserved;
 }
 
-// Deck Rank vira "rascunho" se faltar qualquer cópia na coleção do jogador — igual ao esquema
-// do Hearthstone (dá pra salvar incompleto e completar craftando depois). Decks Normal nunca
-// são rascunho, já que ignoram a coleção de propósito.
-function computeDeckIsDraft(playerId, mode, mainDeckCardNumbers) {
+// Deck Rank vira "rascunho" se faltar qualquer cópia na coleção do jogador (Main Deck OU Soul
+// Deck) — igual ao esquema do Hearthstone (dá pra salvar incompleto e completar craftando/
+// farmando depois). Decks Normal nunca são rascunho, já que ignoram a coleção de propósito.
+// soulDeckCardNumbers é opcional (retrocompatível com chamadas antigas que só checavam o Main
+// Deck) — sem ele, a completude do Soul Deck simplesmente não entra na conta.
+function computeDeckIsDraft(playerId, mode, mainDeckCardNumbers, soulDeckCardNumbers = []) {
   if (mode !== 'rank') return false;
   const counts = {};
-  for (const num of mainDeckCardNumbers) counts[num] = (counts[num] || 0) + 1;
+  for (const num of [...mainDeckCardNumbers, ...soulDeckCardNumbers]) counts[num] = (counts[num] || 0) + 1;
   return Object.entries(counts).some(([num, needed]) => getAvailableQuantity(playerId, num) < needed);
 }
 
@@ -2539,6 +2541,8 @@ app.get('/api/player/cards', requirePlayer, (req, res) => {
 const CRAFT_COSTS = { RR: 100, R: 50, U: 30, C: 15, SR: 150, TSR: 150 };
 
 function getCraftCost(card) {
+  if (card.card_type === 'Soul') return null; // Soul nunca é craftável — só existe 1 carta desse tipo, sai só de booster/starter
+
   if (CRAFT_COSTS[card.rarity]) return CRAFT_COSTS[card.rarity];
 
   if (card.rarity === 'TD') {
@@ -2571,6 +2575,14 @@ app.post('/api/collection/craft', requirePlayer, (req, res) => {
     INSERT INTO player_cards (player_id, card_number, quantity) VALUES (?, ?, ?)
     ON CONFLICT(player_id, card_number) DO UPDATE SET quantity = excluded.quantity
   `).run(req.playerId, cardNumber, current + 1);
+
+  // Craftar avulso (fora do "Craft All") muda a coleção — recalcula is_draft de todo deck Rank do
+  // jogador, senão a flag ficava travada no valor de antes desse craft até o próximo save/Craft All.
+  const rankDecks = db.prepare("SELECT id, main_deck, soul_deck FROM decks WHERE player_id = ? AND mode = 'rank'").all(req.playerId);
+  for (const d of rankDecks) {
+    const stillDraft = computeDeckIsDraft(req.playerId, 'rank', JSON.parse(d.main_deck), JSON.parse(d.soul_deck));
+    db.prepare('UPDATE decks SET is_draft = ? WHERE id = ?').run(stillDraft ? 1 : 0, d.id);
+  }
 
   res.json({ newQuantity: current + 1, palFluid: player.pal_fluid - cost });
 });
@@ -2775,7 +2787,15 @@ function buildDraftedCardsList(allCards, mainDeck, modifiers = {}) {
   return mainDeck.map(num => {
     const c = byNumber.get(num);
     const mod = modifiers[num];
-    return { cardNumber: c.card_number, name: c.name, cost: c.cost, cardType: c.card_type, isLucky: (mod && mod.isLucky) || c.is_lucky, imageUrl: c.image_url };
+    return {
+      cardNumber: c.card_number, name: c.name, cost: c.cost, cardType: c.card_type,
+      isLucky: (mod && mod.isLucky) || c.is_lucky, imageUrl: c.image_url,
+      // Só existem de verdade no Modo Expedição (card_modifiers da Bancada de Remédios) — Arena
+      // nunca passa `modifiers`, então ficam sempre 0/[] pra ela, sem custo nenhum a mais.
+      powerBonus: mod?.powerBonus || 0,
+      strikeBonus: mod?.strikeBonus || 0,
+      grantedKeywords: mod?.grantedKeywords || []
+    };
   });
 }
 
@@ -3121,7 +3141,7 @@ app.post('/api/roguelike/enter-node', requirePlayer, (req, res) => {
       pendingChoice = {
         kind: 'wild_encounter',
         encounterCard: roguelikeEvents.pickWildEncounterCard(allCards),
-        deckCards: roguelikeEvents.buildWildEncounterDeckCards(allCards, mainDeck)
+        deckCards: roguelikeEvents.buildWildEncounterDeckCards(allCards, mainDeck, JSON.parse(run.card_modifiers))
       };
     } else {
       pendingChoice = { kind: 'breeding', step: 'choose_parent1', targets: roguelikeEvents.buildDeckPalTargets(allCards, mainDeck) };

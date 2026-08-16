@@ -216,12 +216,18 @@ function pickWildEncounterCard(allCards) {
 // Cada cópia física do deck vira uma opção selecionável (não só nomes distintos — o jogador pode
 // escolher 2 cópias da mesma carta) — só cartas com Power de verdade entram (Pal/Structure; Gear e
 // Event não têm Power, não fariam sentido nessa soma).
-function buildWildEncounterDeckCards(allCards, mainDeck) {
+// `modifiers` (card_modifiers da run) é opcional — soma o powerBonus da Bancada de Remédios ao
+// Power de cada cópia antes de oferecer pro Encontro Selvagem. Sem isso, um Pal que já recebeu
+// bônus de Power não levava esse bônus pra essa soma, subestimando o Power de verdade do jogador.
+function buildWildEncounterDeckCards(allCards, mainDeck, modifiers = {}) {
   const byNumber = new Map(allCards.map(c => [c.card_number, c]))
   return mainDeck
     .map((num, index) => ({ index, card: byNumber.get(num) }))
     .filter(({ card }) => card && card.power != null)
-    .map(({ index, card }) => ({ index, cardNumber: card.card_number, name: card.name, imageUrl: card.image_url, power: card.power }))
+    .map(({ index, card }) => ({
+      index, cardNumber: card.card_number, name: card.name, imageUrl: card.image_url,
+      power: card.power + (modifiers[card.card_number]?.powerBonus || 0)
+    }))
 }
 
 // --- Breeding ---

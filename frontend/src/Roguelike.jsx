@@ -311,10 +311,17 @@ function StarterDeckCard({ deck, onChoose, busy, startHoverZoom, cancelHoverZoom
 // mesmas chaves de i18n do Modo Arena (arenaCostCurveTitle, arenaStat*, etc.), já que é o mesmo
 // conceito genérico (curva de custo / contagem por tipo de carta), só um modo diferente usando.
 function DeckPanel({ draftedCards, t }) {
+  // Agrupado por card_number (não por nome) — modificadores da Bancada de Remédios são por cópia
+  // exata, então 2 variantes de arte do mesmo Pal com bônus diferentes não podem virar 1 linha só.
   const grouped = Object.values(
     draftedCards.reduce((acc, c) => {
-      if (!acc[c.name]) acc[c.name] = { name: c.name, cost: c.cost, count: 0 }
-      acc[c.name].count++
+      if (!acc[c.cardNumber]) {
+        acc[c.cardNumber] = {
+          cardNumber: c.cardNumber, name: c.name, cost: c.cost, count: 0,
+          powerBonus: c.powerBonus, strikeBonus: c.strikeBonus, grantedKeywords: c.grantedKeywords
+        }
+      }
+      acc[c.cardNumber].count++
       return acc
     }, {})
   ).sort((a, b) => a.cost - b.cost || a.name.localeCompare(b.name))
@@ -339,12 +346,21 @@ function DeckPanel({ draftedCards, t }) {
       <div style={{ flex: '1 1 280px', maxWidth: '360px', background: 'rgba(0,0,0,0.3)', borderRadius: '10px', padding: 'var(--sp-md)' }}>
         <h3 style={{ fontSize: 'var(--fs-md)', margin: '0 0 8px' }}>{t('roguelikeDeckListTitle')}</h3>
         <div style={{ maxHeight: '260px', overflowY: 'auto' }}>
-          {grouped.map(({ name, cost, count }) => (
-            <div key={name} style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', fontSize: 'var(--fs-sm)', padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                <strong style={{ color: '#ffd76a' }}>{cost}</strong> {name}
-              </span>
-              <span style={{ flexShrink: 0 }}>x{count}</span>
+          {grouped.map(({ cardNumber, name, cost, count, powerBonus, strikeBonus, grantedKeywords }) => (
+            <div key={cardNumber} style={{ padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', fontSize: 'var(--fs-sm)' }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <strong style={{ color: '#ffd76a' }}>{cost}</strong> {name}
+                </span>
+                <span style={{ flexShrink: 0 }}>x{count}</span>
+              </div>
+              {(powerBonus > 0 || strikeBonus > 0 || grantedKeywords.length > 0) && (
+                <div style={{ fontSize: 'var(--fs-2xs)', color: '#8bc34a', marginTop: '1px' }}>
+                  {powerBonus > 0 && <span>💪 +{powerBonus} </span>}
+                  {strikeBonus > 0 && <span>⚔️ +{strikeBonus} </span>}
+                  {grantedKeywords.map(kw => <span key={kw}>✨ {kw} </span>)}
+                </div>
+              )}
             </div>
           ))}
         </div>

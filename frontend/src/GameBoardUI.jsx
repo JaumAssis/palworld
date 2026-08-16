@@ -334,6 +334,51 @@ export function DamageRevealModal({ reveal, onClose, t }) {
 
 // Popout informativo: cartas que estão no cemitério de um dos jogadores — cemitério é informação
 // pública (cartas descartadas ficam viradas pra cima), então dá pra ver o cemitério de qualquer lado.
+// Mesmo padrão do GraveyardModal — zona exilada também é informação pública (cartas exiladas por
+// efeitos como Viewing Cage ficam visíveis, só fora do jogo). Mostra qual carta exilou cada uma.
+export function ExileModal({ view, onClose, t }) {
+  const [zoomCard, setZoomCard] = useState(null)
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '440px', maxWidth: '92vw', maxHeight: '80vh', overflowY: 'auto',
+        background: '#fff', borderRadius: '20px', padding: '20px', boxShadow: '0 20px 60px rgba(0,0,0,0.4)'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+          <h2 style={{ margin: 0, color: '#222', fontSize: '15px' }}>{t('gbExileTitle', { name: view.ownerName })}</h2>
+          <button onClick={onClose} style={{ padding: '4px 10px' }}>✕</button>
+        </div>
+        {view.cards.length === 0 ? (
+          <p style={{ color: '#999', fontSize: '13px', textAlign: 'center', marginTop: '16px' }}>{t('gbExileEmpty')}</p>
+        ) : (
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center', marginTop: '10px' }}>
+            {view.cards.map((c, i) => (
+              <div key={i} style={{ width: '80px', textAlign: 'center' }}>
+                <img src={c.imageUrl} alt={c.name} title={c.name} onClick={() => setZoomCard(c)}
+                     style={{ width: '80px', borderRadius: '6px', boxShadow: '0 2px 8px rgba(0,0,0,0.4)', cursor: 'pointer' }} />
+                {c.exiledBy && <p style={{ fontSize: '10px', color: '#888', margin: '2px 0 0' }}>{t('gbExiledByLabel', { name: c.exiledBy })}</p>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {zoomCard && (
+        <div onClick={e => { e.stopPropagation(); setZoomCard(null) }} style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1500, cursor: 'zoom-out'
+        }}>
+          <img src={zoomCard.imageUrl} alt={zoomCard.name}
+               style={{ maxWidth: '85vw', maxHeight: '85vh', borderRadius: '14px', border: '4px solid #c99a4e', boxShadow: '0 12px 36px rgba(0,0,0,0.6)' }} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function GraveyardModal({ view, onClose, t }) {
   const [zoomCard, setZoomCard] = useState(null)
   return (

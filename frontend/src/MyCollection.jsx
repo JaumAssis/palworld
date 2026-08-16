@@ -21,6 +21,7 @@ function MyCollection() {
   const CRAFT_COSTS = { RR: 100, R: 50, U: 30, C: 15, SR: 150, TSR: 150 }
 
   const getCraftCost = (card) => {
+    if (card.card_type === 'Soul') return null // Soul nunca é craftável — mesmo espelho do backend
     if (CRAFT_COSTS[card.rarity]) return CRAFT_COSTS[card.rarity]
     if (card.rarity === 'TD') {
       const cost = card.cost ?? 8

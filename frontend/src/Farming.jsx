@@ -7,9 +7,22 @@ const OVEN_RECIPE_AMOUNTS = { cake: 10, special_cake: 30 }
 
 function CardPicker({ onSelect, onClose, ownedPals, selectedNumbers, requiredKeywords }) {
   const { t } = useLanguage()
-  const filtered = requiredKeywords
+  const hardFiltered = requiredKeywords
     ? ownedPals.filter(c => (c.workKeywords || []).some(k => requiredKeywords.includes(k.toLowerCase())))
     : ownedPals
+
+  // Filtro leve de keyword em cima do filtro fixo acima — só mostra chips pras keywords que
+  // fazem sentido nesse contexto (requiredKeywords), pra deixar visível/selecionável qual Pal
+  // tem qual keyword de trabalho, em vez de só o texto cinza sem nenhum jeito de filtrar por ele.
+  const [selectedKeywords, setSelectedKeywords] = useState(new Set())
+  const toggleKeyword = (kw) => setSelectedKeywords(prev => {
+    const next = new Set(prev)
+    if (next.has(kw)) next.delete(kw); else next.add(kw)
+    return next
+  })
+  const filtered = selectedKeywords.size === 0
+    ? hardFiltered
+    : hardFiltered.filter(c => (c.workKeywords || []).some(k => selectedKeywords.has(k.toLowerCase())))
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={onClose}>
@@ -21,6 +34,23 @@ function CardPicker({ onSelect, onClose, ownedPals, selectedNumbers, requiredKey
           <h3 style={{ margin: 0, fontSize: 'var(--fs-lg)' }}>{t('choosePalKeywordsTitle')}</h3>
           <button onClick={onClose} title={t('close')} style={{ background: 'none', border: 'none', fontSize: 'var(--fs-lg)', lineHeight: 1, color: '#666', cursor: 'pointer', padding: '4px' }}>✕</button>
         </div>
+        {requiredKeywords && requiredKeywords.length > 1 && (
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', padding: '0 20px 10px', flexShrink: 0 }}>
+            {requiredKeywords.map(kw => (
+              <button
+                key={kw}
+                onClick={() => toggleKeyword(kw)}
+                style={{
+                  padding: '4px 10px', borderRadius: '999px', fontSize: 'var(--fs-2xs)', cursor: 'pointer',
+                  border: selectedKeywords.has(kw) ? '2px solid #a5541b' : '1px solid #ccc',
+                  background: selectedKeywords.has(kw) ? '#fde9d2' : '#fff', textTransform: 'capitalize'
+                }}
+              >
+                {kw}
+              </button>
+            ))}
+          </div>
+        )}
         <div style={{ padding: '0 20px 20px', overflowY: 'auto' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(clamp(85px, 9vw, 120px), 1fr))', gap: 'var(--sp-sm)' }}>
             {filtered.map(card => {

@@ -178,6 +178,15 @@ class PlayerState {
       // Cemitério é informação pública na regra (cartas descartadas ficam viradas pra cima) —
       // manda a lista pra dar pra ver o que tem lá, não só a contagem.
       graveyard: this.graveyard.map(c => ({ cardNumber: c.card_number, name: c.name, imageUrl: c.image_url })),
+      // Zona exilada — mesma regra de informação pública do cemitério (Viewing Cage e outras
+      // cartas exilam pro lado de fora do jogo, mas ainda visível, não é "banido às cegas").
+      // Junta o que cada carta em campo (Pal/Structure/Gear) exilou — `exiledCards` vive na
+      // instância de quem exilou (CardInstance.js), não no PlayerState, então agrega aqui.
+      exileZone: [...this.basePals, ...this.baseStructures, ...this.baseGear].flatMap(inst =>
+        (inst.exiledCards || []).map(e => ({
+          cardNumber: e.data.card_number, name: e.data.name, imageUrl: e.data.image_url, exiledBy: inst.data.name
+        }))
+      ),
       basePals: this.basePals.map(p => ({
         cardNumber: p.data.card_number, name: p.data.name,
         isStanding: p.isStanding, damageMarked: p.damageMarked, power: p.effectivePower(this, opponentState),
