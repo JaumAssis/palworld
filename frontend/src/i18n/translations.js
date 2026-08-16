@@ -169,6 +169,7 @@ const pt = {
   fluidGainedMsg: ({ n }) => `Já tinha 4 cópias — ganhou ${n} 💧 Fluido de Pal`,
   countdownReady: 'Pronto!',
   breedingDiscoveriesTitle: 'Registro de Descobertas',
+  breedingCalculatorButton: 'Breeding Calculator',
   breedingDiscoveriesEmpty: 'Nenhuma descoberta ainda — cruze Pals que tenham uma combinação real no jogo pra registrar aqui.',
 
   // ---------- Farming ----------
@@ -179,6 +180,7 @@ const pt = {
   lettuceLabel: '🥬 Alface:',
   tomatoLabel: '🍅 Tomate:',
   clickToRemove: 'Clique pra remover',
+  clickToZoom: 'Clique pra ampliar',
   addPalPlaceholder: '+ Pal',
   keywordStatus: ({ farming, harvesting, collecting }) => `Farming: ${farming}   Harvesting: ${harvesting}   Collecting: ${collecting}`,
   repeatCheckbox: 'Repetir automaticamente (precisa de um Pal com Collecting)',
@@ -742,6 +744,7 @@ const en = {
   fluidGainedMsg: ({ n }) => `Already had 4 copies — gained ${n} 💧 Pal Fluid`,
   countdownReady: 'Ready!',
   breedingDiscoveriesTitle: 'Discoveries Log',
+  breedingCalculatorButton: 'Breeding Calculator',
   breedingDiscoveriesEmpty: "No discoveries yet — breed Pals that have a real in-game combo to log it here.",
 
   // ---------- Farming ----------
@@ -752,6 +755,7 @@ const en = {
   lettuceLabel: '🥬 Lettuce:',
   tomatoLabel: '🍅 Tomato:',
   clickToRemove: 'Click to remove',
+  clickToZoom: 'Click to zoom',
   addPalPlaceholder: '+ Pal',
   keywordStatus: ({ farming, harvesting, collecting }) => `Farming: ${farming}   Harvesting: ${harvesting}   Collecting: ${collecting}`,
   repeatCheckbox: 'Repeat automatically (needs a Pal with Collecting)',

@@ -267,11 +267,18 @@ function Breeding({ onClose } = {}) {
             {t('startBreeding')}
           </button>
 
-          <div style={{ marginTop: '12px' }}>
+          <div style={{ marginTop: '12px', display: 'flex', gap: 'var(--sp-sm)', flexWrap: 'wrap', justifyContent: 'center' }}>
             <button onClick={() => setShowDiscoveries(true)} title={t('breedingDiscoveriesTitle')}
                     style={{ padding: 'var(--sp-xs) var(--sp-md)', fontSize: 'var(--fs-sm)', background: 'none', border: '1px solid #f3e2b3', color: '#fff3d6', borderRadius: '8px', cursor: 'pointer' }}>
               📖 {t('breedingDiscoveriesTitle')}
             </button>
+            {/* Link externo pra ferramenta de terceiros — abre em nova aba (rel=noopener evita que
+                a página aberta tenha acesso de volta a este window via window.opener). */}
+            <a href="https://palworld.gg/pt-BR/breeding-calculator" target="_blank" rel="noopener noreferrer"
+               title={t('breedingCalculatorButton')}
+               style={{ padding: 'var(--sp-xs) var(--sp-md)', fontSize: 'var(--fs-sm)', background: 'none', border: '1px solid #f3e2b3', color: '#fff3d6', borderRadius: '8px', cursor: 'pointer', textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>
+              🧮 {t('breedingCalculatorButton')}
+            </a>
           </div>
         </>
       )}

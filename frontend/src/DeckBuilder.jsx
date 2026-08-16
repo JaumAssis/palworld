@@ -9,6 +9,13 @@ import { cardMatchesSearch } from './cardSearch'
 const FILTER_BTN_STYLE = { padding: 'var(--sp-2xs) var(--sp-sm)', fontSize: 'var(--fs-2xs)' }
 const ACTIVE_FILTER_STYLE = { outline: '2px solid #ffcf7a', outlineOffset: '2px' }
 
+// Painel lateral de montagem do deck — mais estreito que --panel-w-xs (que é usado noutras telas)
+// pra sobrar mais coluna de cartas da coleção antes dele, e mais alto (quase tela cheia) pra dar
+// espaço de sobra pro gráfico de curva de custo. Usado tanto no painel quanto no reserve de
+// padding da grade de cartas — os dois usam a MESMA constante pra nunca ficarem dessincronizados.
+const DECK_PANEL_WIDTH = 'min(86vw, 18rem)'
+const DECK_PANEL_GAP = '28px'
+
 const COLOR_SWATCH = {
   Red: '#c62828', Blue: '#1565c0', Green: '#2e7d32', Purple: '#6a1b9a', Colorless: '#888'
 }
@@ -299,8 +306,10 @@ function DeckBuilder() {
     (selectedCosts.size === 0 || selectedCosts.has(c.cost)) &&
     (selectedColors.size === 0 || (c.colors || []).some(col => selectedColors.has(col))) &&
     cardMatchesSearch(c, search) &&
-    (deckMode !== 'rank' ||
-      (showOnlyNotOwned ? getAvailable(c.card_number) === 0 : getAvailable(c.card_number) > 0))
+    // Rank sem o botão marcado: só mostra o que o player já tem (comportamento padrão). Com o
+    // botão marcado, o filtro deixa de EXCLUIR quem tem — passa a mostrar as duas coisas juntas
+    // (donas em cor normal, não obtidas em cinza — ver `notOwned` no grid abaixo).
+    (deckMode !== 'rank' || showOnlyNotOwned || getAvailable(c.card_number) > 0)
   )
   const luckyCount = mainDeck.filter(c => c.is_lucky).length
 
@@ -341,7 +350,7 @@ function DeckBuilder() {
       minHeight: '100vh', boxSizing: 'border-box', overflowX: 'hidden',
       background: 'radial-gradient(circle at 50% 40%, rgba(255,255,255,0.05), transparent 60%), #2b1a10'
     }}>
-    <div style={{ padding: 'var(--sp-lg)', paddingRight: 'calc(var(--panel-w-xs) + 16px + var(--sp-lg))', width: '100%', boxSizing: 'border-box' }}>
+    <div style={{ padding: 'var(--sp-lg)', paddingRight: `calc(${DECK_PANEL_WIDTH} + ${DECK_PANEL_GAP} + var(--sp-lg))`, width: '100%', boxSizing: 'border-box' }}>
       <div style={{ textAlign: 'left' }}>
         {/* Linha 1: navegação/modo + busca ao lado do "Trocar modo" */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-xs)', flexWrap: 'wrap', marginBottom: '12px' }}>
@@ -457,7 +466,7 @@ function DeckBuilder() {
 
         {hoveredCard && (
           <div style={{
-            position: 'fixed', top: '50%', right: 'calc(var(--panel-w-xs) + 16px)', transform: 'translateY(-50%)',
+            position: 'fixed', top: '50%', right: `calc(${DECK_PANEL_WIDTH} + ${DECK_PANEL_GAP})`, transform: 'translateY(-50%)',
             zIndex: 1000, pointerEvents: 'none',
             boxShadow: '0 8px 24px rgba(0,0,0,0.4)', borderRadius: '10px'
           }}>
@@ -473,7 +482,7 @@ function DeckBuilder() {
           já usado por AuthPanel/OnlineBadge/RankBoard. */}
       <div style={{
         background: '#f5f5f5', borderRadius: '10px', padding: 'var(--sp-md)',
-        position: 'fixed', top: '1rem', right: '1rem', width: 'var(--panel-w-xs)',
+        position: 'fixed', top: '1rem', right: '1rem', width: DECK_PANEL_WIDTH,
         maxHeight: 'calc(100vh - 2rem)', overflowY: 'auto', zIndex: 50, fontSize: 'var(--fs-sm)'
       }}>
         <p><strong>{t('mainDeckLabel')}</strong> {mainDeck.length} / {MAIN_DECK_SIZE}</p>
@@ -510,7 +519,7 @@ function DeckBuilder() {
 
         <div style={{ borderTop: '1px solid #ddd', paddingTop: '8px', marginBottom: '10px' }}>
           <p style={{ fontSize: 'var(--fs-2xs)', fontWeight: 700, margin: '0 0 4px' }}>{t('arenaCostCurveTitle')}</p>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: 'clamp(50px, 8vh, 80px)' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: 'clamp(70px, 12vh, 130px)' }}>
             {costCurve.map(({ cost, count }) => (
               <div key={cost} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
                 <span style={{ fontSize: '9px', minHeight: '1.1em' }}>{count > 0 ? count : ''}</span>

@@ -31,7 +31,7 @@ function CardPicker({ onSelect, onClose, ownedPals, selectedNumbers, requiredKey
         display: 'flex', flexDirection: 'column', overflow: 'hidden'
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 'var(--sp-md) var(--sp-lg) var(--sp-xs)', flexShrink: 0 }}>
-          <h3 style={{ margin: 0, fontSize: 'var(--fs-lg)' }}>{t('choosePalKeywordsTitle')}</h3>
+          <h3 style={{ margin: 0, fontSize: 'var(--fs-lg)', color: '#2b160a' }}>{t('choosePalKeywordsTitle')}</h3>
           <button onClick={onClose} title={t('close')} style={{ background: 'none', border: 'none', fontSize: 'var(--fs-lg)', lineHeight: 1, color: '#666', cursor: 'pointer', padding: '4px' }}>✕</button>
         </div>
         {requiredKeywords && requiredKeywords.length > 1 && (
@@ -43,7 +43,8 @@ function CardPicker({ onSelect, onClose, ownedPals, selectedNumbers, requiredKey
                 style={{
                   padding: '4px 10px', borderRadius: '999px', fontSize: 'var(--fs-2xs)', cursor: 'pointer',
                   border: selectedKeywords.has(kw) ? '2px solid #a5541b' : '1px solid #ccc',
-                  background: selectedKeywords.has(kw) ? '#fde9d2' : '#fff', textTransform: 'capitalize'
+                  background: selectedKeywords.has(kw) ? '#fde9d2' : '#fff',
+                  color: selectedKeywords.has(kw) ? '#a5541b' : '#3a2410', textTransform: 'capitalize'
                 }}
               >
                 {kw}
@@ -62,7 +63,7 @@ function CardPicker({ onSelect, onClose, ownedPals, selectedNumbers, requiredKey
                     <img src={card.image_url} alt={card.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                          onError={e => { e.target.style.visibility = 'hidden' }} />
                   </div>
-                  <p style={{ fontSize: 'var(--fs-2xs)', margin: '4px 0 0', fontWeight: 600 }}>{card.name}</p>
+                  <p style={{ fontSize: 'var(--fs-2xs)', margin: '4px 0 0', fontWeight: 600, color: '#2b160a' }}>{card.name}</p>
                   <p style={{ fontSize: 'var(--fs-2xs)', margin: 0, color: '#777' }}>{(card.workKeywords || []).join(', ') || '—'}</p>
                 </div>
               )

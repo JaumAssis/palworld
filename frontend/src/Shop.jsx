@@ -9,6 +9,15 @@ import BlackMarket from './BlackMarket'
 const BOOSTER_SPARKLES = Array.from({ length: 10 }, (_, i) => ({ angle: i * 36, delay: (i % 5) * 0.06 }))
 const BOOSTER_OPEN_ANIMATION_MS = 1300
 
+// Cor do "shadowbox" por raridade, do C (comum) ao SSP (topo) — substitui a letrinha da raridade
+// embaixo da carta por um brilho colorido ao redor dela (mesmas raridades de BOOSTER_WEIGHTS em
+// server.js). TSR não sai de booster (só Breeding/craft), mas fica aqui de propósito pra qualquer
+// outro lugar que reaproveite este mapa não ficar sem cor caso uma dessas apareça.
+const RARITY_GLOW = {
+  C: '#9e9e9e', U: '#43a047', R: '#1e88e5', RR: '#8e24aa',
+  SR: '#f9a825', SP: '#e91e63', OSR: '#ff6f00', SSP: '#00bcd4', TSR: '#e53935'
+}
+
 const SHOP_STYLE_TAG = (
   <style>{`
     @keyframes shopPackSpin { 0% { transform: rotate(0deg) scale(0.75); } 60% { transform: rotate(620deg) scale(1.2); } 100% { transform: rotate(720deg) scale(1); } }
@@ -16,6 +25,12 @@ const SHOP_STYLE_TAG = (
     @keyframes shopSparkleBurst { 0% { transform: translate(0, 0) scale(0); opacity: 1; } 70% { opacity: 1; } 100% { transform: translate(var(--sx), var(--sy)) scale(1); opacity: 0; } }
     .shop-pack-icon { animation: shopPackSpin ${BOOSTER_OPEN_ANIMATION_MS}ms cubic-bezier(0.34, 1.56, 0.64, 1), shopPackGlow 0.6s ease-in-out infinite; }
     .shop-sparkle { animation: shopSparkleBurst ${BOOSTER_OPEN_ANIMATION_MS}ms ease-out; }
+    @keyframes shopFlagHintPoint { 0%, 100% { transform: translateX(0) rotate(0deg); } 50% { transform: translateX(-9px) rotate(-6deg); } }
+    @keyframes shopFlagHintGlow { 0%, 100% { filter: drop-shadow(0 0 3px rgba(255,215,106,0.55)); opacity: 0.7; } 50% { filter: drop-shadow(0 0 13px rgba(255,215,106,1)); opacity: 1; } }
+    .shop-flag-hint {
+      display: inline-block; pointer-events: none;
+      animation: shopFlagHintPoint 1.1s ease-in-out infinite, shopFlagHintGlow 1.1s ease-in-out infinite;
+    }
   `}</style>
 )
 
@@ -27,7 +42,6 @@ function BoosterOpeningAnimation() {
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)',
       display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2100
     }}>
-      {SHOP_STYLE_TAG}
       <div style={{ position: 'relative', width: '160px', height: '160px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {BOOSTER_SPARKLES.map(({ angle, delay }, i) => {
           const rad = (angle * Math.PI) / 180
@@ -61,11 +75,13 @@ function Shop({ onClose } = {}) {
   const [buying, setBuying] = useState(false)
   const [openingAnimation, setOpeningAnimation] = useState(false)
   const [revealedCards, setRevealedCards] = useState(null)
+  const [zoomedCard, setZoomedCard] = useState(null)
   const [error, setError] = useState('')
   const [buyingTD, setBuyingTD] = useState(null)
   const [view, setView] = useState('boosters')
   const [showMarket, setShowMarket] = useState(false)
   const [spinning, setSpinning] = useState(false)
+  const [showFlagHint, setShowFlagHint] = useState(false)
 
   // Segura a revelação de verdade até a animação de abrir o pacote terminar — os dados já
   // chegaram do servidor, só a exibição é adiada pro efeito ficar visível por completo.
@@ -79,6 +95,7 @@ function Shop({ onClose } = {}) {
 
   // Giro de "passagem secreta": troca o conteúdo no meio da animação, quando o painel está de perfil.
   const toggleMarket = () => {
+    setShowFlagHint(false) // já achou a bandeira — não precisa mais apontar pra ela
     setSpinning(true)
     setTimeout(() => setShowMarket(v => !v), 400)
     setTimeout(() => setSpinning(false), 800)
@@ -89,7 +106,10 @@ function Shop({ onClose } = {}) {
   useEffect(() => {
     apiFetch('/api/player').then(r => r.json()).then(setPlayer)
     const t = setTimeout(() => setIsOpen(true), 100)
-    return () => clearTimeout(t)
+    // Delay considerável de propósito — a dica só aparece depois que o player já deu uma olhada
+    // na loja, em vez de já entrar piscando (o que ficaria mais "erro de UI" do que dica).
+    const hintTimer = setTimeout(() => setShowFlagHint(true), 6000)
+    return () => { clearTimeout(t); clearTimeout(hintTimer) }
   }, [])
 
   const buyTrialDeck = (setCode) => {
@@ -148,6 +168,7 @@ function Shop({ onClose } = {}) {
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px',
       boxSizing: 'border-box', overflow: 'auto'
     }}>
+      {SHOP_STYLE_TAG}
       <div style={{
         width: 'min(420px, 92vw)', height: 'min(840px, 92vh)', background: '#000', borderRadius: '36px',
         padding: '10px', boxShadow: '0 20px 60px rgba(0,0,0,0.6)', position: 'relative', flexShrink: 0,
@@ -168,7 +189,10 @@ function Shop({ onClose } = {}) {
           <div style={{ padding: '14px 16px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h2 style={{ margin: 0, fontSize: 'var(--fs-lg)' }}>{t('shopTitle')}</h2>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <button className="shop-flag-button" type="button" onClick={toggleMarket}>🏴‍☠️</button>
+              <div style={{ display: 'inline-flex', alignItems: 'center', position: 'relative' }}>
+                {showFlagHint && <span className="shop-flag-hint" style={{ fontSize: '18px', marginRight: '1px' }}>👉</span>}
+                <button className="shop-flag-button" type="button" onClick={toggleMarket}>🏴‍☠️</button>
+              </div>
               {onClose
                 ? <button onClick={onClose} style={{ fontSize: 'var(--fs-sm)', color: '#007aff', background: 'none', border: 'none', cursor: 'pointer' }}>{t('exit')}</button>
                 : <Link to="/" style={{ fontSize: 'var(--fs-sm)', color: '#007aff', textDecoration: 'none' }}>{t('exit')}</Link>}
@@ -281,16 +305,37 @@ function Shop({ onClose } = {}) {
             overflowY: 'auto', textAlign: 'center', boxSizing: 'border-box'
           }}>
             <h3 style={{ marginTop: 0, fontSize: 'var(--fs-lg)' }}>{t('cardsObtained')}</h3>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center', marginBottom: '16px' }}>
-              {revealedCards.map((c, i) => (
-                <div key={i} style={{ width: 'clamp(68px, 7.5vw, 100px)' }}>
-                  <img src={c.image_url} alt={c.name} style={{ width: '100%', borderRadius: '6px' }} />
-                  <p style={{ fontSize: 'var(--fs-2xs)', margin: '4px 0 0' }}>{c.rarity}</p>
-                </div>
-              ))}
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'center', marginBottom: '16px' }}>
+              {revealedCards.map((c, i) => {
+                const glow = RARITY_GLOW[c.rarity] || '#999'
+                return (
+                  <div key={i} onClick={() => setZoomedCard(c)}
+                       style={{ width: 'clamp(68px, 7.5vw, 100px)', cursor: 'zoom-in' }} title={t('clickToZoom')}>
+                    <img src={c.image_url} alt={c.name} style={{
+                      width: '100%', borderRadius: '6px', border: `2px solid ${glow}`,
+                      boxShadow: `0 0 12px 2px ${glow}`
+                    }} />
+                  </div>
+                )
+              })}
             </div>
-            <button onClick={() => setRevealedCards(null)} style={{ padding: 'var(--sp-sm) var(--sp-lg)', fontSize: 'var(--fs-sm)', position: 'sticky', bottom: 0 }}>{t('close')}</button>
+            <button onClick={() => { setRevealedCards(null); setZoomedCard(null) }} style={{ padding: 'var(--sp-sm) var(--sp-lg)', fontSize: 'var(--fs-sm)', position: 'sticky', bottom: 0 }}>{t('close')}</button>
           </div>
+        </div>
+      )}
+
+      {zoomedCard && (
+        <div onClick={() => setZoomedCard(null)} style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          zIndex: 2200, cursor: 'zoom-out', padding: 'var(--sp-lg)', boxSizing: 'border-box'
+        }}>
+          <img src={zoomedCard.image_url} alt={zoomedCard.name} style={{
+            maxWidth: 'min(90vw, 420px)', maxHeight: '75vh', borderRadius: '12px',
+            border: `3px solid ${RARITY_GLOW[zoomedCard.rarity] || '#999'}`,
+            boxShadow: `0 0 30px 8px ${RARITY_GLOW[zoomedCard.rarity] || '#999'}`
+          }} />
+          <p style={{ color: '#fff', fontSize: 'var(--fs-md)', fontWeight: 700, marginTop: '14px' }}>{zoomedCard.name}</p>
         </div>
       )}
     </div>

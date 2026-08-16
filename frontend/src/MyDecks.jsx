@@ -262,11 +262,14 @@ function DeckDetail() {
   if (loading) return <p style={{ padding: '2rem' }}>{t('deckLoading')}</p>
   if (!deck) return <p style={{ padding: '2rem' }}>{t('deckNotFound')}</p>
 
-  // agrupa por nome pra mostrar x4 etc
+  // Agrupa por card_number (não por nome) pra mostrar xN — uma arte alterada (mesmo nome, outro
+  // card_number, ex: Relaxaurus normal vs Relaxaurus SP) é uma impressão diferente e precisa da
+  // própria linha "1x", senão ela se funde silenciosamente na entrada da arte normal e mostra "2x"
+  // de uma cópia só (mesmo bug já corrigido em DeckBuilder.jsx/Roguelike.jsx).
   const groupCards = (cards) => Object.values(
     cards.reduce((acc, c) => {
-      if (!acc[c.name]) acc[c.name] = { card: c, count: 0 }
-      acc[c.name].count++
+      if (!acc[c.card_number]) acc[c.card_number] = { card: c, count: 0 }
+      acc[c.card_number].count++
       return acc
     }, {})
   )
