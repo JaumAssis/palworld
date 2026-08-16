@@ -1987,7 +1987,7 @@ app.post('/api/breeding/claim', requirePlayer, (req, res) => {
   const current = db.prepare('SELECT quantity FROM player_cards WHERE player_id = ? AND card_number = ?').get(req.playerId, slot.result_card_number)?.quantity || 0;
 
   let fluidGained = 0;
-  if (current >= 4) {
+  if (current >= maxOwnedCopies(resultCard)) {
     fluidGained = RARITY_FLUID[resultCard.rarity] || 5;
   } else {
     db.prepare(`
@@ -2183,6 +2183,31 @@ function todayString() {
 }
 
 const getCardExtraDataStmt = db.prepare('SELECT extra_data FROM cards WHERE name = ? AND extra_data IS NOT NULL LIMIT 1');
+
+// Algumas cartas têm regra impressa liberando cópias ilimitadas do mesmo nome no deck (ex: Beegarde
+// – Knight of the Flower Garden, "You may put any number of cards with the same card name as this
+// card into your deck.") — pra fazer sentido, o teto de POSSE (quantas cópias reais o player
+// acumula antes do excedente virar Fluido de Pal) precisa acompanhar, senão o player nunca
+// consegue de fato ter mais que 4 cópias pra colocar no deck. Mesmo texto/detecção usada no
+// front (cardAllowsUnlimitedCopies em deckValidator.js) — duplicado aqui de propósito, front e
+// back não compartilham módulo. `cardRow` é a linha crua de `cards` (variantes de arte não têm
+// extra_data próprio, então cai no fallback por nome, igual getCardsByNumbers faz).
+function hasUnlimitedCopiesEffect(cardRow) {
+  const extraDataSource = cardRow.extra_data || getCardExtraDataStmt.get(cardRow.name)?.extra_data;
+  if (!extraDataSource) return false;
+  try {
+    const effectText = JSON.parse(extraDataSource)?.data?.effect_text || '';
+    return /any number of cards with the same card name/i.test(effectText);
+  } catch (e) {
+    return false;
+  }
+}
+
+// Teto de cópias que o player pode acumular na coleção dessa carta antes do excedente virar Fluido
+// de Pal — 4 pro normal, 50 (o teto do Main Deck) pra cartas com a regra de cópias ilimitadas.
+function maxOwnedCopies(cardRow) {
+  return hasUnlimitedCopiesEffect(cardRow) ? 50 : 4;
+}
 
 // Monta os dados completos de jogo (effect_text, pal_name, typepal, work_keywords, etc.) a partir
 // de uma lista de card_number — usado tanto pra montar a partida contra o Bot quanto uma online.
@@ -2549,7 +2574,8 @@ app.post('/api/collection/craft', requirePlayer, (req, res) => {
   if (!cost) return res.status(400).json({ error: 'Essa carta não pode ser craftada.' });
 
   const current = db.prepare('SELECT quantity FROM player_cards WHERE player_id = ? AND card_number = ?').get(req.playerId, cardNumber)?.quantity || 0;
-  if (current >= 4) return res.status(400).json({ error: 'Você já tem o máximo de 4 cópias dessa carta.' });
+  const maxCopies = maxOwnedCopies(card);
+  if (current >= maxCopies) return res.status(400).json({ error: `Você já tem o máximo de ${maxCopies} cópias dessa carta.` });
 
   const player = db.prepare('SELECT * FROM players WHERE id = ?').get(req.playerId);
   if (player.pal_fluid < cost) return res.status(400).json({ error: 'Fluido de Pal insuficiente.' });
@@ -2687,8 +2713,10 @@ app.post('/api/market/listings/:id/buy', requirePlayer, (req, res) => {
   }
 
   const current = db.prepare('SELECT quantity FROM player_cards WHERE player_id = ? AND card_number = ?').get(req.playerId, listing.card_number)?.quantity || 0;
-  if (current >= 4) {
-    return res.status(400).json({ error: 'Você já tem o máximo de 4 cópias dessa carta.' });
+  const listingCard = db.prepare('SELECT * FROM cards WHERE card_number = ?').get(listing.card_number);
+  const maxCopies = maxOwnedCopies(listingCard);
+  if (current >= maxCopies) {
+    return res.status(400).json({ error: `Você já tem o máximo de ${maxCopies} cópias dessa carta.` });
   }
 
   const newQuantity = executeMarketPurchase(listing, req.playerId);
@@ -2719,7 +2747,7 @@ function openBoosterPackFor(playerId) {
     revealed.push(card);
 
     const current = getQty.get(playerId, card.card_number)?.quantity || 0;
-    if (current >= 4) {
+    if (current >= maxOwnedCopies(card)) {
       fluidGained += RARITY_FLUID[card.rarity] || 5;
     } else {
       upsertQty.run(playerId, card.card_number, current + 1);

@@ -459,13 +459,20 @@ function DeckBuilder() {
             const maxed = isSoul
               ? soulDeck.length >= SOUL_DECK_SIZE
               : (!cardAllowsUnlimitedCopies(card) && copies >= MAX_COPIES_PER_NAME)
-            const notOwned = deckMode === 'rank' && getAvailable(card.card_number) === 0
+            // Pra cartas SEM teto de cópias (ex: Beegarde), getAvailable(card_number) sozinho não
+            // basta — ele não desconta quanto já foi colocado NESTE deck, então uma carta que só
+            // tem 4 de verdade continuava aparecendo "disponível" mesmo depois de já ter 10 dela no
+            // deck (o teto de 4 cópias normal mascarava isso pra toda outra carta, mas some quando
+            // o teto deixa de existir). Soul fica de fora — é recurso estrutural livre, mesmo
+            // raciocínio de computeDeckIsDraft no server.js, sempre mostra a posse real sem desconto.
+            const remainingAvailable = isSoul ? getAvailable(card.card_number) : Math.max(0, getAvailable(card.card_number) - copies)
+            const notOwned = deckMode === 'rank' && remainingAvailable <= 0
             return (
               <div key={card.card_number}
                    onClick={() => !maxed && addCard(card)}
                    onMouseEnter={() => setHoveredCard(card)}
                    onMouseLeave={() => setHoveredCard(null)}
-                   title={deckMode === 'rank' ? t('availableTitle', { n: getAvailable(card.card_number) }) : undefined}
+                   title={deckMode === 'rank' ? t('availableTitle', { n: remainingAvailable }) : undefined}
                    style={{ cursor: maxed ? 'not-allowed' : 'pointer', opacity: maxed ? 0.4 : 1, textAlign: 'center', border: '1px solid #ccc', borderRadius: '8px', padding: 'var(--sp-2xs)', position: 'relative' }}>
                 <img src={card.image_url} alt={card.name}
                      style={{
@@ -476,7 +483,7 @@ function DeckBuilder() {
                      onError={e => e.target.style.display = 'none'} />
                 <p style={{ fontSize: 'var(--fs-2xs)', margin: '4px 0 0' }}>{card.name} {copies > 0 && `x${copies}`}</p>
                 {deckMode === 'rank' && (
-                  <p style={{ fontSize: 'var(--fs-2xs)', margin: 0, color: '#8a5a2b' }}>{t('availLabel', { n: getAvailable(card.card_number) })}</p>
+                  <p style={{ fontSize: 'var(--fs-2xs)', margin: 0, color: '#8a5a2b' }}>{t('availLabel', { n: remainingAvailable })}</p>
                 )}
               </div>
             )
