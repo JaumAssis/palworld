@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { validateMainDeck, validateSoulDeck, countCopies, MAIN_DECK_SIZE, SOUL_DECK_SIZE, MAX_COPIES_PER_NAME, MAX_LUCKY_PALS, MAX_COLORS } from './deckValidator'
+import { validateMainDeck, validateSoulDeck, countCopies, cardAllowsUnlimitedCopies, MAIN_DECK_SIZE, SOUL_DECK_SIZE, MAX_COPIES_PER_NAME, MAX_LUCKY_PALS, MAX_COLORS } from './deckValidator'
 import { useLanguage } from './i18n/LanguageContext'
 import { apiFetch } from './api'
 import { cardMatchesSearch } from './cardSearch'
@@ -18,6 +18,15 @@ const DECK_PANEL_GAP = '28px'
 
 const COLOR_SWATCH = {
   Red: '#c62828', Blue: '#1565c0', Green: '#2e7d32', Purple: '#6a1b9a', Colorless: '#888'
+}
+
+// Mesma paleta de RARITY_GLOW do Shop.jsx (booster) — reaproveitada aqui como bolinha compacta pra
+// diferenciar arte alterada na lista do deck, no lugar do "(CARD-NUMBER)" gigante que quebrava a
+// linha. Duplicado (não importado) de propósito: são só 9 cores, mesmo padrão de CRAFT_COSTS
+// duplicado entre MyDecks/MyCollection nesse projeto.
+const RARITY_DOT = {
+  C: '#9e9e9e', U: '#43a047', R: '#1e88e5', RR: '#8e24aa',
+  SR: '#f9a825', SP: '#e91e63', OSR: '#ff6f00', SSP: '#00bcd4', TSR: '#e53935'
 }
 
 // Alterna um valor dentro de um Set (multi-seleção dos subfiltros de custo/cor) sem mutar o
@@ -160,7 +169,9 @@ function DeckBuilder() {
       return
     }
 
-    if (countCopies(mainDeck, card) >= MAX_COPIES_PER_NAME) return
+    // Algumas cartas (ex: Beegarde) têm regra impressa liberando cópias ilimitadas do mesmo nome —
+    // só o teto do Main Deck (50) continua valendo pra elas (ver cardAllowsUnlimitedCopies).
+    if (!cardAllowsUnlimitedCopies(card) && countCopies(mainDeck, card) >= MAX_COPIES_PER_NAME) return
     if (mainDeck.length >= MAIN_DECK_SIZE) return
 
     if (card.is_lucky) {
@@ -228,10 +239,16 @@ function DeckBuilder() {
   // Só importa no modo Rank — Normal ignora a coleção de propósito, nunca fica incompleto.
   // Conta Main Deck E Soul Deck — antes só olhava o Main Deck, então um Soul Deck incompleto
   // nunca acendia o aviso de rascunho aqui (mesmo gap corrigido no backend, computeDeckIsDraft).
+  // SOUL-001 fica de fora: é recurso estrutural sem posse de verdade (só sai de Trial Deck, que
+  // tampa em 4 cópias — nunca dá pra "possuir" as 10 que o Soul Deck pede, ver computeDeckIsDraft
+  // no server.js pro mesmo raciocínio completo).
   const missingCount = () => {
     if (deckMode !== 'rank') return 0
     const counts = {}
-    for (const c of [...mainDeck, ...soulDeck]) counts[c.card_number] = (counts[c.card_number] || 0) + 1
+    for (const c of [...mainDeck, ...soulDeck]) {
+      if (c.card_number === 'SOUL-001') continue
+      counts[c.card_number] = (counts[c.card_number] || 0) + 1
+    }
     let missing = 0
     for (const [num, needed] of Object.entries(counts)) {
       missing += Math.max(0, needed - getAvailable(num))
@@ -439,7 +456,9 @@ function DeckBuilder() {
           {filteredCollection.map(card => {
             const isSoul = card.card_type === 'Soul'
             const copies = countCopies(isSoul ? soulDeck : mainDeck, card)
-            const maxed = isSoul ? soulDeck.length >= SOUL_DECK_SIZE : copies >= MAX_COPIES_PER_NAME
+            const maxed = isSoul
+              ? soulDeck.length >= SOUL_DECK_SIZE
+              : (!cardAllowsUnlimitedCopies(card) && copies >= MAX_COPIES_PER_NAME)
             const notOwned = deckMode === 'rank' && getAvailable(card.card_number) === 0
             return (
               <div key={card.card_number}
@@ -480,24 +499,40 @@ function DeckBuilder() {
           spec força overflow-y a virar 'auto' e cria um contexto de rolagem próprio, quebrando
           o sticky contra o scroll real da janela. Fixed contorna isso de vez, no mesmo padrão
           já usado por AuthPanel/OnlineBadge/RankBoard. */}
+      {/* Altura FIXA (não maxHeight) de propósito — vira o container de referência pro "60%" da
+          lista logo abaixo. Com maxHeight, o painel só cresce até caber o conteúdo, então uma
+          altura em vh na lista (ex: 60vh) não tinha painel nenhum de "100%" pra ser relativa — o
+          painel inteiro só inchava pra além da tela e empurrava o botão Salvar pra fora da vista. */}
       <div style={{
         background: '#f5f5f5', borderRadius: '10px', padding: 'var(--sp-md)',
         position: 'fixed', top: '1rem', right: '1rem', width: DECK_PANEL_WIDTH,
-        maxHeight: 'calc(100vh - 2rem)', overflowY: 'auto', zIndex: 50, fontSize: 'var(--fs-sm)'
+        height: 'calc(100vh - 2rem)', boxSizing: 'border-box',
+        display: 'flex', flexDirection: 'column',
+        zIndex: 50, fontSize: 'var(--fs-sm)'
       }}>
-        <p><strong>{t('mainDeckLabel')}</strong> {mainDeck.length} / {MAIN_DECK_SIZE}</p>
-        <p><strong>{t('soulDeckLabel')}</strong> {soulDeck.length} / {SOUL_DECK_SIZE}</p>
-        <p><strong>{t('luckyPalsLabel')}</strong> {luckyCount} / {MAX_LUCKY_PALS}</p>
-        <p><strong>{t('colorsLabel')}</strong> {[...chosenColors].join(', ') || t('colorsNone')}</p>
+        <div style={{ flexShrink: 0 }}>
+          <p><strong>{t('mainDeckLabel')}</strong> {mainDeck.length} / {MAIN_DECK_SIZE}</p>
+          <p><strong>{t('soulDeckLabel')}</strong> {soulDeck.length} / {SOUL_DECK_SIZE}</p>
+          <p><strong>{t('luckyPalsLabel')}</strong> {luckyCount} / {MAX_LUCKY_PALS}</p>
+          <p><strong>{t('colorsLabel')}</strong> {[...chosenColors].join(', ') || t('colorsNone')}</p>
+        </div>
 
-        <div style={{ maxHeight: 'clamp(200px, 26vh, 340px)', overflowY: 'auto', margin: '10px 0' }}>
+        <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', margin: '10px 0' }}>
           {groupedDeck.map(({ card, count }) => (
             <div key={card.card_number}
                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 'var(--fs-xs)', padding: '4px' }}>
               <span>
                 {card.name}
+                {/* Arte alterada (mesmo nome, card_number diferente): em vez do código gigante
+                    (ex: "BP01-049-OSR") que quebrava a linha e ficava com cara de bug, só uma
+                    bolinha colorida por raridade — mesma paleta do brilho do booster (Shop.jsx). */}
                 {nameOccurrences[card.name] > 1 && (
-                  <span style={{ color: '#999', fontSize: 'var(--fs-2xs)' }}> ({card.card_number})</span>
+                  <span title={card.rarity} style={{
+                    display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%',
+                    marginLeft: '6px', verticalAlign: 'middle',
+                    background: RARITY_DOT[card.rarity] || '#999',
+                    boxShadow: `0 0 4px ${RARITY_DOT[card.rarity] || '#999'}`
+                  }} />
                 )}
               </span>
               <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -515,23 +550,44 @@ function DeckBuilder() {
               </span>
             </div>
           ))}
+
+          {/* Salvar Deck (+ Cancelar edição/aviso) fica no FIM da própria listagem de cartas, não
+              lá embaixo separado da curva — assim quem rolou a lista até o fim já encontra o botão
+              ali mesmo, sem precisar procurar numa seção à parte. */}
+          <div style={{ borderTop: '1px solid #ddd', paddingTop: '8px', marginTop: '10px' }}>
+            <button onClick={handleSave} style={{ width: '100%', padding: 'var(--sp-sm)', fontSize: 'var(--fs-sm)' }}>{t('saveDeck')}</button>
+            {editId && (
+              <Link to="/mydecks">
+                <button style={{ width: '100%', padding: 'var(--sp-sm)', fontSize: 'var(--fs-sm)', marginTop: '8px', background: '#888', color: '#fff' }}>
+                  {t('cancelEdit')}
+                </button>
+              </Link>
+            )}
+            {validationMsg && <p style={{ fontSize: 'var(--fs-xs)', color: 'red', marginTop: '8px' }}>{validationMsg}</p>}
+          </div>
         </div>
 
-        <div style={{ borderTop: '1px solid #ddd', paddingTop: '8px', marginBottom: '10px' }}>
-          <p style={{ fontSize: 'var(--fs-2xs)', fontWeight: 700, margin: '0 0 4px' }}>{t('arenaCostCurveTitle')}</p>
+        {/* flexShrink:0 e sem overflow de propósito — este bloco nunca deve rolar. Quem agora é
+            flexível (flex:1 + minHeight:0 + overflowY:auto) é a listagem de cartas ali em cima:
+            ela absorve o espaço que sobrar depois do cabeçalho + desta curva, então a curva sempre
+            renderiza no tamanho natural dela, cheia, sem precisar de scroll em nenhum tamanho de
+            tela (antes era o contrário — a curva ficava espremida nos "40% restantes" e podia não
+            caber por poucos pixels, forçando um scroll feio pra pouca coisa). */}
+        <div style={{ flexShrink: 0, borderTop: '1px solid #ddd', paddingTop: '8px', marginTop: '6px' }}>
+          <p style={{ fontSize: 'var(--fs-xs)', fontWeight: 700, margin: '0 0 4px' }}>{t('arenaCostCurveTitle')}</p>
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: 'clamp(70px, 12vh, 130px)' }}>
             {costCurve.map(({ cost, count }) => (
               <div key={cost} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
-                <span style={{ fontSize: '9px', minHeight: '1.1em' }}>{count > 0 ? count : ''}</span>
+                <span style={{ fontSize: '11px', minHeight: '1.1em' }}>{count > 0 ? count : ''}</span>
                 <div style={{
                   width: '100%', background: 'linear-gradient(180deg, #ffb74d, #a5541b)', borderRadius: '2px 2px 0 0',
                   height: `${(count / costCurveMax) * 100}%`, minHeight: count > 0 ? '3px' : '0'
                 }} />
-                <span style={{ fontSize: '9px', marginTop: '2px', color: '#777' }}>{cost}</span>
+                <span style={{ fontSize: '11px', marginTop: '2px', color: '#777' }}>{cost}</span>
               </div>
             ))}
           </div>
-          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '6px', fontSize: '9px', color: '#555' }}>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '6px', fontSize: '11px', color: '#555' }}>
             <span>🍀 {t('arenaStatLuckyPals')}: <strong>{luckyCount}</strong></span>
             <span>🐾 {t('arenaStatPals')}: <strong>{typeCounts.pals}</strong></span>
             <span>🏛️ {t('arenaStatStructures')}: <strong>{typeCounts.structures}</strong></span>
@@ -539,16 +595,6 @@ function DeckBuilder() {
             <span>📜 {t('arenaStatEvent')}: <strong>{typeCounts.event}</strong></span>
           </div>
         </div>
-
-        <button onClick={handleSave} style={{ width: '100%', padding: 'var(--sp-sm)', fontSize: 'var(--fs-sm)' }}>{t('saveDeck')}</button>
-        {editId && (
-          <Link to="/mydecks">
-            <button style={{ width: '100%', padding: 'var(--sp-sm)', fontSize: 'var(--fs-sm)', marginTop: '8px', background: '#888', color: '#fff' }}>
-              {t('cancelEdit')}
-            </button>
-          </Link>
-        )}
-        {validationMsg && <p style={{ fontSize: 'var(--fs-xs)', color: 'red', marginTop: '8px' }}>{validationMsg}</p>}
       </div>
 
       {showImport && (

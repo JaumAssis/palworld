@@ -277,7 +277,12 @@ function DeckDetail() {
   const mainGrouped = groupCards(deck.mainDeck)
   const soulGrouped = groupCards(deck.soulDeck)
 
-  const missingCount = (card, count) => deck.mode === 'rank' ? Math.max(0, count - getAvailable(card.card_number)) : 0
+  // SOUL-001 nunca conta como "faltando" — é recurso estrutural sem posse de verdade (mesmo
+  // raciocínio de computeDeckIsDraft no server.js: só sai de Trial Deck, que tampa em 4 cópias,
+  // nunca dá pra "possuir" as 10 que o Soul Deck pede). Sem essa exceção, a carta Soul aparecia
+  // pra sempre acinzentada/"incompleta" na tela, mesmo o deck estando de fato completo.
+  const missingCount = (card, count) => (deck.mode === 'rank' && card.card_number !== 'SOUL-001')
+    ? Math.max(0, count - getAvailable(card.card_number)) : 0
 
   const totalMissingCost = () => {
     let total = 0

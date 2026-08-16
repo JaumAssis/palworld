@@ -1194,10 +1194,20 @@ function getAvailableQuantity(playerId, cardNumber) {
 // farmando depois). Decks Normal nunca são rascunho, já que ignoram a coleção de propósito.
 // soulDeckCardNumbers é opcional (retrocompatível com chamadas antigas que só checavam o Main
 // Deck) — sem ele, a completude do Soul Deck simplesmente não entra na conta.
+//
+// SOUL-001 fica de fora da checagem de propósito: é um recurso estrutural igual em toda run (a
+// Arena e o Modo Expedição já tratam Soul Deck como 10x SOUL-001 fixo, sem checar posse nenhuma —
+// ver ARENA_SOUL_DECK). Não tem como "possuir" 10 cópias de verdade: só sai de Trial Deck, e a
+// compra de Trial Deck tampa QUALQUER carta em 4 cópias (ver /api/shop/buy-trial-deck) — exigir
+// posse aqui deixaria todo Rank deck preso em rascunho pra sempre, por um Soul Deck completo que
+// nenhum player jamais conseguiria "completar" de verdade.
 function computeDeckIsDraft(playerId, mode, mainDeckCardNumbers, soulDeckCardNumbers = []) {
   if (mode !== 'rank') return false;
   const counts = {};
-  for (const num of [...mainDeckCardNumbers, ...soulDeckCardNumbers]) counts[num] = (counts[num] || 0) + 1;
+  for (const num of [...mainDeckCardNumbers, ...soulDeckCardNumbers]) {
+    if (num === 'SOUL-001') continue;
+    counts[num] = (counts[num] || 0) + 1;
+  }
   return Object.entries(counts).some(([num, needed]) => getAvailableQuantity(playerId, num) < needed);
 }
 
