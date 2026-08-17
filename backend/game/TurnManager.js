@@ -648,10 +648,27 @@ class TurnManager {
 
     const results = { attackerDestroyed: false, defenderDestroyed: false }
 
+    // Calculado ANTES de qualquer coisa ir pro cemitério de verdade — Retaliate ("when THIS card is
+    // put into the graveyard during battle, put the opposing combat Pal into the graveyard", ver
+    // Menasting) só precisa agir se o OUTRO lado não fosse morrer de qualquer jeito só pelo dano da
+    // própria batalha, e isso precisa ser decidido sem depender de qual bloco (defensor/atacante)
+    // roda primeiro logo abaixo.
+    const attackerWouldDieFromDamage = attackerInstance.isDestroyed(attackerState, defenderState)
+
     if (defenderInstance.isDestroyed(defenderState, attackerState)) {
       this._sendToGraveyardQueued(defenderInstance, defenderState, queue)
       results.defenderDestroyed = true
       this._addLog(`${defenderInstance.data.name} foi destruído.`)
+
+      // Regra do Retaliate vale pros 2 lados (o texto da carta não fala em "atacante" nem
+      // "defensor", só "this card") — antes só era checado quando quem tinha Retaliate estava
+      // atacando; se ele estivesse defendendo (bloqueando, ou sendo o próprio alvo do ataque), o
+      // efeito nunca disparava.
+      if (!attackerWouldDieFromDamage && EffectEngine.hasKeyword(defenderInstance.data, 'Retaliate')) {
+        this._sendToGraveyardQueued(attackerInstance, attackerState, queue)
+        results.attackerDestroyed = true
+        this._addLog(`${attackerInstance.data.name} foi destruído (Retaliate).`)
+      }
 
       if (EffectEngine.hasKeywordOrGranted(attackerInstance, 'Breakthrough')) {
         const strike = attackerInstance.effectiveStrike(attackerState, defenderState)
@@ -679,7 +696,7 @@ class TurnManager {
         }
       }
     }
-    if (attackerInstance.isDestroyed(attackerState, defenderState)) {
+    if (attackerWouldDieFromDamage && !results.attackerDestroyed) {
       this._sendToGraveyardQueued(attackerInstance, attackerState, queue)
       results.attackerDestroyed = true
       this._addLog(`${attackerInstance.data.name} foi destruído.`)
@@ -828,19 +845,21 @@ class TurnManager {
     return { success: true, instance }
   }
 
-  // Depois de deployar um Pal, 3 coisas em ORDEM podem abrir uma escolha do jogador: o próprio
-  // onDeploy da carta (ex: Elphidran Aqua — "Draw 2 cards, choose 1 card from your hand, and put it
-  // on the top of the deck"), o onAllyDeploy de outras cartas suas que observam qualquer deploy, e só
-  // por último a Regra 11.5 (mais de 5 Pals em campo, escolher quem sacrificar). Sem isso, o passo de
-  // baixo (ex: overloaded pals) abria seu próprio pendingEffect por cima do de cima (ex: Elphidran)
-  // antes do jogador conseguir nem ver a escolha da própria carta que acabou de jogar.
+  // Depois de deployar um Pal, 3 coisas em ORDEM podem abrir uma escolha do jogador. Regra oficial
+  // 10.5.3 (Check Timing): TODAS as rule actions resolvem primeiro (10.5.3.1), e só depois (quando
+  // não sobra rule action nenhuma) as automatic abilities (On Deploy, etc.) podem ser jogadas
+  // (10.5.3.2). A Regra 11.5 diz explicitamente "Overloaded Pals resolution is a check type rule
+  // action" — ou seja, o sacrifício por excesso de 5 Pals tem que resolver ANTES do On Deploy da
+  // carta recém-jogada, nunca depois. Ordem: 1) Regra 11.5 (excesso de Pals), 2) onDeploy da própria
+  // carta (ex: Elphidran Aqua — "Draw 2 cards, choose 1 card from your hand..."), 3) onAllyDeploy de
+  // outras cartas suas que observam qualquer deploy.
   runDeployFollowups(casterState, opponentState, instance, isBot) {
     return this._runDeployStep(0, casterState, opponentState, instance, isBot)
   }
 
   _runDeployStep(step, casterState, opponentState, instance, isBot) {
     if (step === 0) {
-      const result = EffectEngine.runTrigger(this, 'onDeploy', instance, casterState, opponentState, { isBot })
+      const result = this.checkOverloadedPals(casterState, opponentState, instance, isBot)
       if (result.paused) {
         this._pendingDeployContinuation = { step: 1, casterState, opponentState, instance, isBot }
         return { paused: true }
@@ -848,14 +867,15 @@ class TurnManager {
       return this._runDeployStep(1, casterState, opponentState, instance, isBot)
     }
     if (step === 1) {
-      EffectEngine.notifyAllyDeploy(this, casterState, opponentState, instance, { isBot })
-      if (this.pendingEffect) {
+      const result = EffectEngine.runTrigger(this, 'onDeploy', instance, casterState, opponentState, { isBot })
+      if (result.paused) {
         this._pendingDeployContinuation = { step: 2, casterState, opponentState, instance, isBot }
         return { paused: true }
       }
       return this._runDeployStep(2, casterState, opponentState, instance, isBot)
     }
-    return this.checkOverloadedPals(casterState, opponentState, instance, isBot)
+    EffectEngine.notifyAllyDeploy(this, casterState, opponentState, instance, { isBot })
+    return { paused: !!this.pendingEffect }
   }
 
   // Regra 11.5 (Overloaded Pals Resolution): passar do limite de 5 Pals não bloqueia o deploy — o
