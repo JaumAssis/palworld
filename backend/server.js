@@ -267,6 +267,13 @@ const BOT_QUEUE_FALLBACK_MS = 20000;
 // Fila do modo Arena (draft) espera só 15s antes do bot assumir — o jogador já pagou um ingresso e
 // draftou o deck inteiro pra chegar até aqui, então a espera precisa ser mais curta que a Normal.
 const ARENA_DRAFT_BOT_FALLBACK_MS = 15000;
+// Quanto tempo o vencedor do Jokenpô tem pra escolher a ordem antes do servidor decidir por ele
+// (sempre "ir primeiro", igual BotBrain.decideGoFirst). Sem isso, se o cliente de quem ganhou nunca
+// mandar match:chooseOrder — aba em segundo plano com o timer de revelação (7s) do front
+// atrasado/suspenso pelo navegador, ou o player só não clicar — quem PERDEU o Jokenpô ficava preso
+// pra sempre em "Aguardando o oponente...", sem nenhum jeito de sair de lá a não ser recarregar a
+// página (o que, por sua vez, contava como derrota pra ele via W.O. de desconexão).
+const CHOOSE_ORDER_FALLBACK_MS = 30000;
 // playerId de bot -> está numa partida agora. Impede o mesmo bot assumir 2 filas ao mesmo tempo.
 const botsInMatch = new Set();
 
@@ -761,6 +768,16 @@ function applyRpsChoice(session, side, choice) {
       result: session.rpsWinnerSide === s ? 'win' : 'lose'
     });
   }
+
+  // Rede de segurança: se quem ganhou nunca mandar match:chooseOrder (aba em segundo plano com o
+  // timer de revelação do front atrasado/suspenso pelo navegador, ou só não clicar), decide "ir
+  // primeiro" por ele — sem isso o oponente ficava preso pra sempre em "Aguardando o oponente...".
+  // Checa se a sessão ainda é a mesma (não foi substituída/destruída por uma desconexão nesse meio
+  // tempo) antes de agir, mesmo padrão já usado em handleBotDriverEvent/BotBrain (stillAlive).
+  clearTimeout(session.chooseOrderFallbackTimer);
+  session.chooseOrderFallbackTimer = setTimeout(() => {
+    if (onlineSessions.get(session.roomId) === session) applyChooseOrder(session, session.rpsWinnerSide, true);
+  }, CHOOSE_ORDER_FALLBACK_MS);
 }
 
 // Só quem ganhou o Jokenpô decide a ordem — cria o TurnManager (player2IsBot = true só quando o
@@ -768,6 +785,7 @@ function applyRpsChoice(session, side, choice) {
 function applyChooseOrder(session, side, goFirst) {
   if (session.turnManager || !session.rpsWinnerSide) return;
   if (side !== session.rpsWinnerSide) return;
+  clearTimeout(session.chooseOrderFallbackTimer);
 
   const aGoesFirst = side === 'A' ? !!goFirst : !goFirst;
   session.turnManager = new TurnManager(session.states.A, session.states.B, aGoesFirst, session.botSide === 'B');
@@ -4481,6 +4499,7 @@ io.on('connection', (socket) => {
       socketRoomMap.delete(session.sides.A.socket.id);
       socketRoomMap.delete(session.sides.B.socket.id);
       onlineSessions.delete(session.roomId);
+      clearTimeout(session.chooseOrderFallbackTimer);
       // Humano abandonou uma partida com substituto de bot — libera o bot pra próxima fila. Sem
       // isso ele ficaria "preso" em botsInMatch pra sempre (o gameOver que dispara a liberação
       // normal, em checkOnlineWinMissions, nunca roda pra uma sessão que morreu por desconexão).
