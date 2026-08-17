@@ -323,6 +323,40 @@ function missionDescription(t, mission) {
   return mission.description
 }
 
+// Popup de "Sobre o jogo" — aberto pelo botão ⓘ do menu principal. O texto em si (o.q.é o jogo,
+// como jogar, recursos) existe pra dar ao Google conteúdo real pra indexar, não só os botões do
+// menu; ver .seo-section no App.css. Fica SEMPRE montado no DOM (nunca desmonta via React) e só
+// alterna `display` via CSS — o Google indexa normalmente conteúdo escondido assim (mesma técnica
+// de acordeão/aba/menu mobile), diferente de conteúdo que só existe depois de um clique de verdade.
+function InfoPopup({ open, onClose }) {
+  const { t } = useLanguage()
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      display: open ? 'flex' : 'none', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+    }} onClick={onClose}>
+      <section className="seo-section" onClick={e => e.stopPropagation()}>
+        <button className="sign-button seo-section-close" onClick={onClose}>✕</button>
+
+        <h2 className="seo-heading" style={{ marginTop: 0 }}>{t('seoAboutHeading')}</h2>
+        <p className="seo-paragraph">{t('seoAboutParagraph')}</p>
+
+        <h2 className="seo-heading">{t('seoHowToPlayHeading')}</h2>
+        <p className="seo-paragraph">{t('seoHowToPlayParagraph')}</p>
+
+        <h2 className="seo-heading">{t('seoFeaturesHeading')}</h2>
+        <ul className="seo-feature-list">
+          <li>{t('seoFeature1')}</li>
+          <li>{t('seoFeature2')}</li>
+          <li>{t('seoFeature3')}</li>
+          <li>{t('seoFeature4')}</li>
+          <li>{t('seoFeature5')}</li>
+        </ul>
+      </section>
+    </div>
+  )
+}
+
 function MissionsPopup({ onClose }) {
   const { t } = useLanguage()
   const [missions, setMissions] = useState([])
@@ -508,6 +542,7 @@ function MainMenu() {
   const [player, setPlayer] = useState(null)
   const [showMissions, setShowMissions] = useState(false)
   const [showLoginStreak, setShowLoginStreak] = useState(false)
+  const [showInfo, setShowInfo] = useState(false)
   const [loginStreakClaimable, setLoginStreakClaimable] = useState(false)
   const [popup, setPopup] = useState(null)
   const [authHint, setAuthHint] = useState(false)
@@ -561,6 +596,14 @@ function MainMenu() {
 
       <div style={{ position: 'fixed', top: 'var(--sp-lg)', right: 'var(--sp-lg)', display: 'flex', gap: 'var(--sp-xs)' }}>
         <OnlineBadge />
+        <button
+          className="currency-badge"
+          onClick={() => setShowInfo(true)}
+          title={t('seoInfoButtonTitle')}
+          style={{ padding: 'var(--sp-xs) var(--sp-md)', fontSize: 'var(--fs-md)', cursor: 'pointer' }}
+        >
+          ⓘ
+        </button>
         <button
           className="currency-badge"
           onClick={toggleTheme}
@@ -632,24 +675,7 @@ function MainMenu() {
         {t('fanDisclaimer')}
       </p>
 
-      {/* Fora do login, em fluxo normal (não fixed) — só aparece rolando abaixo da tela cheia do
-          menu. Existe pra dar ao Google texto real sobre o jogo (ver comentário no CSS .seo-section). */}
-      <section className="seo-section">
-        <h2 className="seo-heading">{t('seoAboutHeading')}</h2>
-        <p className="seo-paragraph">{t('seoAboutParagraph')}</p>
-
-        <h2 className="seo-heading">{t('seoHowToPlayHeading')}</h2>
-        <p className="seo-paragraph">{t('seoHowToPlayParagraph')}</p>
-
-        <h2 className="seo-heading">{t('seoFeaturesHeading')}</h2>
-        <ul className="seo-feature-list">
-          <li>{t('seoFeature1')}</li>
-          <li>{t('seoFeature2')}</li>
-          <li>{t('seoFeature3')}</li>
-          <li>{t('seoFeature4')}</li>
-          <li>{t('seoFeature5')}</li>
-        </ul>
-      </section>
+      <InfoPopup open={showInfo} onClose={() => setShowInfo(false)} />
 
       {showMissions && <MissionsPopup onClose={() => { setShowMissions(false); refreshPlayer() }} />}
 

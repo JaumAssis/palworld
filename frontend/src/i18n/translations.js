@@ -101,7 +101,8 @@ const pt = {
   palFluidAlt: 'Fluido de Pal',
   fanDisclaimer: 'Projeto de fã não-oficial, sem fins lucrativos. Palworld e todo o material relacionado pertencem à Pocketpair, Inc. Sem qualquer afiliação com os detentores dos direitos.',
 
-  // ---------- Conteúdo público (SEO) — seção abaixo do menu principal, fora do login ----------
+  // ---------- Conteúdo público (SEO) — popup "Sobre o jogo", aberto pelo botão ⓘ do menu ----------
+  seoInfoButtonTitle: 'Sobre o jogo',
   seoAboutHeading: 'O que é o Palworld TCG?',
   seoAboutParagraph: 'Palworld TCG é um jogo de cartas colecionável (TCG) online e gratuito, feito por fãs e inspirado no universo de Palworld. Monte seu deck com os Pals que você mais gosta, colecione cartas novas e jogue partidas completas direto do navegador, sem precisar instalar nada.',
   seoHowToPlayHeading: 'Como jogar',
@@ -701,7 +702,8 @@ const en = {
   palFluidAlt: 'Pal Fluid',
   fanDisclaimer: 'Unofficial, non-profit fan project. Palworld and all related material belong to Pocketpair, Inc. Not affiliated with the rights holders.',
 
-  // ---------- Public content (SEO) — section below the main menu, outside the login wall ----------
+  // ---------- Public content (SEO) — "About the game" popup, opened via the menu's ⓘ button ----------
+  seoInfoButtonTitle: 'About the game',
   seoAboutHeading: 'What is Palworld TCG?',
   seoAboutParagraph: 'Palworld TCG is a free, fan-made online trading card game inspired by the Palworld universe. Build a deck with your favorite Pals, collect new cards, and play full matches right in your browser — no install required.',
   seoHowToPlayHeading: 'How to play',
