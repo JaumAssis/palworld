@@ -632,6 +632,25 @@ function MainMenu() {
         {t('fanDisclaimer')}
       </p>
 
+      {/* Fora do login, em fluxo normal (não fixed) — só aparece rolando abaixo da tela cheia do
+          menu. Existe pra dar ao Google texto real sobre o jogo (ver comentário no CSS .seo-section). */}
+      <section className="seo-section">
+        <h2 className="seo-heading">{t('seoAboutHeading')}</h2>
+        <p className="seo-paragraph">{t('seoAboutParagraph')}</p>
+
+        <h2 className="seo-heading">{t('seoHowToPlayHeading')}</h2>
+        <p className="seo-paragraph">{t('seoHowToPlayParagraph')}</p>
+
+        <h2 className="seo-heading">{t('seoFeaturesHeading')}</h2>
+        <ul className="seo-feature-list">
+          <li>{t('seoFeature1')}</li>
+          <li>{t('seoFeature2')}</li>
+          <li>{t('seoFeature3')}</li>
+          <li>{t('seoFeature4')}</li>
+          <li>{t('seoFeature5')}</li>
+        </ul>
+      </section>
+
       {showMissions && <MissionsPopup onClose={() => { setShowMissions(false); refreshPlayer() }} />}
 
       {showLoginStreak && <LoginStreakPopup onClose={() => { setShowLoginStreak(false); refreshPlayer(); refreshLoginStreak() }} />}

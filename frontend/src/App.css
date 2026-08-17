@@ -287,6 +287,52 @@
   text-shadow: 3px 3px 0 #2b160a, 0 0 24px rgba(255, 200, 110, 0.4);
 }
 
+/* Conteúdo público (SEO) — fica em fluxo normal (não fixed) abaixo da tela cheia do menu, por
+   isso a página cresce além de 100vh e essa seção só aparece rolando pra baixo. Existe pra dar
+   ao Google texto de verdade sobre o jogo (o menu em si é só botões), não é lido durante o uso
+   normal do app — a maioria de quem já tem conta nunca vai rolar até aqui. */
+.seo-section {
+  position: relative;
+  max-width: var(--panel-w-md);
+  margin: var(--sp-xl) auto 0;
+  padding: var(--sp-lg);
+  box-sizing: border-box;
+  text-align: left;
+  color: #f3e2b3;
+  background:
+    radial-gradient(ellipse at top, rgba(255, 255, 255, 0.06), transparent 60%),
+    linear-gradient(155deg, rgba(122, 74, 38, 0.92) 0%, rgba(71, 39, 16, 0.92) 100%);
+  border: 3px solid #2b160a;
+  border-radius: 16px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.seo-heading {
+  font-family: 'Rye', 'Georgia', serif;
+  font-weight: 400;
+  font-size: var(--fs-lg);
+  color: #d9a441;
+  text-shadow: 1px 1px 0 #2b160a;
+  margin: var(--sp-lg) 0 var(--sp-sm);
+}
+
+.seo-section > .seo-heading:first-child {
+  margin-top: 0;
+}
+
+.seo-paragraph {
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.seo-feature-list {
+  font-size: var(--fs-sm);
+  line-height: 1.8;
+  margin: 0;
+  padding-left: 1.2em;
+}
+
 .counter {
   font-size: 16px;
   padding: 5px 10px;

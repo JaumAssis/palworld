@@ -101,6 +101,18 @@ const pt = {
   palFluidAlt: 'Fluido de Pal',
   fanDisclaimer: 'Projeto de fã não-oficial, sem fins lucrativos. Palworld e todo o material relacionado pertencem à Pocketpair, Inc. Sem qualquer afiliação com os detentores dos direitos.',
 
+  // ---------- Conteúdo público (SEO) — seção abaixo do menu principal, fora do login ----------
+  seoAboutHeading: 'O que é o Palworld TCG?',
+  seoAboutParagraph: 'Palworld TCG é um jogo de cartas colecionável (TCG) online e gratuito, feito por fãs e inspirado no universo de Palworld. Monte seu deck com os Pals que você mais gosta, colecione cartas novas e jogue partidas completas direto do navegador, sem precisar instalar nada.',
+  seoHowToPlayHeading: 'Como jogar',
+  seoHowToPlayParagraph: 'Comece pelo Tutorial para aprender as regras básicas, monte seu primeiro deck em Montar Deck e enfrente o Bot para treinar sem pressa. Quando estiver pronto, entre em Encontrar Partida para jogar contra outros jogadores reais em tempo real, ou dispute pontos de rank no modo Arena.',
+  seoFeaturesHeading: 'Recursos do jogo',
+  seoFeature1: 'Partidas online em tempo real contra outros jogadores',
+  seoFeature2: 'Modo Arena com sistema de rank',
+  seoFeature3: 'Modo Expedição (roguelike) com geração de mapas',
+  seoFeature4: 'Monte decks e evolua sua coleção de cartas',
+  seoFeature5: 'Farming e Breeding para conseguir novos Pals',
+
   // ---------- CardGrid ----------
   cardGridLoading: 'Carregando cartas...',
   cardGridTitle: ({ filtered, total }) => `Catálogo (${filtered} / ${total})`,
@@ -688,6 +700,18 @@ const en = {
   menuDailyMissions: '📅 Daily Missions',
   palFluidAlt: 'Pal Fluid',
   fanDisclaimer: 'Unofficial, non-profit fan project. Palworld and all related material belong to Pocketpair, Inc. Not affiliated with the rights holders.',
+
+  // ---------- Public content (SEO) — section below the main menu, outside the login wall ----------
+  seoAboutHeading: 'What is Palworld TCG?',
+  seoAboutParagraph: 'Palworld TCG is a free, fan-made online trading card game inspired by the Palworld universe. Build a deck with your favorite Pals, collect new cards, and play full matches right in your browser — no install required.',
+  seoHowToPlayHeading: 'How to play',
+  seoHowToPlayParagraph: 'Start with the Tutorial to learn the basic rules, build your first deck in Deck Builder, and take on the Bot to practice at your own pace. Once you are ready, jump into Find Match to play against real players in real time, or climb the ranks in Arena mode.',
+  seoFeaturesHeading: 'Game features',
+  seoFeature1: 'Real-time online matches against other players',
+  seoFeature2: 'Arena mode with a ranking system',
+  seoFeature3: 'Expedition (roguelike) mode with map generation',
+  seoFeature4: 'Build decks and grow your card collection',
+  seoFeature5: 'Farming and Breeding to get new Pals',
 
   // ---------- CardGrid ----------
   cardGridLoading: 'Loading cards...',
