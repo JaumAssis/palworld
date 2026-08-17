@@ -147,9 +147,15 @@ function Arena() {
     setZoomCard(null)
   }
 
+  // Espelha o status mais recente fora do React state, só pro poll abaixo conseguir checar o
+  // valor ATUAL dentro do setInterval (uma closure de useEffect com [] pega sempre o `run` da
+  // primeira renderização, nunca o mais novo — precisa de ref pra isso, não de state).
+  const runStatusRef = useRef(null)
+
   const loadStatus = () => {
     apiFetch('/api/arena/status').then(r => r.json()).then(data => {
       setRun(data)
+      runStatusRef.current = data.status
       setLoading(false)
       // Já tem uma partida rolando pra essa run (ex.: voltou pra essa tela pelo botão "voltar" do
       // navegador) — não tem nada útil pra mostrar aqui, manda direto pro tabuleiro/fila de novo.
@@ -163,11 +169,20 @@ function Arena() {
   // Recarrega periodicamente (mesmo padrão de Farming.jsx) — sem isso, quem deixa essa aba aberta
   // por um tempo (ex: outra aba/dispositivo já avançou a run nesse meio tempo) continuava vendo o
   // status antigo (ex: "pronto pra buscar") mesmo depois dele deixar de ser verdade, e só descobria
-  // a real ao clicar em "Procurar Oponente" e levar um erro sem explicação nenhuma.
+  // a real ao clicar em "Procurar Oponente" e levar um erro sem explicação nenhuma. MAS pula o
+  // recarregamento enquanto está draftando (status 'drafting_cards') — a oferta de 3 cartas nunca é
+  // persistida (é sorteada do zero a cada /api/arena/status, ver offerCardTrio em arenaDraft.js),
+  // então repetir essa chamada sozinho a cada tick do poll trocava as cartas oferecidas debaixo do
+  // jogador a cada 5s, sem ele ter feito nada — só faz sentido recalcular ao dar F5 de verdade ou
+  // depois de um pick de verdade (loadStatus já roda direto em pickCard, ver mais abaixo).
   useEffect(() => {
     loadStatus()
     loadPlayer()
-    const pollInterval = setInterval(() => { loadStatus(); loadPlayer() }, 5000)
+    const pollInterval = setInterval(() => {
+      if (runStatusRef.current === 'drafting_cards') return
+      loadStatus()
+      loadPlayer()
+    }, 5000)
     return () => clearInterval(pollInterval)
   }, [])
 
