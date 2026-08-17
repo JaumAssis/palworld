@@ -544,27 +544,15 @@ class TurnManager {
       }
       syncResult = { structureDestroyed }
     } else {
-      // Alvo é o jogador direto — "vida" nesse jogo é revelar Strike cartas do topo do deck do defensor.
+      // Alvo é o jogador direto — "vida" nesse jogo é revelar Strike cartas do topo do deck do
+      // defensor (regra oficial 11.2.2, ver _resolvePlayerDamage).
       const strike = attackerInstance.effectiveStrike(attackerState, defenderState)
-      const revealed = []
-      let deckedOut = false
-      for (let i = 0; i < strike; i++) {
-        if (defenderState.deck.length === 0) { deckedOut = true; break }
-        revealed.push(defenderState.deck.shift())
-      }
+      const { deckedOut, canceled, damageDealt, revealed } = this._resolvePlayerDamage(defenderState, strike)
 
       if (deckedOut) {
         this._endGame(attackerState)
         syncResult = { gameEnded: true }
       } else {
-        const canceled = revealed.some(c => c.is_lucky)
-        let damageDealt = 0
-        if (!canceled) {
-          defenderState.life -= strike
-          damageDealt = strike
-        }
-        defenderState.graveyard.push(...revealed)
-
         if (canceled) {
           this._addLog(`${attackerInstance.data.name} atacou ${defenderState.playerName} diretamente, mas revelou um Lucky Pal — ataque anulado.`)
         } else {
@@ -618,6 +606,34 @@ class TurnManager {
     return this._runDamageTriggerQueue(queue, index + 1, battle)
   }
 
+  // Resolve `amount` de "damage taken" contra um jogador — regra oficial 11.2.2 (Player Damage
+  // Resolution). Usado tanto pelo ataque direto num jogador (_resolveDamageAfterOnAttacked) quanto
+  // pelo bônus de dano do Breakthrough (regra 12.14, ver _resolveBattle) — as duas fontes de dano
+  // caem no mesmo "damage taken" do jogador (regra 3.2.2) e passam pela MESMA resolução: revela 1
+  // carta do topo do deck por vez, e PARA imediatamente se ela tiver o ícone de Lucky Pal (não
+  // revela as demais). Só aplica o dano cheio se nenhuma das `amount` cartas reveladas for Lucky
+  // Pal. Cartas que o dano "não chegou a revelar" ficam intactas no topo do deck.
+  _resolvePlayerDamage(defenderState, amount) {
+    const revealed = []
+    let deckedOut = false
+    let canceled = false
+    while (revealed.length < amount) {
+      if (defenderState.deck.length === 0) { deckedOut = true; break }
+      const card = defenderState.deck.shift()
+      revealed.push(card)
+      if (card.is_lucky) { canceled = true; break }
+    }
+
+    let damageDealt = 0
+    if (!deckedOut && !canceled) {
+      defenderState.life -= amount
+      damageDealt = amount
+    }
+    defenderState.graveyard.push(...revealed)
+
+    return { deckedOut, canceled, damageDealt, revealed }
+  }
+
   // Resolve dano + destruição entre 2 Pals em batalha — em vez de disparar onGraveyard/onLeaveBase
   // na hora (ver _sendToGraveyardQueued), empilha na MESMA fila de _resolveDamage.
   _resolveBattle(attackerInstance, defenderInstance, queue) {
@@ -639,9 +655,28 @@ class TurnManager {
 
       if (EffectEngine.hasKeywordOrGranted(attackerInstance, 'Breakthrough')) {
         const strike = attackerInstance.effectiveStrike(attackerState, defenderState)
-        defenderState.life -= strike
-        this._addLog(`${attackerInstance.data.name} (Breakthrough) causou ${strike} de dano direto em ${defenderState.playerName}.`)
-        if (defenderState.life <= 0) this._endGame(attackerState)
+        const { deckedOut, canceled, damageDealt, revealed } = this._resolvePlayerDamage(defenderState, strike)
+
+        if (deckedOut) {
+          this._endGame(attackerState)
+        } else {
+          if (canceled) {
+            this._addLog(`${attackerInstance.data.name} (Breakthrough) atacou ${defenderState.playerName}, mas revelou um Lucky Pal — dano anulado.`)
+          } else {
+            this._addLog(`${attackerInstance.data.name} (Breakthrough) causou ${damageDealt} de dano direto em ${defenderState.playerName}.`)
+          }
+
+          this.lastDamageReveal = {
+            id: ++this._damageRevealSeq,
+            attackerName: `${attackerInstance.data.name} (Breakthrough)`,
+            defenderName: defenderState.playerName,
+            canceled,
+            damageDealt,
+            cards: revealed.map(c => ({ cardNumber: c.card_number, name: c.name, imageUrl: c.image_url, isLucky: !!c.is_lucky }))
+          }
+
+          if (defenderState.life <= 0) this._endGame(attackerState)
+        }
       }
     }
     if (attackerInstance.isDestroyed(attackerState, defenderState)) {

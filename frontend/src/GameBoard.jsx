@@ -21,6 +21,7 @@ function GameBoard() {
   const [decks, setDecks] = useState([])
   const [rpsResult, setRpsResult] = useState(null)
   const [mulliganHand, setMulliganHand] = useState([])
+  const [mulliganGoesFirst, setMulliganGoesFirst] = useState(null)
   const [mulliganZoomCard, setMulliganZoomCard] = useState(null)
   const [gameState, setGameState] = useState(null)
   const [soulImageUrl, setSoulImageUrl] = useState(null)
@@ -78,8 +79,9 @@ function GameBoard() {
       }
     })
 
-    socket.on('bot:mulliganPrompt', ({ hand }) => {
+    socket.on('bot:mulliganPrompt', ({ hand, goesFirst }) => {
       setMulliganHand(hand)
+      setMulliganGoesFirst(goesFirst)
       setStage('mulligan')
     })
 
@@ -300,6 +302,13 @@ function GameBoard() {
     return (
       <Overlay maxWidth="560px">
         <h2 style={THEMED_H2}>{t('gbMulliganTitle')}</h2>
+        {/* Informação que faltava: sem saber se vai jogar primeiro ou segundo, o player decide o
+            mulligan sem o contexto que mais importa pra essa escolha. */}
+        {mulliganGoesFirst != null && (
+          <p style={mulliganGoesFirst ? THEMED_RESULT_WIN : THEMED_RESULT_NEUTRAL}>
+            {mulliganGoesFirst ? t('gbYouGoFirst') : t('gbYouGoSecond')}
+          </p>
+        )}
         <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', margin: '16px 0', flexWrap: 'wrap' }}>
           {mulliganHand.map((c, i) => (
             <img key={i} src={c.image_url} alt={c.name} onClick={() => setMulliganZoomCard(c)}

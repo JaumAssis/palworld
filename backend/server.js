@@ -772,9 +772,13 @@ function applyChooseOrder(session, side, goFirst) {
   const aGoesFirst = side === 'A' ? !!goFirst : !goFirst;
   session.turnManager = new TurnManager(session.states.A, session.states.B, aGoesFirst, session.botSide === 'B');
 
+  // Informação que os 2 lados precisam pra decidir o mulligan com contexto — sem isso, quem PERDEU
+  // o Jokenpô não tinha nenhum jeito de saber se o vencedor escolheu ir primeiro ou segundo antes
+  // de decidir manter ou trocar a própria mão.
   for (const s of ['A', 'B']) {
     session.sides[s].socket.emit('match:mulliganPrompt', {
       hand: session.states[s].hand,
+      goesFirst: s === 'A' ? aGoesFirst : !aGoesFirst,
       message: 'Deseja fazer mulligan da sua mão inicial?'
     });
   }
@@ -4094,8 +4098,11 @@ io.on('connection', (socket) => {
 
     match.turnManager = new TurnManager(match.playerState, match.botState, playerGoesFirst);
 
+    // Informação que o player precisa pra decidir o mulligan com contexto — sem isso ele não tinha
+    // como saber se ia jogar primeiro ou segundo antes de decidir manter ou trocar a mão.
     socket.emit('bot:mulliganPrompt', {
       hand: match.playerState.hand,
+      goesFirst: playerGoesFirst,
       message: 'Deseja fazer mulligan da sua mão inicial?'
     });
   });

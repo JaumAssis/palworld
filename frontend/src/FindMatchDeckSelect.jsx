@@ -43,6 +43,7 @@ function FindMatchDeckSelect() {
   const [rpsResult, setRpsResult] = useState(null)
   const [rpsSubmitted, setRpsSubmitted] = useState(false)
   const [mulliganHand, setMulliganHand] = useState([])
+  const [mulliganGoesFirst, setMulliganGoesFirst] = useState(null)
   const [mulliganZoomCard, setMulliganZoomCard] = useState(null)
   const [opponentLeftMessage, setOpponentLeftMessage] = useState('')
   const [opponentLeftPointsChange, setOpponentLeftPointsChange] = useState(null)
@@ -115,8 +116,9 @@ function FindMatchDeckSelect() {
       }
     })
 
-    socket.on('match:mulliganPrompt', ({ hand }) => {
+    socket.on('match:mulliganPrompt', ({ hand, goesFirst }) => {
       setMulliganHand(hand)
+      setMulliganGoesFirst(goesFirst)
       setStage('mulligan')
     })
 
@@ -545,6 +547,13 @@ function FindMatchDeckSelect() {
     return (
       <Overlay maxWidth="560px">
         <h2 style={THEMED_H2}>{t('gbMulliganTitle')}</h2>
+        {/* Sem isso, quem PERDEU o Jokenpô não tinha nenhum jeito de saber o que o vencedor
+            escolheu (ir primeiro ou segundo) antes de decidir o próprio mulligan. */}
+        {mulliganGoesFirst != null && (
+          <p style={mulliganGoesFirst ? THEMED_RESULT_WIN : THEMED_RESULT_NEUTRAL}>
+            {mulliganGoesFirst ? t('gbYouGoFirst') : t('gbYouGoSecond')}
+          </p>
+        )}
         <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', margin: '16px 0', flexWrap: 'wrap' }}>
           {mulliganHand.map((c, i) => (
             <img key={i} src={c.image_url} alt={c.name} onClick={() => setMulliganZoomCard(c)}
