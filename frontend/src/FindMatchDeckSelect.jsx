@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useParams, useLocation } from 'react-router-dom'
+import { Link, useParams, useLocation, useNavigate } from 'react-router-dom'
 import { useLanguage } from './i18n/LanguageContext'
 import { apiFetch } from './api'
 import { socket } from './socket'
@@ -23,6 +23,7 @@ function FindMatchDeckSelect() {
   // Modo Arena (draft): o deck já veio pronto do draft em Arena.jsx (nunca é escolhido aqui) — o
   // arenaRunId chega via state de navegação, não por query string (não precisa aparecer na URL).
   const location = useLocation()
+  const navigate = useNavigate()
   const isArenaDraft = matchType === 'arenaDraft'
   const arenaRunId = location.state?.arenaRunId
 
@@ -138,6 +139,15 @@ function FindMatchDeckSelect() {
       setErrorMsg(message)
       if (stageRef.current === 'selecting' || stageRef.current === 'searching') setStage('selecting')
       else alert(message)
+      // Modo Arena (draft) não tem escolha de deck nem botão de retry nessa tela — se o servidor
+      // recusou a fila (ex.: a run não estava mais 'ready' quando ele checou de novo, por qualquer
+      // motivo: outra aba/dispositivo já tinha avançado essa run, uma corrida rara entre o pick da
+      // última carta e o clique em "Procurar Oponente", etc.), a única saída de verdade é voltar pro
+      // /arena e deixar ELE buscar o estado atual de novo — sem isso o player ficava preso numa tela
+      // de erro sem nenhum próximo passo além de clicar "Voltar" manualmente.
+      if (isArenaDraft) {
+        setTimeout(() => navigate('/arena', { replace: true }), 2500)
+      }
     })
 
     socket.on('match:opponentLeft', ({ message, arenaPointsChange: pts }) => {

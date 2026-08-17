@@ -160,7 +160,16 @@ function Arena() {
   }
   const loadPlayer = () => apiFetch('/api/player').then(r => r.json()).then(setPlayer)
 
-  useEffect(() => { loadStatus(); loadPlayer() }, [])
+  // Recarrega periodicamente (mesmo padrão de Farming.jsx) — sem isso, quem deixa essa aba aberta
+  // por um tempo (ex: outra aba/dispositivo já avançou a run nesse meio tempo) continuava vendo o
+  // status antigo (ex: "pronto pra buscar") mesmo depois dele deixar de ser verdade, e só descobria
+  // a real ao clicar em "Procurar Oponente" e levar um erro sem explicação nenhuma.
+  useEffect(() => {
+    loadStatus()
+    loadPlayer()
+    const pollInterval = setInterval(() => { loadStatus(); loadPlayer() }, 5000)
+    return () => clearInterval(pollInterval)
+  }, [])
 
   const buyTicket = () => {
     setError('')

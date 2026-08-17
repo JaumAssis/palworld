@@ -19,7 +19,7 @@ import { useLanguage } from './i18n/LanguageContext'
 import { translations } from './i18n/translations'
 import { useAuth } from './auth/AuthContext'
 import { useTheme } from './theme/ThemeContext'
-import { apiFetch } from './api'
+import { apiFetch, apiJson } from './api'
 import OnlineBadge from './OnlineBadge'
 
 // Bloqueia rotas que exigem login (o backend já rejeita com 401; isso evita o "flash" da
@@ -357,6 +357,163 @@ function InfoPopup({ open, onClose }) {
   )
 }
 
+// Painel de controle interno — login por senha fixa (independente de conta de jogador, ver
+// /api/admin/login no backend) e as ferramentas de admin em si. Por enquanto só cancela/reembolsa
+// uma run de Arena travada; mais ferramentas entram aqui depois (ver conversa). Aberto pelo botão
+// 🛠️ logo acima do saldo de moedas/fluido, no menu principal.
+function AdminPanel({ onClose }) {
+  const { t } = useLanguage()
+  const [checking, setChecking] = useState(true)
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [password, setPassword] = useState('')
+  const [loginError, setLoginError] = useState('')
+  const [loggingIn, setLoggingIn] = useState(false)
+
+  const [username, setUsername] = useState('')
+  const [lookupResult, setLookupResult] = useState(null)
+  const [lookupError, setLookupError] = useState('')
+  const [actionMsg, setActionMsg] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false)
+
+  useEffect(() => {
+    apiFetch('/api/admin/status').then(r => r.json()).then(data => {
+      setIsAdmin(!!data.isAdmin)
+      setChecking(false)
+    })
+  }, [])
+
+  const login = () => {
+    setLoginError('')
+    setLoggingIn(true)
+    apiJson('/api/admin/login', { method: 'POST', body: JSON.stringify({ password }) })
+      .then(() => { setIsAdmin(true); setPassword('') })
+      .catch(err => setLoginError(err.code === 'too_many_attempts' ? t('adminTooManyAttempts') : t('adminWrongPassword')))
+      .finally(() => setLoggingIn(false))
+  }
+
+  const lookup = () => {
+    if (!username.trim()) return
+    setLookupError('')
+    setActionMsg('')
+    setLookupResult(null)
+    setBusy(true)
+    apiJson('/api/admin/arena/lookup', { method: 'POST', body: JSON.stringify({ username: username.trim() }) })
+      .then(setLookupResult)
+      .catch(err => setLookupError(err.message || t('adminUserNotFound')))
+      .finally(() => setBusy(false))
+  }
+
+  const cancelArena = () => {
+    setShowCancelConfirm(false)
+    setBusy(true)
+    apiJson('/api/admin/arena/cancel', { method: 'POST', body: JSON.stringify({ username: username.trim() }) })
+      .then(data => {
+        setActionMsg(t('adminArenaCanceledMsg', { username: data.username, refunded: data.refunded }))
+        lookup() // recarrega o painel — deve mostrar "sem run ativa" agora
+      })
+      .catch(err => setLookupError(err.message))
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+    }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: 'var(--panel-w-sm)', background: '#fff', borderRadius: '20px',
+        padding: 'var(--sp-lg)', boxShadow: '0 20px 60px rgba(0,0,0,0.4)', textAlign: 'left'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <h2 style={{ margin: 0, color: '#222', fontSize: 'var(--fs-lg)' }}>🛠️ {t('adminPanelTitle')}</h2>
+          <button onClick={onClose} style={{ padding: '4px 10px', fontSize: 'var(--fs-sm)' }}>✕</button>
+        </div>
+
+        {checking && <p style={{ color: '#666', fontSize: 'var(--fs-sm)' }}>{t('loading')}</p>}
+
+        {!checking && !isAdmin && (
+          <div>
+            <input
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && login()}
+              placeholder={t('adminPasswordPlaceholder')}
+              style={{ width: '100%', boxSizing: 'border-box', padding: 'var(--sp-sm)', fontSize: 'var(--fs-sm)', marginBottom: '10px' }}
+            />
+            <button className="sign-button" onClick={login} disabled={loggingIn || !password} style={{ width: '100%' }}>
+              {loggingIn ? t('loading') : t('adminLoginButton')}
+            </button>
+            {loginError && <p style={{ color: 'red', fontSize: 'var(--fs-xs)', marginTop: '8px' }}>{loginError}</p>}
+          </div>
+        )}
+
+        {!checking && isAdmin && (
+          <div>
+            <h3 style={{ color: '#222', fontSize: 'var(--fs-md)', margin: '0 0 4px' }}>{t('adminArenaToolTitle')}</h3>
+            <p style={{ color: '#777', fontSize: 'var(--fs-2xs)', margin: '0 0 10px' }}>{t('adminArenaToolDesc')}</p>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input
+                type="text"
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && lookup()}
+                placeholder={t('adminUsernamePlaceholder')}
+                style={{ flex: 1, padding: 'var(--sp-sm)', fontSize: 'var(--fs-sm)' }}
+              />
+              <button className="sign-button" onClick={lookup} disabled={busy || !username.trim()}>{t('adminSearchButton')}</button>
+            </div>
+
+            {lookupError && <p style={{ color: 'red', fontSize: 'var(--fs-xs)', marginTop: '8px' }}>{lookupError}</p>}
+            {actionMsg && <p style={{ color: '#2e7d32', fontSize: 'var(--fs-xs)', marginTop: '8px' }}>{actionMsg}</p>}
+
+            {lookupResult && (
+              <div style={{ marginTop: '14px', background: '#f5f5f5', borderRadius: '10px', padding: 'var(--sp-md)', color: '#222', fontSize: 'var(--fs-sm)' }}>
+                <p style={{ margin: '0 0 6px' }}><strong>{lookupResult.username}</strong> — 🪙 {lookupResult.goldCoins}</p>
+                {lookupResult.run ? (
+                  <>
+                    <p style={{ margin: '0 0 10px', fontSize: 'var(--fs-2xs)', color: '#555' }}>
+                      {t('adminArenaRunStatus', { status: lookupResult.run.status, wins: lookupResult.run.wins, losses: lookupResult.run.losses })}
+                    </p>
+                    <button
+                      className="sign-button" onClick={() => setShowCancelConfirm(true)} disabled={busy}
+                      style={{ width: '100%', background: '#a5541b', color: '#fff' }}
+                    >
+                      {t('adminCancelArenaButton')}
+                    </button>
+                  </>
+                ) : (
+                  <p style={{ margin: 0, fontSize: 'var(--fs-2xs)', color: '#999' }}>{t('adminNoActiveArenaRun')}</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {showCancelConfirm && (
+          <div onClick={() => setShowCancelConfirm(false)} style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100
+          }}>
+            <div onClick={e => e.stopPropagation()} style={{
+              width: 'var(--panel-w-xs)', background: '#fff', borderRadius: '14px', padding: 'var(--sp-lg)', textAlign: 'center'
+            }}>
+              <p style={{ color: '#222', fontSize: 'var(--fs-sm)' }}>{t('adminCancelArenaConfirm', { username })}</p>
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '14px' }}>
+                <button className="sign-button" onClick={cancelArena} style={{ background: '#a5541b', color: '#fff' }}>
+                  {t('adminCancelArenaConfirmYes')}
+                </button>
+                <button className="sign-button" onClick={() => setShowCancelConfirm(false)}>{t('adminCancelArenaConfirmNo')}</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function MissionsPopup({ onClose }) {
   const { t } = useLanguage()
   const [missions, setMissions] = useState([])
@@ -543,6 +700,7 @@ function MainMenu() {
   const [showMissions, setShowMissions] = useState(false)
   const [showLoginStreak, setShowLoginStreak] = useState(false)
   const [showInfo, setShowInfo] = useState(false)
+  const [showAdmin, setShowAdmin] = useState(false)
   const [loginStreakClaimable, setLoginStreakClaimable] = useState(false)
   const [popup, setPopup] = useState(null)
   const [authHint, setAuthHint] = useState(false)
@@ -692,17 +850,32 @@ function MainMenu() {
       )}
 
       {player && (
-        <div style={{ position: 'fixed', bottom: 'var(--sp-lg)', right: 'var(--sp-lg)', display: 'flex', gap: 'var(--sp-sm)' }}>
-          <div className="currency-badge">
-            <img src="/gold-coin.png" alt="Gold" style={{ width: 'clamp(18px, 1.6vw, 26px)', height: 'clamp(18px, 1.6vw, 26px)' }} />
-            <strong>{player.gold_coins}</strong>
-          </div>
-          <div className="currency-badge">
-            <img src="/pal-fluid.png" alt={t('palFluidAlt')} style={{ width: 'clamp(18px, 1.6vw, 26px)', height: 'clamp(18px, 1.6vw, 26px)' }} />
-            <strong>{player.pal_fluid}</strong>
+        <div style={{
+          position: 'fixed', bottom: 'var(--sp-lg)', right: 'var(--sp-lg)',
+          display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 'var(--sp-sm)'
+        }}>
+          <button
+            className="currency-badge"
+            onClick={() => setShowAdmin(true)}
+            title={t('adminPanelTitle')}
+            style={{ padding: 'var(--sp-xs) var(--sp-md)', fontSize: 'var(--fs-md)', cursor: 'pointer' }}
+          >
+            🛠️
+          </button>
+          <div style={{ display: 'flex', gap: 'var(--sp-sm)' }}>
+            <div className="currency-badge">
+              <img src="/gold-coin.png" alt="Gold" style={{ width: 'clamp(18px, 1.6vw, 26px)', height: 'clamp(18px, 1.6vw, 26px)' }} />
+              <strong>{player.gold_coins}</strong>
+            </div>
+            <div className="currency-badge">
+              <img src="/pal-fluid.png" alt={t('palFluidAlt')} style={{ width: 'clamp(18px, 1.6vw, 26px)', height: 'clamp(18px, 1.6vw, 26px)' }} />
+              <strong>{player.pal_fluid}</strong>
+            </div>
           </div>
         </div>
       )}
+
+      {showAdmin && <AdminPanel onClose={() => { setShowAdmin(false); refreshPlayer() }} />}
     </div>
   )
 }

@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const session = require('express-session');
+const rateLimit = require('express-rate-limit');
 const http = require('http');
 const path = require('path');
 const fs = require('fs');
@@ -21,7 +22,7 @@ const roguelikeMap = require('./game/roguelikeMap');
 const roguelikeBattle = require('./game/roguelikeBattle');
 const roguelikeEvents = require('./game/roguelikeEvents');
 const { createAuthRouter } = require('./auth/routes');
-const { unusableHash } = require('./auth/passwords');
+const { unusableHash, verifyPassword } = require('./auth/passwords');
 const SqliteSessionStore = require('./auth/SqliteSessionStore');
 
 if (!process.env.SESSION_SECRET) {
@@ -3078,6 +3079,105 @@ app.post('/api/arena/pick-card', requirePlayer, (req, res) => {
     .run(JSON.stringify(mainDeck), JSON.stringify(newColors), newStatus, run.id);
 
   res.json(buildArenaRunPayload(db.prepare('SELECT * FROM arena_runs WHERE id = ?').get(run.id)));
+});
+
+// ---------- ADMIN: painel de controle interno ----------
+// Login admin é independente de conta de jogador — não troca de usuário nenhum, só ELEVA a sessão
+// atual (precisa já estar logado como jogador normal pra fazer sentido, já que o botão só aparece
+// perto do saldo de moedas/fluido no menu). Senha fixa só do dono do site, guardada como hash
+// scrypt (mesmo formato/força de auth/passwords.js) — nunca em texto puro no código-fonte. Gerado
+// 1x com hashPassword('...') num script à parte e colado aqui; comparado com verifyPassword
+// (timingSafeEqual), nunca por igualdade direta de string.
+const ADMIN_PASSWORD_HASH = 'a5db2fbd22c0072a208ad0342f2aed8a:16e9d9483e0a5c7c8197d47400fac1ca74b679c384731751705c90fb9806341a91ab11696d33cef9c26fc4b69711fd86e29ae1fc1b8cd649f142d8d1ab902754';
+
+// Mesma proteção de força bruta do /api/auth/login (10 tentativas por 15min por IP).
+const adminLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too_many_attempts' }
+});
+
+function requireAdmin(req, res, next) {
+  if (!req.session.isAdmin) return res.status(403).json({ error: 'not_admin' });
+  next();
+}
+
+app.post('/api/admin/login', adminLoginLimiter, async (req, res) => {
+  const { password } = req.body || {};
+  if (typeof password !== 'string') return res.status(400).json({ error: 'invalid_password' });
+
+  const valid = await verifyPassword(password, ADMIN_PASSWORD_HASH);
+  if (!valid) return res.status(401).json({ error: 'invalid_password' });
+
+  req.session.isAdmin = true;
+  res.json({ isAdmin: true });
+});
+
+app.post('/api/admin/logout', (req, res) => {
+  req.session.isAdmin = false;
+  res.json({ isAdmin: false });
+});
+
+app.get('/api/admin/status', (req, res) => {
+  res.json({ isAdmin: !!req.session.isAdmin });
+});
+
+// Acha a run de Arena ativa (se houver) de um jogador pelo username — pra admin conferir antes de
+// cancelar. Nunca devolve mais que o necessário (sem senha/hash, só o que já é público dentro do
+// próprio jogo: username, saldo de ouro, estado da run). Busca sempre por parâmetro preparado (?),
+// nunca concatenação — imune a SQL injection por construção, igual todo o resto do arquivo.
+app.post('/api/admin/arena/lookup', requireAdmin, (req, res) => {
+  const { username } = req.body || {};
+  if (typeof username !== 'string') return res.status(400).json({ error: 'invalid_username' });
+
+  const player = db.prepare(`
+    SELECT p.id AS playerId, u.username AS username, p.gold_coins AS goldCoins
+    FROM players p JOIN users u ON u.id = p.user_id
+    WHERE u.username = ?
+  `).get(username);
+  if (!player) return res.status(404).json({ error: 'Usuário não encontrado.' });
+
+  const run = getActiveArenaRun(player.playerId);
+  res.json({
+    username: player.username,
+    goldCoins: player.goldCoins,
+    run: run ? { id: run.id, status: run.status, wins: run.wins, losses: run.losses } : null
+  });
+});
+
+// Cancela a run de Arena ATIVA de um jogador (travada/bugada) e reembolsa o ingresso (100 gold).
+// Marca como 'finished' com um reward_tier sentinela ('admin_canceled', nunca um tier de baú de
+// verdade) — assim nunca aparece na tela de resgate de recompensa (getUnclaimedFinishedArenaRun
+// exige reward_tier IS NULL) nem conta indevidamente como vitória/derrota em lugar nenhum.
+app.post('/api/admin/arena/cancel', requireAdmin, (req, res) => {
+  const { username } = req.body || {};
+  if (typeof username !== 'string') return res.status(400).json({ error: 'invalid_username' });
+
+  const player = db.prepare(`
+    SELECT p.id AS playerId, u.username AS username
+    FROM players p JOIN users u ON u.id = p.user_id
+    WHERE u.username = ?
+  `).get(username);
+  if (!player) return res.status(404).json({ error: 'Usuário não encontrado.' });
+
+  const run = getActiveArenaRun(player.playerId);
+  if (!run) return res.status(404).json({ error: 'Esse jogador não tem run de Arena ativa agora.' });
+
+  const cancelTx = db.transaction(() => {
+    db.prepare("UPDATE arena_runs SET status = 'finished', reward_tier = 'admin_canceled', finished_at = CURRENT_TIMESTAMP WHERE id = ?").run(run.id);
+    db.prepare('UPDATE players SET gold_coins = gold_coins + ? WHERE id = ?').run(ARENA_TICKET_PRICE, player.playerId);
+  });
+  cancelTx();
+
+  const updatedPlayer = db.prepare('SELECT gold_coins FROM players WHERE id = ?').get(player.playerId);
+  res.json({
+    username: player.username,
+    canceledRunId: run.id,
+    refunded: ARENA_TICKET_PRICE,
+    goldCoins: updatedPlayer.gold_coins
+  });
 });
 
 // ---------- Modo Expedição: rotas de progressão (Fase 1 — escolha de deck e mapa) ----------

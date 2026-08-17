@@ -114,6 +114,25 @@ const pt = {
   seoFeature4: 'Monte decks e evolua sua coleção de cartas',
   seoFeature5: 'Farming e Breeding para conseguir novos Pals',
 
+  // ---------- Painel de admin (botão 🛠️ acima do saldo de moedas/fluido) ----------
+  adminPanelTitle: 'Painel de Admin',
+  adminPasswordPlaceholder: 'Senha de admin',
+  adminLoginButton: 'Entrar',
+  adminWrongPassword: 'Senha incorreta.',
+  adminTooManyAttempts: 'Muitas tentativas — aguarde uns minutos e tente de novo.',
+  adminArenaToolTitle: 'Resetar Arena de um jogador',
+  adminArenaToolDesc: 'Cancela a run de Arena ativa (travada/bugada) e reembolsa o ingresso (100 de ouro).',
+  adminUsernamePlaceholder: 'Nome de usuário',
+  adminSearchButton: 'Buscar',
+  adminUserNotFound: 'Usuário não encontrado.',
+  adminArenaRunStatus: ({ status, wins, losses }) => `Run ativa: ${status} — ${wins} vitórias / ${losses} derrotas`,
+  adminNoActiveArenaRun: 'Esse jogador não tem run de Arena ativa agora.',
+  adminCancelArenaButton: 'Cancelar e Reembolsar',
+  adminArenaCanceledMsg: ({ username, refunded }) => `Run de ${username} cancelada — ${refunded} de ouro reembolsados.`,
+  adminCancelArenaConfirm: ({ username }) => `Cancelar a run de Arena de "${username}" e reembolsar o ingresso?`,
+  adminCancelArenaConfirmYes: 'Sim, cancelar',
+  adminCancelArenaConfirmNo: 'Voltar',
+
   // ---------- CardGrid ----------
   cardGridLoading: 'Carregando cartas...',
   cardGridTitle: ({ filtered, total }) => `Catálogo (${filtered} / ${total})`,
@@ -714,6 +733,25 @@ const en = {
   seoFeature3: 'Expedition (roguelike) mode with map generation',
   seoFeature4: 'Build decks and grow your card collection',
   seoFeature5: 'Farming and Breeding to get new Pals',
+
+  // ---------- Admin panel (🛠️ button above the gold/pal fluid balance) ----------
+  adminPanelTitle: 'Admin Panel',
+  adminPasswordPlaceholder: 'Admin password',
+  adminLoginButton: 'Log in',
+  adminWrongPassword: 'Wrong password.',
+  adminTooManyAttempts: 'Too many attempts — wait a few minutes and try again.',
+  adminArenaToolTitle: "Reset a player's Arena run",
+  adminArenaToolDesc: 'Cancels the active Arena run (stuck/bugged) and refunds the ticket (100 gold).',
+  adminUsernamePlaceholder: 'Username',
+  adminSearchButton: 'Search',
+  adminUserNotFound: 'User not found.',
+  adminArenaRunStatus: ({ status, wins, losses }) => `Active run: ${status} — ${wins} wins / ${losses} losses`,
+  adminNoActiveArenaRun: 'This player has no active Arena run right now.',
+  adminCancelArenaButton: 'Cancel and Refund',
+  adminArenaCanceledMsg: ({ username, refunded }) => `${username}'s run was canceled — ${refunded} gold refunded.`,
+  adminCancelArenaConfirm: ({ username }) => `Cancel "${username}"'s Arena run and refund the ticket?`,
+  adminCancelArenaConfirmYes: 'Yes, cancel',
+  adminCancelArenaConfirmNo: 'Go back',
 
   // ---------- CardGrid ----------
   cardGridLoading: 'Loading cards...',
