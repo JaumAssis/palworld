@@ -627,6 +627,27 @@ function emitMatchState(session) {
   maybeRunOnlineBotTurn(session);
 }
 
+// Resincroniza o socket com a sessão que ele JÁ tem (nunca enfileira de novo) — usado quando o
+// player volta pra tela de matchmaking com uma partida já pareada rolando (ex.: botão "voltar" do
+// navegador enquanto ainda está no Jokenpô/mulligan de uma run de Arena, ver Arena.jsx redirecionando
+// pra cá assim que vê status 'in_progress'). Sem isso, o client tentava match:findMatch de novo e
+// caía sempre no erro "deck ainda não está pronto" — o run.status já tinha saído de 'ready' assim
+// que a partida pareou, então a checagem de fila rejeitava, mesmo a partida estando 100% válida.
+function resyncMatchState(session, socket) {
+  if (session.turnManager) { emitMatchState(session); return; }
+
+  const side = getSideBySocket(session, socket);
+  if (session.rpsWinnerSide) {
+    socket.emit('match:rpsResult', {
+      yourChoice: session.rpsChoices[side],
+      opponentChoice: session.rpsChoices[otherSide(side)],
+      result: session.rpsWinnerSide === side ? 'win' : 'lose'
+    });
+  } else {
+    socket.emit('match:rpsPrompt', { message: 'Jokenpô! Escolha pedra, papel ou tesoura.' });
+  }
+}
+
 // Se for a vez do lado bot dessa sessão (substituto de fila), roda o turno dele via BotBrain — 1
 // linha no fim de emitMatchState cobre TODOS os handlers match:*, sem duplicar nada deles.
 // _botTurnRunning evita reentrância (emitMatchState roda de novo várias vezes DENTRO do próprio
@@ -3529,6 +3550,14 @@ io.on('connection', (socket) => {
   socket.on('match:findMatch', ({ deckId, matchType, arenaRunId }) => {
     const type = matchType === 'arena' ? 'arena' : (matchType === 'arenaDraft' ? 'arenaDraft' : 'normal');
     if (queuedPlayers.has(playerId)) return; // já está numa fila (ex.: clique duplo)
+
+    // Já existe uma sessão pareada pra esse socket (partida real já rolando, mesmo que ainda no
+    // Jokenpô/mulligan) — nunca tenta enfileirar de novo, só resincroniza (ver resyncMatchState).
+    const existingSession = getSessionBySocket(socket);
+    if (existingSession) {
+      resyncMatchState(existingSession, socket);
+      return;
+    }
 
     let entry;
     if (type === 'arenaDraft') {
