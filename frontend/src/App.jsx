@@ -357,17 +357,58 @@ function InfoPopup({ open, onClose }) {
   )
 }
 
-// Painel de controle interno — login por senha fixa (independente de conta de jogador, ver
-// /api/admin/login no backend) e as ferramentas de admin em si. Por enquanto só cancela/reembolsa
-// uma run de Arena travada; mais ferramentas entram aqui depois (ver conversa). Aberto pelo botão
-// 🛠️ logo acima do saldo de moedas/fluido, no menu principal.
+// Login de admin — SEM link nenhum na UI visível, só acessível digitando /admin-login direto na
+// URL. Senha fixa (ver ADMIN_PASSWORD_HASH no server.js), independente de conta de jogador — só
+// eleva a sessão atual. Depois de validado, o botão de controle (🛠️) passa a aparecer no menu
+// principal SÓ pra essa sessão (ver checagem de isAdminSession em MainMenu) — nenhum outro usuário
+// vê rastro nenhum de admin em lugar nenhum, mesmo sabendo que a rota existe.
+function AdminLoginPage() {
+  const { t } = useLanguage()
+  const navigate = useNavigate()
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const login = () => {
+    setError('')
+    setBusy(true)
+    apiJson('/api/admin/login', { method: 'POST', body: JSON.stringify({ password }) })
+      .then(() => navigate('/'))
+      .catch(err => setError(err.code === 'too_many_attempts' ? t('adminTooManyAttempts') : t('adminWrongPassword')))
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1a1a2e', boxSizing: 'border-box', padding: 'var(--sp-lg)' }}>
+      <div style={{ width: 'var(--panel-w-xs)', maxWidth: '100%', background: '#fff', borderRadius: '16px', padding: 'var(--sp-lg)', boxSizing: 'border-box' }}>
+        <h2 style={{ margin: '0 0 14px', color: '#222', fontSize: 'var(--fs-lg)', textAlign: 'center' }}>🛠️ {t('adminPanelTitle')}</h2>
+        <input
+          type="password"
+          value={password}
+          onChange={e => setPassword(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && login()}
+          placeholder={t('adminPasswordPlaceholder')}
+          style={{ width: '100%', boxSizing: 'border-box', padding: 'var(--sp-sm)', fontSize: 'var(--fs-sm)', marginBottom: '10px' }}
+        />
+        <button className="sign-button" onClick={login} disabled={busy || !password} style={{ width: '100%' }}>
+          {busy ? t('loading') : t('adminLoginButton')}
+        </button>
+        {error && <p style={{ color: 'red', fontSize: 'var(--fs-xs)', marginTop: '8px', textAlign: 'center' }}>{error}</p>}
+      </div>
+    </div>
+  )
+}
+
+// Painel de controle em si — ferramentas de admin. Por enquanto só cancela/reembolsa uma run de
+// Arena travada; mais ferramentas entram aqui depois (ver conversa). Aberto pelo botão 🛠️ logo
+// acima do saldo de moedas/fluido no menu principal — esse botão só existe pra quem já passou pelo
+// /admin-login (ver isAdminSession em MainMenu), então chegar aqui já pressupõe sessão elevada. A
+// checagem de /api/admin/status abaixo é só uma 2ª camada (ex: sessão expirou no meio da visita) —
+// a autorização de verdade continua sendo o requireAdmin do backend em cada rota de ação.
 function AdminPanel({ onClose }) {
   const { t } = useLanguage()
   const [checking, setChecking] = useState(true)
   const [isAdmin, setIsAdmin] = useState(false)
-  const [password, setPassword] = useState('')
-  const [loginError, setLoginError] = useState('')
-  const [loggingIn, setLoggingIn] = useState(false)
 
   const [username, setUsername] = useState('')
   const [lookupResult, setLookupResult] = useState(null)
@@ -382,15 +423,6 @@ function AdminPanel({ onClose }) {
       setChecking(false)
     })
   }, [])
-
-  const login = () => {
-    setLoginError('')
-    setLoggingIn(true)
-    apiJson('/api/admin/login', { method: 'POST', body: JSON.stringify({ password }) })
-      .then(() => { setIsAdmin(true); setPassword('') })
-      .catch(err => setLoginError(err.code === 'too_many_attempts' ? t('adminTooManyAttempts') : t('adminWrongPassword')))
-      .finally(() => setLoggingIn(false))
-  }
 
   const lookup = () => {
     if (!username.trim()) return
@@ -432,21 +464,10 @@ function AdminPanel({ onClose }) {
 
         {checking && <p style={{ color: '#666', fontSize: 'var(--fs-sm)' }}>{t('loading')}</p>}
 
+        {/* Não deveria aparecer na prática (o botão que abre isso já é gated por isAdminSession em
+            MainMenu) — só um fallback caso a sessão de admin tenha expirado no meio da visita. */}
         {!checking && !isAdmin && (
-          <div>
-            <input
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && login()}
-              placeholder={t('adminPasswordPlaceholder')}
-              style={{ width: '100%', boxSizing: 'border-box', padding: 'var(--sp-sm)', fontSize: 'var(--fs-sm)', marginBottom: '10px' }}
-            />
-            <button className="sign-button" onClick={login} disabled={loggingIn || !password} style={{ width: '100%' }}>
-              {loggingIn ? t('loading') : t('adminLoginButton')}
-            </button>
-            {loginError && <p style={{ color: 'red', fontSize: 'var(--fs-xs)', marginTop: '8px' }}>{loginError}</p>}
-          </div>
+          <p style={{ color: '#666', fontSize: 'var(--fs-sm)' }}>{t('adminSessionExpired')}</p>
         )}
 
         {!checking && isAdmin && (
@@ -701,6 +722,10 @@ function MainMenu() {
   const [showLoginStreak, setShowLoginStreak] = useState(false)
   const [showInfo, setShowInfo] = useState(false)
   const [showAdmin, setShowAdmin] = useState(false)
+  // Só true pra quem já passou pelo /admin-login (rota sem link nenhum na UI, ver AdminLoginPage) —
+  // o botão 🛠️ abaixo só é renderizado quando isso é true, então nenhum outro usuário logado vê
+  // rastro nenhum de admin em lugar nenhum (antes disso aparecia pra qualquer um que logasse).
+  const [isAdminSession, setIsAdminSession] = useState(false)
   const [loginStreakClaimable, setLoginStreakClaimable] = useState(false)
   const [popup, setPopup] = useState(null)
   const [authHint, setAuthHint] = useState(false)
@@ -715,8 +740,14 @@ function MainMenu() {
     apiFetch('/api/login-streak/today').then(r => r.json()).then(data => setLoginStreakClaimable(!data.claimedToday))
   }
 
+  const refreshAdminSession = () => {
+    if (!user) { setIsAdminSession(false); return }
+    apiFetch('/api/admin/status').then(r => r.json()).then(data => setIsAdminSession(!!data.isAdmin))
+  }
+
   useEffect(() => { refreshPlayer() }, [user])
   useEffect(() => { refreshLoginStreak() }, [user])
+  useEffect(() => { refreshAdminSession() }, [user])
 
   useEffect(() => {
     if (!authHint) return
@@ -854,14 +885,16 @@ function MainMenu() {
           position: 'fixed', bottom: 'var(--sp-lg)', right: 'var(--sp-lg)',
           display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 'var(--sp-sm)'
         }}>
-          <button
-            className="currency-badge"
-            onClick={() => setShowAdmin(true)}
-            title={t('adminPanelTitle')}
-            style={{ padding: 'var(--sp-xs) var(--sp-md)', fontSize: 'var(--fs-md)', cursor: 'pointer' }}
-          >
-            🛠️
-          </button>
+          {isAdminSession && (
+            <button
+              className="currency-badge"
+              onClick={() => setShowAdmin(true)}
+              title={t('adminPanelTitle')}
+              style={{ padding: 'var(--sp-xs) var(--sp-md)', fontSize: 'var(--fs-md)', cursor: 'pointer' }}
+            >
+              🛠️
+            </button>
+          )}
           <div style={{ display: 'flex', gap: 'var(--sp-sm)' }}>
             <div className="currency-badge">
               <img src="/gold-coin.png" alt="Gold" style={{ width: 'clamp(18px, 1.6vw, 26px)', height: 'clamp(18px, 1.6vw, 26px)' }} />
@@ -901,6 +934,8 @@ function App() {
         <Route path="/game" element={<RequireAuth><GameBoard /></RequireAuth>} />
         <Route path="/arena" element={<RequireAuth><Arena /></RequireAuth>} />
         <Route path="/roguelike" element={<RequireAuth><Roguelike /></RequireAuth>} />
+        {/* Sem link nenhum na UI — só alcançável digitando a URL direto (ver AdminLoginPage). */}
+        <Route path="/admin-login" element={<AdminLoginPage />} />
       </Routes>
     </BrowserRouter>
   )

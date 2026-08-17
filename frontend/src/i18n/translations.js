@@ -132,6 +132,7 @@ const pt = {
   adminCancelArenaConfirm: ({ username }) => `Cancelar a run de Arena de "${username}" e reembolsar o ingresso?`,
   adminCancelArenaConfirmYes: 'Sim, cancelar',
   adminCancelArenaConfirmNo: 'Voltar',
+  adminSessionExpired: 'Sua sessão de admin expirou — entre de novo em /admin-login.',
 
   // ---------- CardGrid ----------
   cardGridLoading: 'Carregando cartas...',
@@ -752,6 +753,7 @@ const en = {
   adminCancelArenaConfirm: ({ username }) => `Cancel "${username}"'s Arena run and refund the ticket?`,
   adminCancelArenaConfirmYes: 'Yes, cancel',
   adminCancelArenaConfirmNo: 'Go back',
+  adminSessionExpired: 'Your admin session expired — log in again at /admin-login.',
 
   // ---------- CardGrid ----------
   cardGridLoading: 'Loading cards...',
