@@ -3653,8 +3653,14 @@ io.on('connection', (socket) => {
 
     // Já existe uma sessão pareada pra esse socket (partida real já rolando, mesmo que ainda no
     // Jokenpô/mulligan) — nunca tenta enfileirar de novo, só resincroniza (ver resyncMatchState).
+    // MAS só conta como "ainda ativa" se o jogo não tiver terminado — a sessão de uma partida que
+    // JÁ acabou normalmente (não por desconexão) nunca é removida de onlineSessions/socketRoomMap
+    // (só a desconexão limpa isso, ver socket.on('disconnect')), então sem esse `gameOver` aqui o
+    // botão "Próxima Partida"/"Buscar de novo" ficava preso resincronizando pra sempre a MESMA
+    // partida já finalizada, em vez de deixar o jogador entrar numa fila de verdade de novo.
     const existingSession = getSessionBySocket(socket);
-    if (existingSession) {
+    const existingSessionStillActive = existingSession && !existingSession.turnManager?.gameOver;
+    if (existingSessionStillActive) {
       resyncMatchState(existingSession, socket);
       return;
     }
