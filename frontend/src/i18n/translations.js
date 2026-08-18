@@ -448,10 +448,11 @@ const pt = {
   findMatchCancelSearch: 'Cancelar busca',
   findMatchFound: ({ name }) => `Oponente encontrado: ${name}!`,
   findMatchRpsVs: ({ you, opponent }) => `Você: ${you} vs Oponente: ${opponent}`,
-  findMatchRpsLose: 'O oponente venceu o Jokenpô e escolheu a ordem.',
+  findMatchRpsLose: 'O oponente venceu o Jokenpô e vai escolher a ordem.',
   findMatchOpponentTurn: 'vez do oponente',
   findMatchWaitingOpponent: 'Aguardando o oponente...',
   findMatchWaitingOpponentCardChoice: 'Aguardando o oponente escolher uma carta...',
+  findMatchWaitingOrderHint: 'Se demorar muito, a partida continua sozinha em instantes.',
 
   // ---------- modo Arena (draft temporário) ----------
   arenaLoading: 'Carregando...',
@@ -1064,10 +1065,11 @@ const en = {
   findMatchCancelSearch: 'Cancel search',
   findMatchFound: ({ name }) => `Opponent found: ${name}!`,
   findMatchRpsVs: ({ you, opponent }) => `You: ${you} vs Opponent: ${opponent}`,
-  findMatchRpsLose: 'Your opponent won Rock-Paper-Scissors and chose the turn order.',
+  findMatchRpsLose: 'Your opponent won Rock-Paper-Scissors and will choose the turn order.',
   findMatchOpponentTurn: "opponent's turn",
   findMatchWaitingOpponent: 'Waiting for opponent...',
   findMatchWaitingOpponentCardChoice: 'Waiting for opponent to choose a card...',
+  findMatchWaitingOrderHint: 'If this takes too long, the match will continue on its own shortly.',
 
   // ---------- Arena mode (temporary draft) ----------
   arenaLoading: 'Loading...',

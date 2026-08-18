@@ -533,7 +533,15 @@ function FindMatchDeckSelect() {
             ))}
           </div>
         )}
-        {stage === 'waitingOrder' && <p style={{ ...THEMED_P, marginTop: '14px' }}>{t('findMatchWaitingOpponent')}</p>}
+        {stage === 'waitingOrder' && (
+          <>
+            <p style={{ ...THEMED_P, marginTop: '14px' }}>{t('findMatchWaitingOpponent')}</p>
+            {/* Sem isso, quem perdeu o Jokenpô via só uma tela estática por até 18s (ver
+                CHOOSE_ORDER_FALLBACK_MS no server.js) sem nenhum indício de que vai se resolver
+                sozinha — parecia travado mesmo funcionando certo por baixo dos panos. */}
+            <p style={{ ...THEMED_P, fontSize: '13px', color: '#999', marginTop: '4px' }}>{t('findMatchWaitingOrderHint')}</p>
+          </>
+        )}
       </Overlay>
     )
   }

@@ -245,6 +245,21 @@ class TurnManager {
   // retoma a cadeia de gatilhos de ataque, de "assign" (Serious/Mau Cryst) ou de cláusula (Ranch) em
   // andamento, se alguma houver.
   _resumeAttackAfterTrigger() {
+    // PRECISA vir antes de qualquer outra continuação: "If it is night, your Pal's AUTO activates
+    // twice" (Shadowbeak) e habilidades CEDIDAS que se acumulam (2x Foxparks' Harness no mesmo Pal)
+    // fazem um ÚNICO runTrigger(...) precisar de mais de uma pausa (uma cláusula por vez — ver
+    // EffectEngine.runTriggerClauses). Quem CHAMOU esse runTrigger (_runAttackTriggers pro onAttack,
+    // _runEndOfTurnTriggers pro onEndOfTurn, _runDeployStep pro onDeploy) também guarda a PRÓPRIA
+    // continuação assumindo que o runTrigger tinha terminado — se essa checagem de baixo rodasse
+    // primeiro, ela "vencia" e pulava direto pro próximo Pal/próxima etapa, perdendo pra sempre a
+    // 2a cláusula pendente (ex: a 2a Harness nunca chegava a perguntar o alvo).
+    const triggerCont = this._pendingTriggerContinuation
+    if (triggerCont) {
+      this._pendingTriggerContinuation = null
+      const result = EffectEngine.resumeTriggerContinuation(this, triggerCont)
+      if (!result.paused && !this.pendingEffect) this._resumeAttackAfterTrigger()
+      return
+    }
     const cont = this._pendingAttackContinuation
     if (cont) {
       this._pendingAttackContinuation = null
@@ -262,15 +277,6 @@ class TurnManager {
     if (clauseCont) {
       this._pendingClauseContinuation = null
       const result = EffectEngine.resumeClauseContinuation(this, clauseCont)
-      if (!result.paused && !this.pendingEffect) this._resumeAttackAfterTrigger()
-      return
-    }
-    // "If it is night, your Pal's AUTO activates twice" (Shadowbeak) — retoma a 2a repetição do
-    // MESMO gatilho AUTO depois que a 1a pausou esperando o jogador (ver EffectEngine.runTriggerClauses).
-    const triggerCont = this._pendingTriggerContinuation
-    if (triggerCont) {
-      this._pendingTriggerContinuation = null
-      const result = EffectEngine.resumeTriggerContinuation(this, triggerCont)
       if (!result.paused && !this.pendingEffect) this._resumeAttackAfterTrigger()
       return
     }

@@ -10,15 +10,21 @@ const EffectEngine = require('./effects/EffectEngine')
 const VS_PLAYER_TIMING = { deploy: 5000, act: 3000, attack: 5000, endTurn: 2000 }
 const DEFAULT_TIMING = { deploy: 1500, act: 1200, attack: 1500, endTurn: 1200 }
 
-// Dificuldade do bot: 2 chaves independentes, cada uma liga/desliga um grupo de heurísticas —
-// nunca um "% de chance de errar" (isso tornaria o comportamento não-determinístico demais pra
-// testar). 'hard' = exatamente o comportamento de sempre (nenhuma regressão pros bots existentes,
-// já que todo chamador que não passa `skill` cai no default 'hard'). 'medium' perde só a parte de
+// Dificuldade do bot: chaves independentes, cada uma liga/desliga um grupo de heurísticas — nunca
+// um "% de chance de errar" (isso tornaria o comportamento não-determinístico demais pra testar).
+// 'hard' = exatamente o comportamento de sempre (nenhuma regressão pros bots existentes, já que
+// todo chamador que não passa `skill` cai no default 'hard'). 'medium' perde só a parte de
 // otimizar recursos (ACT/soul draw); 'easy' perde isso E a parte tática de combate (reserva de
 // bloqueador, mirar pra "abater de graça") — vira um bot bem mais fácil de punir, de propósito
-// (é o nível forçado na partida direta vs Bot, que é modo de aprendizado).
+// (é o nível forçado na partida direta vs Bot, que é modo de aprendizado). 'expert' é 'hard' +
+// hasExpertTactics (ver mais abaixo) — hoje só o bibs22 usa esse nível (ver BOT_PLAYERS em
+// server.js), pedido explicitamente pra ficar mais difícil que o "hard" de sempre.
 function hasSmartDefense(skill) { return skill !== 'easy' }
-function hasSmartResources(skill) { return skill === 'hard' }
+function hasSmartResources(skill) { return skill === 'hard' || skill === 'expert' }
+// Táticas extras do nível 'expert': mirar Lucky Pal de propósito entre vários "abate de graça"
+// possíveis, aceitar trocar (perder o próprio Pal) por um alvo que vale mais, e reservar
+// bloqueador calculando a ameaça real do oponente em vez de um número fixo (ver planAttacks).
+function hasExpertTactics(skill) { return skill === 'expert' }
 
 // Sempre escolhe ir primeiro ao ganhar o Jokenpô — extraído aqui só pra não repetir a mesma
 // constante hardcoded em mais de um lugar (bot:chooseOrder e o driver da fila online).
@@ -130,6 +136,20 @@ function planAttacks(tm, self, opponent, skill) {
     reserveCount = standing.length // vida crítica: tartaruga total, não ataca com nada
   } else if (tm.turnNumber <= 4) {
     reserveCount = 0 // turnos iniciais: agressão, ainda não há o que defender de verdade
+  } else if (hasExpertTactics(skill)) {
+    // 'expert' não usa um número fixo — reserva só o power que realmente precisa pra cobrir o
+    // MAIOR atacante que o oponente tem em campo agora (soma os próprios Pals em pé, do mais forte
+    // pro mais fraco, até a soma alcançar essa ameaça). Sempre deixa pelo menos 1 Pal livre pra
+    // atacar (a não ser que já esteja no ramo de vida crítica acima).
+    const biggestThreat = opponent.basePals.reduce((max, p) => Math.max(max, p.effectivePower(opponent, self)), 0)
+    let covered = 0
+    reserveCount = 0
+    for (const p of byPowerDesc) {
+      if (covered >= biggestThreat) break
+      covered += p.effectivePower(self, opponent)
+      reserveCount++
+    }
+    reserveCount = Math.min(reserveCount, standing.length - 1)
   } else {
     reserveCount = Math.min(2, Math.ceil(Math.max(1, opponent.basePals.length) / 2), Math.max(0, standing.length - 1))
   }
@@ -139,7 +159,9 @@ function planAttacks(tm, self, opponent, skill) {
 
 // Alvo do ataque: Taunt é obrigatório quando presente; senão prefere abater de graça (o Pal
 // descansado mais forte do oponente que esse atacante consegue destruir sem perder a troca);
-// sem alvo assim, ataca a cara do oponente.
+// sem alvo assim, ataca a cara do oponente. 'expert' refina isso mais: entre vários abates de
+// graça possíveis, prioriza Lucky Pal (não só o de maior power), e — sem nenhum abate de graça
+// disponível — aceita TROCAR (perder o próprio atacante) por um alvo que vale claramente mais.
 function chooseAttackTarget(self, opponent, attackerPal, skill) {
   const forced = EffectEngine.getForcedTauntTargets(opponent, attackerPal)
   if (forced.length > 0) return forced[0]
@@ -149,18 +171,39 @@ function chooseAttackTarget(self, opponent, attackerPal, skill) {
   if (!hasSmartDefense(skill)) return { type: 'player' }
 
   const attackerPower = attackerPal.effectivePower(self, opponent)
-  const freeKills = opponent.basePals
-    .filter(p => EffectEngine.canBeAttackedBy(p, attackerPal) && p.effectivePower(opponent, self) < attackerPower)
+  const validTargets = opponent.basePals.filter(p => EffectEngine.canBeAttackedBy(p, attackerPal))
+  const freeKills = validTargets
+    .filter(p => p.effectivePower(opponent, self) < attackerPower)
     .sort((a, b) => b.effectivePower(opponent, self) - a.effectivePower(opponent, self))
 
-  if (freeKills.length > 0) return { type: 'pal', instance: freeKills[0] }
+  if (freeKills.length > 0) {
+    if (hasExpertTactics(skill)) {
+      const luckyFreeKill = freeKills.find(p => p.data.is_lucky)
+      if (luckyFreeKill) return { type: 'pal', instance: luckyFreeKill }
+    }
+    return { type: 'pal', instance: freeKills[0] }
+  }
+
+  // Sem abate de graça: 'expert' ainda troca de propósito quando o alvo vale claramente mais que
+  // o próprio atacante (Lucky Pal, ou custo bem maior) — um bot "hard" nunca perde um Pal à toa,
+  // mas isso é jogar por VALOR, não só evitar perda, que é o que separa um adversário difícil de
+  // um só cauteloso.
+  if (hasExpertTactics(skill)) {
+    const worthTrading = validTargets
+      .filter(p => p.effectivePower(opponent, self) >= attackerPower)
+      .filter(p => p.data.is_lucky || (p.data.cost || 0) > (attackerPal.data.cost || 0) + 2)
+      .sort((a, b) => (Number(b.data.is_lucky) - Number(a.data.is_lucky)) || (b.data.cost || 0) - (a.data.cost || 0))
+    if (worthTrading.length > 0) return { type: 'pal', instance: worthTrading[0] }
+  }
+
   return { type: 'player' }
 }
 
 // Decisão pura — só lê o estado do motor, nenhum efeito colateral. Devolve a próxima ação a
 // executar neste turno, ou { kind: 'endTurn' } quando não sobra nada melhor a fazer. `skill`
-// ('easy'|'medium'|'hard', default 'hard') controla só as heurísticas de combate/recursos — ver
-// hasSmartDefense/hasSmartResources; qual carta jogar (chooseDeploy) não varia por dificuldade.
+// ('easy'|'medium'|'hard'|'expert', default 'hard') controla só as heurísticas de combate/recursos
+// — ver hasSmartDefense/hasSmartResources/hasExpertTactics; qual carta jogar (chooseDeploy) não
+// varia por dificuldade.
 function chooseAction(tm, self, opponent, skill = 'hard') {
   const deploy = chooseDeploy(self)
   if (deploy) return deploy

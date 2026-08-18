@@ -273,8 +273,11 @@ const ARENA_DRAFT_BOT_FALLBACK_MS = 15000;
 // mandar match:chooseOrder — aba em segundo plano com o timer de revelação (7s) do front
 // atrasado/suspenso pelo navegador, ou o player só não clicar — quem PERDEU o Jokenpô ficava preso
 // pra sempre em "Aguardando o oponente...", sem nenhum jeito de sair de lá a não ser recarregar a
-// página (o que, por sua vez, contava como derrota pra ele via W.O. de desconexão).
-const CHOOSE_ORDER_FALLBACK_MS = 30000;
+// página (o que, por sua vez, contava como derrota pra ele via W.O. de desconexão). Precisa ser
+// bem maior que os 7s de revelação do front (senão derruba a escolha de um vencedor genuíno que só
+// demorou um pouco pra clicar) mas curto o bastante pra quem perdeu não sentir que travou de vez —
+// 30s era generoso demais (ninguém demora tanto pra clicar em 1 de 2 botões).
+const CHOOSE_ORDER_FALLBACK_MS = 18000;
 // playerId de bot -> está numa partida agora. Impede o mesmo bot assumir 2 filas ao mesmo tempo.
 const botsInMatch = new Set();
 
@@ -2297,14 +2300,17 @@ function getCardsByNumbers(numbers) {
 // copiado 1x da conta do usuário (nunca lido de novo dali em diante — trocar/apagar o deck
 // original depois não afeta o bot). Roda 1x no boot, depois de `players`/`users` existirem
 // (colunas is_bot/rank_points) e de getCardsByNumbers existir (usada pra validar a cópia).
-// skill ('easy'|'medium'|'hard') alimenta o BotBrain (ver hasSmartDefense/hasSmartResources lá) —
-// segue a mesma ordem do rank_points (bibs22 > dudu07 > kaiozin), então o bot mais forte no quadro
-// de Ranks também joga melhor. Vale pro substituto de fila (Normal e Arena); a partida direta vs
-// Bot ignora isso de propósito e força 'easy' sempre (ver bot:start), por ser modo de aprendizado.
+// skill ('easy'|'medium'|'hard'|'expert') alimenta o BotBrain (ver hasSmartDefense/
+// hasSmartResources/hasExpertTactics lá) — segue a mesma ordem do rank_points (bibs22 > dudu07 >
+// kaiozin), então o bot mais forte no quadro de Ranks também joga melhor. bibs22 usa 'expert' (o
+// nível mais difícil que existe, acima do 'hard' de sempre) a pedido — mira Lucky Pal de propósito,
+// aceita trocar por um alvo que vale mais, e reserva bloqueador pela ameaça real do oponente em vez
+// de um número fixo. Vale pro substituto de fila (Normal e Arena); a partida direta vs Bot ignora
+// isso de propósito e força 'easy' sempre (ver bot:start), por ser modo de aprendizado.
 const BOT_PLAYERS = [
   { username: 'dudu07', deckName: 'vermelho', fallbackDeckName: 'Red/Blue First Deck', rankPoints: 320, skill: 'medium' },
   { username: 'kaiozin', deckName: 'penguins', fallbackDeckName: 'Green/Purple First Deck', rankPoints: 180, skill: 'easy' },
-  { username: 'bibs22', deckName: 'purple night', fallbackDeckName: 'Green/Purple First Deck', rankPoints: 540, skill: 'hard' }
+  { username: 'bibs22', deckName: 'purple night', fallbackDeckName: 'Green/Purple First Deck', rankPoints: 540, skill: 'expert' }
 ];
 
 function seedBotPlayers() {
