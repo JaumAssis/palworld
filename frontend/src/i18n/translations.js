@@ -133,6 +133,18 @@ const pt = {
   adminCancelArenaConfirmYes: 'Sim, cancelar',
   adminCancelArenaConfirmNo: 'Voltar',
   adminSessionExpired: 'Sua sessão de admin expirou — entre de novo em /admin-login.',
+  adminGoldPanelTitle: 'Dar Ouro',
+  adminGoldToolDesc: 'Busca um jogador e dá (ou tira, se negativo) um valor de ouro pra ele.',
+  adminGoldAmountPlaceholder: 'Valor (ex: 500 ou -200)',
+  adminGiveGoldButton: 'Dar',
+  adminGoldGivenMsg: ({ username, amount }) => amount >= 0
+    ? `${amount} de ouro dados pra ${username}.`
+    : `${Math.abs(amount)} de ouro tirados de ${username}.`,
+  adminGiveGoldConfirm: ({ username, amount }) => amount >= 0
+    ? `Dar ${amount} de ouro pra "${username}"?`
+    : `Tirar ${Math.abs(amount)} de ouro de "${username}"?`,
+  adminGiveGoldConfirmYes: 'Sim, confirmar',
+  adminGiveGoldConfirmNo: 'Voltar',
 
   // ---------- CardGrid ----------
   cardGridLoading: 'Carregando cartas...',
@@ -755,6 +767,18 @@ const en = {
   adminCancelArenaConfirmYes: 'Yes, cancel',
   adminCancelArenaConfirmNo: 'Go back',
   adminSessionExpired: 'Your admin session expired — log in again at /admin-login.',
+  adminGoldPanelTitle: 'Give Gold',
+  adminGoldToolDesc: 'Search a player and give (or take, if negative) a gold amount.',
+  adminGoldAmountPlaceholder: 'Amount (e.g. 500 or -200)',
+  adminGiveGoldButton: 'Give',
+  adminGoldGivenMsg: ({ username, amount }) => amount >= 0
+    ? `${amount} gold given to ${username}.`
+    : `${Math.abs(amount)} gold taken from ${username}.`,
+  adminGiveGoldConfirm: ({ username, amount }) => amount >= 0
+    ? `Give ${amount} gold to "${username}"?`
+    : `Take ${Math.abs(amount)} gold from "${username}"?`,
+  adminGiveGoldConfirmYes: 'Yes, confirm',
+  adminGiveGoldConfirmNo: 'Go back',
 
   // ---------- CardGrid ----------
   cardGridLoading: 'Loading cards...',

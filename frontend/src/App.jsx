@@ -535,6 +535,142 @@ function AdminPanel({ onClose }) {
   )
 }
 
+// Segunda ferramenta de admin: busca um jogador e dá (ou tira, se negativo) um valor X de ouro pra
+// ele — mesmo layout/fluxo do AdminPanel (busca → mostra o saldo → confirma a ação). Aberto pelo
+// botão 💰, separado do 🛠️ (mais ferramentas devem virar botões próprios também, não abas dentro
+// do mesmo painel — mais simples de cada uma ter seu próprio fluxo de confirmação).
+function AdminGoldPanel({ onClose }) {
+  const { t } = useLanguage()
+  const [checking, setChecking] = useState(true)
+  const [isAdmin, setIsAdmin] = useState(false)
+
+  const [username, setUsername] = useState('')
+  const [amount, setAmount] = useState('')
+  const [lookupResult, setLookupResult] = useState(null)
+  const [lookupError, setLookupError] = useState('')
+  const [actionMsg, setActionMsg] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [showGiveConfirm, setShowGiveConfirm] = useState(false)
+
+  useEffect(() => {
+    apiFetch('/api/admin/status').then(r => r.json()).then(data => {
+      setIsAdmin(!!data.isAdmin)
+      setChecking(false)
+    })
+  }, [])
+
+  const lookup = () => {
+    if (!username.trim()) return
+    setLookupError('')
+    setActionMsg('')
+    setLookupResult(null)
+    setBusy(true)
+    apiJson('/api/admin/gold/lookup', { method: 'POST', body: JSON.stringify({ username: username.trim() }) })
+      .then(setLookupResult)
+      .catch(err => setLookupError(err.message || t('adminUserNotFound')))
+      .finally(() => setBusy(false))
+  }
+
+  const parsedAmount = Number(amount)
+  const amountValid = Number.isInteger(parsedAmount) && parsedAmount !== 0
+
+  const giveGold = () => {
+    setShowGiveConfirm(false)
+    setBusy(true)
+    apiJson('/api/admin/gold/give', { method: 'POST', body: JSON.stringify({ username: username.trim(), amount: parsedAmount }) })
+      .then(data => {
+        setActionMsg(t('adminGoldGivenMsg', { username: data.username, amount: data.amount }))
+        setAmount('')
+        lookup() // recarrega o painel — mostra o saldo já atualizado
+      })
+      .catch(err => setLookupError(err.message))
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+    }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: 'var(--panel-w-sm)', background: '#fff', borderRadius: '20px',
+        padding: 'var(--sp-lg)', boxShadow: '0 20px 60px rgba(0,0,0,0.4)', textAlign: 'left'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <h2 style={{ margin: 0, color: '#222', fontSize: 'var(--fs-lg)' }}>💰 {t('adminGoldPanelTitle')}</h2>
+          <button onClick={onClose} style={{ padding: '4px 10px', fontSize: 'var(--fs-sm)' }}>✕</button>
+        </div>
+
+        {checking && <p style={{ color: '#666', fontSize: 'var(--fs-sm)' }}>{t('loading')}</p>}
+
+        {!checking && !isAdmin && (
+          <p style={{ color: '#666', fontSize: 'var(--fs-sm)' }}>{t('adminSessionExpired')}</p>
+        )}
+
+        {!checking && isAdmin && (
+          <div>
+            <p style={{ color: '#777', fontSize: 'var(--fs-2xs)', margin: '0 0 10px' }}>{t('adminGoldToolDesc')}</p>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input
+                type="text"
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && lookup()}
+                placeholder={t('adminUsernamePlaceholder')}
+                style={{ flex: 1, padding: 'var(--sp-sm)', fontSize: 'var(--fs-sm)' }}
+              />
+              <button className="sign-button" onClick={lookup} disabled={busy || !username.trim()}>{t('adminSearchButton')}</button>
+            </div>
+
+            {lookupError && <p style={{ color: 'red', fontSize: 'var(--fs-xs)', marginTop: '8px' }}>{lookupError}</p>}
+            {actionMsg && <p style={{ color: '#2e7d32', fontSize: 'var(--fs-xs)', marginTop: '8px' }}>{actionMsg}</p>}
+
+            {lookupResult && (
+              <div style={{ marginTop: '14px', background: '#f5f5f5', borderRadius: '10px', padding: 'var(--sp-md)', color: '#222', fontSize: 'var(--fs-sm)' }}>
+                <p style={{ margin: '0 0 10px' }}><strong>{lookupResult.username}</strong> — 🪙 {lookupResult.goldCoins}</p>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    type="number"
+                    value={amount}
+                    onChange={e => setAmount(e.target.value)}
+                    placeholder={t('adminGoldAmountPlaceholder')}
+                    style={{ flex: 1, padding: 'var(--sp-sm)', fontSize: 'var(--fs-sm)' }}
+                  />
+                  <button
+                    className="sign-button" onClick={() => setShowGiveConfirm(true)} disabled={busy || !amountValid}
+                    style={{ background: '#a5541b', color: '#fff' }}
+                  >
+                    {t('adminGiveGoldButton')}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {showGiveConfirm && (
+          <div onClick={() => setShowGiveConfirm(false)} style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100
+          }}>
+            <div onClick={e => e.stopPropagation()} style={{
+              width: 'var(--panel-w-xs)', background: '#fff', borderRadius: '14px', padding: 'var(--sp-lg)', textAlign: 'center'
+            }}>
+              <p style={{ color: '#222', fontSize: 'var(--fs-sm)' }}>{t('adminGiveGoldConfirm', { username, amount: parsedAmount })}</p>
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '14px' }}>
+                <button className="sign-button" onClick={giveGold} style={{ background: '#a5541b', color: '#fff' }}>
+                  {t('adminGiveGoldConfirmYes')}
+                </button>
+                <button className="sign-button" onClick={() => setShowGiveConfirm(false)}>{t('adminGiveGoldConfirmNo')}</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function MissionsPopup({ onClose }) {
   const { t } = useLanguage()
   const [missions, setMissions] = useState([])
@@ -722,9 +858,10 @@ function MainMenu() {
   const [showLoginStreak, setShowLoginStreak] = useState(false)
   const [showInfo, setShowInfo] = useState(false)
   const [showAdmin, setShowAdmin] = useState(false)
+  const [showAdminGold, setShowAdminGold] = useState(false)
   // Só true pra quem já passou pelo /admin-login (rota sem link nenhum na UI, ver AdminLoginPage) —
-  // o botão 🛠️ abaixo só é renderizado quando isso é true, então nenhum outro usuário logado vê
-  // rastro nenhum de admin em lugar nenhum (antes disso aparecia pra qualquer um que logasse).
+  // os botões 🛠️/💰 abaixo só são renderizados quando isso é true, então nenhum outro usuário
+  // logado vê rastro nenhum de admin em lugar nenhum (antes disso aparecia pra qualquer um que logasse).
   const [isAdminSession, setIsAdminSession] = useState(false)
   const [loginStreakClaimable, setLoginStreakClaimable] = useState(false)
   const [popup, setPopup] = useState(null)
@@ -888,6 +1025,16 @@ function MainMenu() {
           {isAdminSession && (
             <button
               className="currency-badge"
+              onClick={() => setShowAdminGold(true)}
+              title={t('adminGoldPanelTitle')}
+              style={{ padding: 'var(--sp-xs) var(--sp-md)', fontSize: 'var(--fs-md)', cursor: 'pointer' }}
+            >
+              💰
+            </button>
+          )}
+          {isAdminSession && (
+            <button
+              className="currency-badge"
               onClick={() => setShowAdmin(true)}
               title={t('adminPanelTitle')}
               style={{ padding: 'var(--sp-xs) var(--sp-md)', fontSize: 'var(--fs-md)', cursor: 'pointer' }}
@@ -909,6 +1056,7 @@ function MainMenu() {
       )}
 
       {showAdmin && <AdminPanel onClose={() => { setShowAdmin(false); refreshPlayer() }} />}
+      {showAdminGold && <AdminGoldPanel onClose={() => { setShowAdminGold(false); refreshPlayer() }} />}
     </div>
   )
 }

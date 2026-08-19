@@ -3186,6 +3186,46 @@ app.post('/api/admin/arena/cancel', requireAdmin, (req, res) => {
   });
 });
 
+// Busca um jogador pelo username e devolve o saldo de ouro atual — pra admin conferir antes de dar
+// um valor. Mesmo padrão de parâmetro preparado (?) do resto do arquivo — imune a SQL injection.
+app.post('/api/admin/gold/lookup', requireAdmin, (req, res) => {
+  const { username } = req.body || {};
+  if (typeof username !== 'string') return res.status(400).json({ error: 'invalid_username' });
+
+  const player = db.prepare(`
+    SELECT p.id AS playerId, u.username AS username, p.gold_coins AS goldCoins
+    FROM players p JOIN users u ON u.id = p.user_id
+    WHERE u.username = ?
+  `).get(username);
+  if (!player) return res.status(404).json({ error: 'Usuário não encontrado.' });
+
+  res.json({ username: player.username, goldCoins: player.goldCoins });
+});
+
+// Teto de segurança contra erro de digitação (ex: um zero a mais sem querer) — não é uma regra de
+// jogo, só evita um valor absurdo por acidente. Aceita negativo também (corrigir um excesso dado
+// por engano), nunca deixa o saldo ir abaixo de 0.
+const ADMIN_GOLD_GIFT_LIMIT = 1000000;
+
+app.post('/api/admin/gold/give', requireAdmin, (req, res) => {
+  const { username, amount } = req.body || {};
+  if (typeof username !== 'string') return res.status(400).json({ error: 'invalid_username' });
+  if (!Number.isInteger(amount) || amount === 0 || Math.abs(amount) > ADMIN_GOLD_GIFT_LIMIT) {
+    return res.status(400).json({ error: 'Valor inválido.' });
+  }
+
+  const player = db.prepare(`
+    SELECT p.id AS playerId, u.username AS username
+    FROM players p JOIN users u ON u.id = p.user_id
+    WHERE u.username = ?
+  `).get(username);
+  if (!player) return res.status(404).json({ error: 'Usuário não encontrado.' });
+
+  db.prepare('UPDATE players SET gold_coins = MAX(0, gold_coins + ?) WHERE id = ?').run(amount, player.playerId);
+  const updated = db.prepare('SELECT gold_coins FROM players WHERE id = ?').get(player.playerId);
+  res.json({ username: player.username, amount, goldCoins: updated.gold_coins });
+});
+
 // ---------- Modo Expedição: rotas de progressão (Fase 1 — escolha de deck e mapa) ----------
 
 function getActiveRoguelikeRun(playerId) {
