@@ -276,8 +276,17 @@ const ARENA_DRAFT_BOT_FALLBACK_MS = 15000;
 // página (o que, por sua vez, contava como derrota pra ele via W.O. de desconexão). Precisa ser
 // bem maior que os 7s de revelação do front (senão derruba a escolha de um vencedor genuíno que só
 // demorou um pouco pra clicar) mas curto o bastante pra quem perdeu não sentir que travou de vez —
-// 30s era generoso demais (ninguém demora tanto pra clicar em 1 de 2 botões).
+// 30s era generoso demais (ninguém demora tanto pra clicar em 1 de 2 botões). Reload durante essa
+// espera agora se recupera via RECONNECT_GRACE_MS (ver abaixo) em vez de sempre contar derrota.
 const CHOOSE_ORDER_FALLBACK_MS = 18000;
+// Quanto tempo uma sessão online espera, depois do disconnect de um dos lados, por esse MESMO
+// jogador reconectar (F5, blip de rede, ou o próprio socket.io reconectando sozinho com um socket.id
+// novo) antes de declarar abandono de vez (W.O.). Sem isso, qualquer queda breve de conexão virava
+// derrota imediata — e pior: se a queda foi um reconnect silencioso (a aba nunca recarregou, só o
+// transporte caiu e voltou), o jogador afetado ficava preso pra sempre olhando pra tela antiga,
+// porque os eventos da partida continuavam sendo emitidos pro socket velho, que ele não escutava
+// mais. Ver o bloco de reconexão em io.on('connection') e abandonOnlineSession.
+const RECONNECT_GRACE_MS = 12000;
 // playerId de bot -> está numa partida agora. Impede o mesmo bot assumir 2 filas ao mesmo tempo.
 const botsInMatch = new Set();
 
@@ -913,6 +922,47 @@ function releaseBotFromMatch(session) {
     botsInMatch.delete(session.botPlayerId);
     session._botReleased = true;
   }
+}
+
+// Fecha de vez uma sessão online abandonada — chamado quando o grace period de reconexão
+// (RECONNECT_GRACE_MS) esgota sem o lado desconectado voltar. Extraído do handler de disconnect pra
+// não duplicar a lógica de W.O./pontos/liberação de bot entre o caminho "esgotou o timer" e um
+// eventual caminho futuro de abandono explícito.
+function abandonOnlineSession(session, side) {
+  const remainingSide = otherSide(side);
+
+  // W.O. em Arena também vale pro rank — só se o jogo já tinha começado de fato (Jokenpô/mulligan
+  // abandonado não conta ponto pra ninguém, não chegou a ser uma partida jogada).
+  let arenaPointsChange = null;
+  if (session.matchType === 'arena' && session.turnManager && !session.rankPointsApplied) {
+    const { gained } = applyArenaRankPoints(session.sides[remainingSide].playerId, session.sides[side].playerId);
+    arenaPointsChange = gained;
+    session.rankPointsApplied = true;
+  }
+
+  // Mesma regra pra Arena (draft): só conta como partida jogada se o jogo já tinha começado.
+  // Quem ficou ganha por W.O.; atualiza a run de quem tiver arenaRunId (o bot substituto nunca
+  // tem — o deck dele é temporário, sem run nenhuma pra atualizar).
+  if (session.matchType === 'arenaDraft' && session.turnManager && !session.arenaDraftRunApplied) {
+    for (const s of ['A', 'B']) {
+      const arenaRunId = session.sides[s].arenaRunId;
+      if (arenaRunId) applyArenaDraftMatchResult(arenaRunId, s === remainingSide);
+    }
+    session.arenaDraftRunApplied = true;
+  }
+
+  session.sides[remainingSide].socket.emit('match:opponentLeft', {
+    message: 'Seu oponente desconectou. Você venceu por W.O.',
+    arenaPointsChange
+  });
+  socketRoomMap.delete(session.sides.A.socket.id);
+  socketRoomMap.delete(session.sides.B.socket.id);
+  onlineSessions.delete(session.roomId);
+  clearTimeout(session.chooseOrderFallbackTimer);
+  // Humano abandonou uma partida com substituto de bot — libera o bot pra próxima fila. Sem
+  // isso ele ficaria "preso" em botsInMatch pra sempre (o gameOver que dispara a liberação
+  // normal, em checkOnlineWinMissions, nunca roda pra uma sessão que morreu por desconexão).
+  releaseBotFromMatch(session);
 }
 
 // 20s sem parear com humano na fila Normal: um dos 3 bots permanentes assume o lugar. Revalida
@@ -3582,6 +3632,23 @@ io.on('connection', (socket) => {
   // o socket mais recente é o que deve receber desafios/mensagens dali pra frente.
   connectedSockets.set(playerId, socket);
 
+  // Reconexão numa partida online já em andamento (F5, blip de rede, ou o próprio socket.io
+  // reconectando sozinho com um socket.id novo) — rebinda esse lado da sessão pro socket novo e
+  // resincroniza o estado, em vez de deixar o jogador preso na tela antiga esperando eventos que
+  // nunca mais chegariam nesse socket. Varre onlineSessions em vez de indexar por playerId porque só
+  // roda 1x por reconexão, nunca no caminho quente de cada jogada.
+  for (const pending of onlineSessions.values()) {
+    if (pending.pendingDisconnect?.playerId !== playerId) continue;
+    clearTimeout(pending.disconnectGraceTimer);
+    const side = pending.pendingDisconnect.side;
+    socketRoomMap.delete(pending.pendingDisconnect.socketId);
+    pending.sides[side].socket = socket;
+    socketRoomMap.set(socket.id, pending.roomId);
+    pending.pendingDisconnect = null;
+    resyncMatchState(pending, socket);
+    break;
+  }
+
   // ---------- Chat de lobby (tela de "Encontrar Partida") ----------
   pruneLobbyChatHistory();
   socket.emit('lobbyChat:history', lobbyChatHistory);
@@ -4646,45 +4713,19 @@ io.on('connection', (socket) => {
     // apague por engano a entrada de uma reconexão mais nova (2ª aba) que já sobrescreveu a 1ª.
     if (connectedSockets.get(playerId) === socket) connectedSockets.delete(playerId);
 
-    // Partida online em andamento (Jokenpô, mulligan ou jogo): quem ficou avisa que o oponente saiu
-    // e a sessão é encerrada — sem reconexão por enquanto, W.O. imediato.
+    // Partida online em andamento (Jokenpô, mulligan ou jogo): não declara W.O. na hora — dá uma
+    // janela (RECONNECT_GRACE_MS) pro MESMO jogador reconectar (ver bloco de reconexão em
+    // io.on('connection')) antes de considerar abandono de verdade. Cobre tanto F5 quanto o próprio
+    // socket.io reconectando sozinho com um socket.id novo depois de um blip de rede.
     const session = getSessionBySocket(socket);
     if (session) {
       const side = getSideBySocket(session, socket);
-      const remainingSide = otherSide(side);
-
-      // W.O. em Arena também vale pro rank — só se o jogo já tinha começado de fato (Jokenpô/mulligan
-      // abandonado não conta ponto pra ninguém, não chegou a ser uma partida jogada).
-      let arenaPointsChange = null;
-      if (session.matchType === 'arena' && session.turnManager && !session.rankPointsApplied) {
-        const { gained } = applyArenaRankPoints(session.sides[remainingSide].playerId, session.sides[side].playerId);
-        arenaPointsChange = gained;
-        session.rankPointsApplied = true;
-      }
-
-      // Mesma regra pra Arena (draft): só conta como partida jogada se o jogo já tinha começado.
-      // Quem ficou ganha por W.O.; atualiza a run de quem tiver arenaRunId (o bot substituto nunca
-      // tem — o deck dele é temporário, sem run nenhuma pra atualizar).
-      if (session.matchType === 'arenaDraft' && session.turnManager && !session.arenaDraftRunApplied) {
-        for (const s of ['A', 'B']) {
-          const arenaRunId = session.sides[s].arenaRunId;
-          if (arenaRunId) applyArenaDraftMatchResult(arenaRunId, s === remainingSide);
-        }
-        session.arenaDraftRunApplied = true;
-      }
-
-      session.sides[remainingSide].socket.emit('match:opponentLeft', {
-        message: 'Seu oponente desconectou. Você venceu por W.O.',
-        arenaPointsChange
-      });
-      socketRoomMap.delete(session.sides.A.socket.id);
-      socketRoomMap.delete(session.sides.B.socket.id);
-      onlineSessions.delete(session.roomId);
-      clearTimeout(session.chooseOrderFallbackTimer);
-      // Humano abandonou uma partida com substituto de bot — libera o bot pra próxima fila. Sem
-      // isso ele ficaria "preso" em botsInMatch pra sempre (o gameOver que dispara a liberação
-      // normal, em checkOnlineWinMissions, nunca roda pra uma sessão que morreu por desconexão).
-      releaseBotFromMatch(session);
+      session.pendingDisconnect = { side, playerId, socketId: socket.id };
+      session.disconnectGraceTimer = setTimeout(() => {
+        if (onlineSessions.get(session.roomId) !== session) return;
+        if (session.pendingDisconnect?.socketId !== socket.id) return; // já reconectou nesse meio-tempo
+        abandonOnlineSession(session, side);
+      }, RECONNECT_GRACE_MS);
     }
 
     console.log(`Cliente desconectado: ${socket.id}`);
