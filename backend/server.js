@@ -360,6 +360,15 @@ function otherSide(side) { return side === 'A' ? 'B' : 'A'; }
 // por-conexão (a sessão é compartilhada pelos 2 sockets pareados, não pertence a um só).
 const socketRoomMap = new Map();
 
+// playerId -> `match` da partida vs Bot em andamento (ver `let match` dentro de io.on('connection')).
+// Sem isso, a partida vs Bot vivia só como variável local da conexão de socket — qualquer
+// desconexão breve (F5, blip de rede, ou o próprio socket.io reconectando sozinho com um socket.id
+// novo) trocava a conexão inteira por uma nova com `match = null`, e a partida em andamento ficava
+// inacessível pra sempre: todo handler bot:* checa `if (!match) return`, então o jogador via o
+// turno passar (ou o bot jogar) mas nenhuma ação subsequente fazia efeito nenhum. Só 1 entrada por
+// jogador (sempre sobrescrita em bot:start), nunca cresce sem limite.
+const botMatches = new Map();
+
 function getSessionBySocket(socket) {
   const roomId = socketRoomMap.get(socket.id);
   return roomId ? onlineSessions.get(roomId) : null;
@@ -4163,15 +4172,19 @@ io.on('connection', (socket) => {
     emitMatchState(session);
   });
 
-  let match = null; // { turnManager, playerIsP1, botIsP1 }
+  // Retoma a partida vs Bot já em andamento pra esse jogador, se houver (ver botMatches acima) — sem
+  // isso, TODA reconexão (mesmo uma automática do socket.io, sem o jogador ter feito nada) começava
+  // com match = null e travava a partida em curso pra sempre.
+  let match = playerId ? (botMatches.get(playerId) || null) : null; // { turnManager, playerIsP1, botIsP1, winCounted, roguelikeResultApplied }
 
-  let winCounted = false;
-  let roguelikeResultApplied = false;
-
+  // winCounted/roguelikeResultApplied vivem DENTRO de match (não como closure separada) de propósito
+  // — assim sobrevivem à reconexão junto com o resto do estado. Se fossem closures locais, uma
+  // reconexão resetaria essas flags pra false enquanto match.turnManager.gameOver continuasse true,
+  // e o próximo emitState() contaria a mesma vitória/resultado de run 2x.
   function checkWinMission() {
-    if (match && match.turnManager.gameOver && match.turnManager.winner === match.playerState && !winCounted) {
+    if (match && match.turnManager.gameOver && match.turnManager.winner === match.playerState && !match.winCounted) {
       incrementMission(playerId, 'win_games', null, 1);
-      winCounted = true;
+      match.winCounted = true;
     }
   }
 
@@ -4179,9 +4192,9 @@ io.on('connection', (socket) => {
   // por partida — equivalente ao checkWinMission acima, mas só dispara quando a partida nasceu de
   // um roguelikeRunId (ver bot:start). Bot de batalha comum (deckId) nunca tem essa propriedade.
   function checkRoguelikeBattleResult() {
-    if (!match || !match.roguelikeRunId || roguelikeResultApplied || !match.turnManager.gameOver) return;
+    if (!match || !match.roguelikeRunId || match.roguelikeResultApplied || !match.turnManager.gameOver) return;
     applyRoguelikeBattleResult(match.roguelikeRunId, match.turnManager.winner === match.playerState);
-    roguelikeResultApplied = true;
+    match.roguelikeResultApplied = true;
   }
 
   function emitState() {
@@ -4246,6 +4259,15 @@ io.on('connection', (socket) => {
     });
   }
 
+  // Reconexão numa partida vs Bot já em andamento pra esse jogador (match veio de botMatches, não de
+  // um bot:start novo) — sem isso, o cliente reconectado ficava com a tela antiga pra sempre,
+  // esperando um bot:state que o servidor só manda em resposta a uma ação do próprio jogador (o
+  // reconnect em si não dispara nada sozinho do lado do cliente, ver GameBoard.jsx). Cobre o caso
+  // relatado (turno passa, tudo destravado no servidor, mas o cliente nunca soube). O caso raro de
+  // reconectar bem no meio do Jokenpô/mulligan não reenvia o prompt exato (sem essa info guardada em
+  // match hoje) — fica pra uma novidade só se voltar a ser reportado.
+  if (match && match.turnManager) emitState();
+
   // 1. Cliente pede pra iniciar partida contra bot, passando o id do deck escolhido — OU o id de
   // uma run do Modo Expedição em vez de deckId (batalha/chefe de um nó do mapa, ver
   // /api/roguelike/enter-node). Nunca toca `decks`: o deck vem do main_deck da própria run.
@@ -4289,9 +4311,11 @@ io.on('connection', (socket) => {
       // identidade de conta nenhuma (não conta pro online, não é um dos 3 bots permanentes).
       const botState = new PlayerState('Bot', botMainCards, botSoulCards);
 
-      match = { playerState, botState, turnManager: null, botPlayerId: null, botSkill: tier.skill, roguelikeRunId: run.id };
-      winCounted = false;
-      roguelikeResultApplied = false;
+      match = {
+        playerState, botState, turnManager: null, botPlayerId: null, botSkill: tier.skill, roguelikeRunId: run.id,
+        winCounted: false, roguelikeResultApplied: false
+      };
+      botMatches.set(playerId, match);
 
       socket.emit('bot:rpsPrompt', { message: 'Jokenpô! Escolha pedra, papel ou tesoura.' });
       return;
@@ -4329,9 +4353,11 @@ io.on('connection', (socket) => {
     // Sempre 'easy' aqui, de propósito — esse modo é onde o jogador aprende/pratica, então o bot
     // fica no nível mais fácil independente de qual dos 3 permanentes foi sorteado (o nick real
     // ainda varia, mas a habilidade não). O substituto de fila (Normal/Arena) já usa bot.skill.
-    match = { playerState, botState, turnManager: null, botPlayerId: bot.playerId, botSkill: 'easy' };
-    winCounted = false;
-    roguelikeResultApplied = false;
+    match = {
+      playerState, botState, turnManager: null, botPlayerId: bot.playerId, botSkill: 'easy',
+      winCounted: false, roguelikeResultApplied: false
+    };
+    botMatches.set(playerId, match);
 
     socket.emit('bot:rpsPrompt', { message: 'Jokenpô! Escolha pedra, papel ou tesoura.' });
   });
