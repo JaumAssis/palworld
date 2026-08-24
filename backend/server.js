@@ -31,6 +31,24 @@ if (!process.env.SESSION_SECRET) {
 
 function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
+// Rede de segurança de último recurso: sem isso, QUALQUER exceção não tratada em QUALQUER lugar do
+// código (efeito raro de carta, bug de IA do bot, etc.) derruba o processo Node inteiro — travando
+// de vez TODAS as partidas em andamento pra TODOS os jogadores simultaneamente, não só quem
+// disparou o bug (era o candidato mais provável pro relato de "trava tudo do nada, sem padrão, em
+// qualquer modo"). O trade-off documentado do Node é real (depois de uma exceção não tratada, o
+// processo pode estar em estado inconsistente) — mas aqui cada partida vive isolada no seu próprio
+// objeto em memória (sessão/match), sem estado global compartilhado que uma exceção de jogo
+// corromperia; manter o servidor de pé pras OUTRAS partidas é uma troca melhor que derrubar todo
+// mundo por um bug isolado numa carta rara. Os pontos de maior risco (turno automático do bot) já
+// têm try/catch dedicado (ver maybeRunOnlineBotTurn/maybeRunBotTurn) — isto aqui é só o fallback
+// pra qualquer coisa que escapar disso.
+process.on('uncaughtException', (err) => {
+  console.error('[fatal] uncaughtException (processo continua rodando):', err);
+});
+process.on('unhandledRejection', (err) => {
+  console.error('[fatal] unhandledRejection (processo continua rodando):', err);
+});
+
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
 
 const app = express();
@@ -680,7 +698,14 @@ function maybeRunOnlineBotTurn(session) {
   if (!tm || tm.gameOver || tm.pendingEffect || tm.pendingBattle) return;
   if (tm.activePlayer !== session.states[session.botSide]) return;
   session._botTurnRunning = true;
-  runOnlineBotTurn(session).finally(() => { session._botTurnRunning = false; });
+  // .catch é essencial aqui, não só estilo: sem ele, qualquer exceção dentro de BotBrain.playTurn
+  // (ex.: um bug numa carta/efeito raro) vira uma promise rejeitada sem tratamento — que no Node
+  // derruba o PROCESSO INTEIRO, travando de vez TODAS as partidas em andamento no servidor, não só
+  // essa (era o candidato mais forte pro relato de "trava tudo do nada, sem padrão"). Com o catch, o
+  // pior caso vira só essa 1 partida sem o bot terminar o turno, em vez de derrubar geral.
+  runOnlineBotTurn(session)
+    .catch(err => console.error(`[bot] erro rodando turno do bot na sessão ${session.roomId}:`, err))
+    .finally(() => { session._botTurnRunning = false; });
 }
 
 async function runOnlineBotTurn(session) {
@@ -889,18 +914,23 @@ function tryPairQueue(matchType) {
 // então essa lógica de setup nunca é duplicada.
 function handleBotDriverEvent(session, botSide, event, payload) {
   const stillAlive = () => onlineSessions.get(session.roomId) === session;
+  // .catch em todo mundo aqui pelo mesmo motivo do maybeRunOnlineBotTurn (ver comentário lá): sem
+  // isso, um erro em qualquer um desses passos vira promise rejeitada sem tratamento (o
+  // process.on('unhandledRejection') global cobriria, mas prevenir aqui já evita derrubar o log com
+  // um erro genérico e mantém o padrão usado no resto do driver de bot).
+  const onErr = (step) => (err) => console.error(`[bot] erro no driver (${step}), sessão ${session.roomId}:`, err);
   if (event === 'match:rpsPrompt') {
-    delay(1200).then(() => { if (stillAlive()) applyRpsChoice(session, botSide, randomChoice()); });
+    delay(1200).then(() => { if (stillAlive()) applyRpsChoice(session, botSide, randomChoice()); }).catch(onErr('rpsPrompt'));
   } else if (event === 'match:rpsResult') {
     if (payload.result === 'draw') {
-      delay(1500).then(() => { if (stillAlive()) applyRpsChoice(session, botSide, randomChoice()); });
+      delay(1500).then(() => { if (stillAlive()) applyRpsChoice(session, botSide, randomChoice()); }).catch(onErr('rpsResult:draw'));
     } else if (payload.result === 'win') {
       // Precisa passar dos 7000ms que o cliente espera antes de trocar de tela (FindMatchDeckSelect.jsx)
       // — menos que isso engole a revelação do Jokenpô na tela do humano.
-      delay(7500).then(() => { if (stillAlive()) applyChooseOrder(session, botSide, BotBrain.decideGoFirst()); });
+      delay(7500).then(() => { if (stillAlive()) applyChooseOrder(session, botSide, BotBrain.decideGoFirst()); }).catch(onErr('rpsResult:win'));
     }
   } else if (event === 'match:mulliganPrompt') {
-    delay(1500).then(() => { if (stillAlive()) applyMulliganDecision(session, botSide, BotBrain.decideMulligan(payload.hand)); });
+    delay(1500).then(() => { if (stillAlive()) applyMulliganDecision(session, botSide, BotBrain.decideMulligan(payload.hand)); }).catch(onErr('mulliganPrompt'));
   }
   // Outros eventos (match:found, match:opponentLeft etc.) não interessam ao driver — ignorados.
 }
@@ -4437,7 +4467,11 @@ io.on('connection', (socket) => {
   function maybeRunBotTurn() {
     if (!match || match.turnManager.gameOver) return;
     if (match.turnManager.activePlayer === match.botState) {
-      runBotTurnWithDelays(); // não aguarda (assíncrono), vai emitindo estado conforme age
+      // .catch é essencial aqui (mesmo motivo do maybeRunOnlineBotTurn): sem ele, um erro dentro de
+      // BotBrain.playTurn vira promise rejeitada sem tratamento e derruba o processo inteiro, levando
+      // junto TODAS as partidas do servidor — não só essa vs Bot.
+      runBotTurnWithDelays() // não aguarda (assíncrono), vai emitindo estado conforme age
+        .catch(err => console.error(`[bot] erro rodando turno do bot (player ${playerId}):`, err));
     }
   }
 
