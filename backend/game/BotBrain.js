@@ -322,6 +322,25 @@ async function playTurn({ tm, self, opponent, emit, isAlive, delay, timing = DEF
     if (!isAlive() || tm.gameOver) return
     if (tm.activePlayer !== self) return // algum trigger já passou a vez sozinho (raro, defensivo)
   }
+
+  // Esgotou o teto de iterações sem o loop convergir sozinho pra 'endTurn' (chooseAction devolvendo
+  // sempre alguma ação "melhor que encerrar", sem progresso real de estado) — sem isso, a função só
+  // retornava aqui em silêncio, deixando o turno preso pra sempre em 'main' com o bot sem fazer mais
+  // nada: o oponente via o log do turno do bot completo (stand/draw/soul/main) e depois nada, sem
+  // conseguir interagir (não é a vez dele). Força o fim do turno de qualquer jeito — melhor um turno
+  // do bot cortado curto do que a partida travada de vez.
+  if (isAlive() && !tm.gameOver && tm.activePlayer === self) {
+    console.warn(`[bot] playTurn bateu o teto de ${MAX_TURN_ITERATIONS} iterações sem encerrar o turno sozinho (skill=${skill}) — forçando o fim do turno.`)
+    let result = tm.endMainPhase()
+    // Alarm Bell etc. (mustAttackAllUntilEndOfTurn) pode recusar encerrar enquanto sobrar Pal em pé
+    // — nesse ponto já esgotamos toda a tentativa normal de atacar com eles, então força a barra:
+    // limpa a obrigação e tenta de novo, pra garantir que o turno realmente passa.
+    if (!result.success && result.reason === 'MUST_ATTACK') {
+      self.mustAttackAllUntilEndOfTurn = false
+      result = tm.endMainPhase()
+    }
+    emit()
+  }
 }
 
 module.exports = {
