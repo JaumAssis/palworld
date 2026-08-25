@@ -9,6 +9,7 @@ import MyCollection from './MyCollection'
 import Shop from './Shop'
 import Breeding from './Breeding'
 import Farming from './Farming'
+import Fishing from './Fishing'
 import TutorialSelect from './TutorialSelect'
 import TutorialMatch from './TutorialMatch'
 import FindMatchSelect from './FindMatchSelect'
@@ -1117,6 +1118,7 @@ function MainMenu() {
 
       <div style={{ position: 'fixed', bottom: 'var(--sp-lg)', left: 'var(--sp-lg)', display: 'flex', flexDirection: 'column', gap: 'var(--sp-sm)', alignItems: 'flex-start' }}>
         <button className="sign-button sign-button-fluid" onClick={() => guard(() => setPopup('shop'))}>{t('menuShop')}</button>
+        <button className="sign-button sign-button-fluid" onClick={() => guard(() => setPopup('fishing'))}>🎣 {t('menuFishing')}</button>
         <button className="sign-button sign-button-fluid" onClick={() => guard(() => setPopup('farming'))}>{t('menuFarming')}</button>
         <button className="sign-button sign-button-fluid" onClick={() => guard(() => setPopup('breeding'))} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <img src="/egg.png" alt="Breeding" style={{ width: 'clamp(22px, 2vw, 32px)', height: 'clamp(22px, 2vw, 32px)' }} />
@@ -1157,6 +1159,7 @@ function MainMenu() {
           <div key={popup} className="popout-bubble">
             {popup === 'shop' && <Shop onClose={() => { setPopup(null); refreshPlayer() }} />}
             {popup === 'farming' && <Farming onClose={() => { setPopup(null); refreshPlayer() }} />}
+            {popup === 'fishing' && <Fishing onClose={() => { setPopup(null); refreshPlayer() }} />}
             {popup === 'breeding' && <Breeding onClose={() => { setPopup(null); refreshPlayer() }} />}
           </div>
         </div>
@@ -1231,6 +1234,7 @@ function App() {
         <Route path="/shop" element={<RequireAuth><Shop /></RequireAuth>} />
         <Route path="/breeding" element={<RequireAuth><Breeding /></RequireAuth>} />
         <Route path="/farming" element={<RequireAuth><Farming /></RequireAuth>} />
+        <Route path="/fishing" element={<RequireAuth><Fishing /></RequireAuth>} />
         <Route path="/deckbuilder" element={<RequireAuth><DeckBuilder /></RequireAuth>} />
         <Route path="/deckbuilder/:editId" element={<RequireAuth><DeckBuilder /></RequireAuth>} />
         <Route path="/mydecks" element={<RequireAuth><DeckList /></RequireAuth>} />

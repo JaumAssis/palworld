@@ -964,7 +964,12 @@ function FindMatchDeckSelect() {
       )}
 
       {/* ---------- QUICK STEP ---------- */}
-      {pendingBattle?.waitingFor === 'quick' && (
+      {/* !pendingEffect: um Quick Card recém-jogado (ex.: Crystal Breath) pode abrir sua PRÓPRIA
+          escolha de alvo antes do Quick Step terminar de vez — o servidor manda os dois juntos
+          nessa janela (battle.waitingFor continua 'quick'). Sem essa checagem, o botão "Passar"
+          ficava clicável ao mesmo tempo que o prompt de escolher alvo, e um Pass ali travava a
+          partida (ver resolveQuickStep no TurnManager.js). */}
+      {!pendingEffect && pendingBattle?.waitingFor === 'quick' && (
         <div style={{
           display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '10px',
           background: 'rgba(0,0,0,0.6)', color: '#fff', borderRadius: '8px', padding: '6px 12px', fontSize: '12px'

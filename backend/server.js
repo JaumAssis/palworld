@@ -1387,6 +1387,13 @@ try { db.exec('ALTER TABLE players ADD COLUMN is_bot INTEGER NOT NULL DEFAULT 0'
 // Pacotes de booster ganhos (baú da Arena) e ainda não abertos — não abrem mais na hora do
 // resgate, o player abre 1 de cada vez depois (ver /api/shop/open-pending-booster).
 try { db.exec('ALTER TABLE players ADD COLUMN pending_boosters INTEGER NOT NULL DEFAULT 0'); } catch (e) {}
+// Timestamp (epoch ms) da última fisgada completa — só usado pra impedir chamar
+// /api/fishing/catch mais rápido do que o minigame no cliente levaria pra completar de verdade
+// (ver FISHING_COOLDOWN_MS), nunca exibido pro jogador.
+try { db.exec('ALTER TABLE players ADD COLUMN last_fished_at INTEGER'); } catch (e) {}
+// Iscas craftadas na Bancada de Trabalho (ver workbench_slot) — cada lançada da linha na pesca
+// consome 1 (ver /api/fishing/cast).
+try { db.exec('ALTER TABLE players ADD COLUMN bait_count INTEGER NOT NULL DEFAULT 0'); } catch (e) {}
 
 // ---------- ARENA: ranks (Bronze → Lenda) ----------
 // Limiar (pontos mínimos) pra entrar em cada rank. Pensado pra ~70 vitórias seguidas (sem nenhuma
@@ -1740,6 +1747,104 @@ app.post('/api/farming/oven-claim', requirePlayer, (req, res) => {
   db.prepare(`UPDATE players SET ${recipe.column} = ${recipe.column} + ? WHERE id = ?`).run(slot.quantity, req.playerId);
   releaseCards(req.playerId, [slot.kindling_card_number]);
   db.prepare('DELETE FROM oven_slot WHERE player_id = ?').run(req.playerId);
+
+  res.json(db.prepare('SELECT * FROM players WHERE id = ?').get(req.playerId));
+});
+
+// Bancada de Trabalho: craft de Isca (pesca) — mesmo modelo do forno (1 Pal "colocado" reserva ele
+// pelo tempo do craft, tempo reduzido pelo custo do Pal, lote de N de uma vez), só que a keyword de
+// trabalho exigida é "Crafting" em vez de "Kindling", e o item vai pra bait_count em vez de virar
+// uma coluna própria de bolo.
+const WORKBENCH_BAIT_INGREDIENT_COST = 40; // por unidade de Isca, de CADA ingrediente (wheat/lettuce/tomato)
+const WORKBENCH_BASE_MINUTES = 2;
+
+// Faixas PRÓPRIAS pra bancada (não reaproveita computeBakeReductionMinutes de propósito) — aquela
+// função foi calibrada pra base de 5min do forno; nessa base de 2min, a mesma redução (2/3.5/4min)
+// zerava o tempo de craft pra quase todo Pal de custo 1-7, tornando a Isca instantânea sempre.
+function computeWorkbenchReductionMinutes(cost) {
+  if (cost >= 1 && cost <= 4) return 0.5;
+  if (cost >= 5 && cost <= 7) return 1;
+  if (cost >= 8) return 1.5;
+  return 0; // sem custo
+}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS workbench_slot (
+    player_id INTEGER PRIMARY KEY,
+    crafter_card_number TEXT,
+    start_time TEXT,
+    ready_time TEXT,
+    quantity INTEGER NOT NULL DEFAULT 1
+  )
+`);
+
+function getActiveWorkbenchSlot(playerId) {
+  return db.prepare('SELECT * FROM workbench_slot WHERE player_id = ?').get(playerId);
+}
+
+app.post('/api/farming/craft-bait', requirePlayer, (req, res) => {
+  if (getActiveWorkbenchSlot(req.playerId)) return res.status(400).json({ error: 'Já existe algo sendo craftado na bancada.' });
+
+  const { crafterCardNumber } = req.body;
+  const quantity = Math.floor(Number(req.body.quantity) || 1);
+  if (quantity < 1) return res.status(400).json({ error: 'Quantidade inválida.' });
+
+  if (!crafterCardNumber) return res.status(400).json({ error: 'Escolha um Pal com Crafting pra trabalhar na bancada.' });
+  if (getAvailableQuantity(req.playerId, crafterCardNumber) < 1) return res.status(400).json({ error: 'Você não tem esse Pal disponível (ele pode estar ocupado em outra tarefa).' });
+  const crafterCard = db.prepare('SELECT * FROM cards WHERE card_number = ?').get(crafterCardNumber);
+  const keywords = getPalWorkKeywords(crafterCardNumber);
+  if (!keywords.includes('crafting')) return res.status(400).json({ error: 'Esse Pal não tem "Crafting".' });
+
+  const totalNeeded = WORKBENCH_BAIT_INGREDIENT_COST * quantity;
+  const player = db.prepare('SELECT * FROM players WHERE id = ?').get(req.playerId);
+  if (player.wheat < totalNeeded || player.lettuce < totalNeeded || player.tomato < totalNeeded) {
+    return res.status(400).json({ error: `Precisa de ${totalNeeded} de cada ingrediente pra fazer ${quantity}.` });
+  }
+
+  db.prepare('UPDATE players SET wheat = wheat - ?, lettuce = lettuce - ?, tomato = tomato - ? WHERE id = ?')
+    .run(totalNeeded, totalNeeded, totalNeeded, req.playerId);
+
+  const reductionMinutes = computeWorkbenchReductionMinutes(crafterCard?.cost ?? 0);
+  const perUnitMs = Math.max(0, (WORKBENCH_BASE_MINUTES - reductionMinutes) * 60 * 1000);
+  const durationMs = perUnitMs * quantity;
+  const startTime = new Date();
+  const readyTime = new Date(startTime.getTime() + durationMs);
+
+  db.prepare(`
+    INSERT INTO workbench_slot (player_id, crafter_card_number, start_time, ready_time, quantity)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(req.playerId, crafterCardNumber, startTime.toISOString(), readyTime.toISOString(), quantity);
+
+  reserveCards(req.playerId, [crafterCardNumber]);
+
+  res.json({ ...db.prepare('SELECT * FROM players WHERE id = ?').get(req.playerId), readyTime: readyTime.toISOString() });
+});
+
+app.get('/api/farming/workbench-status', requirePlayer, (req, res) => {
+  const slot = getActiveWorkbenchSlot(req.playerId);
+  if (!slot) return res.json({ active: false });
+
+  const crafterCard = db.prepare('SELECT * FROM cards WHERE card_number = ?').get(slot.crafter_card_number);
+
+  res.json({
+    active: true,
+    quantity: slot.quantity,
+    crafterPal: crafterCard ? { ...crafterCard, colors: JSON.parse(crafterCard.colors), image_url: `/${crafterCard.image_path}` } : null,
+    startTime: slot.start_time,
+    readyTime: slot.ready_time,
+    ...computeTiming(slot.start_time, slot.ready_time),
+    isReady: new Date() >= new Date(slot.ready_time)
+  });
+});
+
+app.post('/api/farming/workbench-claim', requirePlayer, (req, res) => {
+  const slot = getActiveWorkbenchSlot(req.playerId);
+  if (!slot) return res.status(400).json({ error: 'Nenhum craft em andamento na bancada.' });
+  if (new Date() < new Date(slot.ready_time)) return res.status(400).json({ error: 'Ainda não está pronto.' });
+
+  db.prepare('UPDATE players SET bait_count = bait_count + ? WHERE id = ?').run(slot.quantity, req.playerId);
+  releaseCards(req.playerId, [slot.crafter_card_number]);
+  db.prepare('DELETE FROM workbench_slot WHERE player_id = ?').run(req.playerId);
 
   res.json(db.prepare('SELECT * FROM players WHERE id = ?').get(req.playerId));
 });
@@ -2935,6 +3040,114 @@ app.post('/api/shop/open-pending-booster', requirePlayer, (req, res) => {
   db.prepare('UPDATE players SET pal_fluid = ?, pending_boosters = ? WHERE id = ?').run(newFluid, newPending, req.playerId);
 
   res.json({ cards, fluidGained, palFluid: newFluid, pendingBoosters: newPending });
+});
+
+// ---------- PESCA (minigame) ----------
+// Cada fisgada completa (client-side: peixe fisgado + barra de progresso preenchida clicando) rola
+// 1 de 4 tipos de recompensa. Nunca cobra nada pra jogar — só um cooldown servidor pra impedir
+// chamar essa rota mais rápido do que o minigame no cliente levaria (ver FISHING_COOLDOWN_MS),
+// já que o cliente só avisa "eu fisguei", quem decide o prêmio de verdade é sempre o servidor.
+const FISHING_COOLDOWN_MS = 3000;
+// Checada ANTES do sorteio ponderado abaixo — mesmo estilo de chance independente sequencial já
+// usado em maybeUpgradeToVariant (Altered Art), não é "1 dos 5 tipos" ponderado junto com os outros.
+const FISHING_BOOSTER_CHANCE = 0.02;
+// 30% de "nothing" (lixo, não ganha nada) é uma fatia exata do total — as outras 4 chances mantêm a
+// MESMA proporção relativa de antes (35:25:25:15) entre si, só escaladas por 0.7 pra sobrar espaço
+// pro "nothing" sem descaracterizar o balanceamento anterior (ex.: gold ainda é a mais provável
+// dentre as 4, ingredient/fluid seguem empatadas, card continua a mais rara).
+const FISHING_REWARD_WEIGHTS = { nothing: 30, gold: 24.5, ingredient: 17.5, pal_fluid: 17.5, card: 10.5 };
+const FISHING_GOLD_RANGE = [8, 25];
+const FISHING_INGREDIENT_RANGE = [2, 5]; // por tipo (wheat/lettuce/tomato ganham o mesmo valor)
+const FISHING_FLUID_RANGE = [5, 15];
+
+function pickWeightedKey(weights) {
+  const entries = Object.entries(weights);
+  const total = entries.reduce((sum, [, w]) => sum + w, 0);
+  let roll = Math.random() * total;
+  for (const [key, w] of entries) {
+    roll -= w;
+    if (roll <= 0) return key;
+  }
+  return entries[entries.length - 1][0];
+}
+
+function randomInt(min, max) {
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+// Consome 1 Isca ao lançar a linha (ver castLine no Fishing.jsx) — cobrada na hora do lance, não só
+// na fisgada bem-sucedida: igual pesca de verdade, a isca se gasta mesmo se o peixe escapar.
+// Sempre autoritativo no servidor (o cliente só decide QUANDO lançar, nunca se tem isca disponível).
+app.post('/api/fishing/cast', requirePlayer, (req, res) => {
+  const player = db.prepare('SELECT bait_count FROM players WHERE id = ?').get(req.playerId);
+  if (player.bait_count <= 0) return res.status(400).json({ error: 'Você não tem Iscas. Faça mais na Bancada de Trabalho (aba Farming).' });
+
+  db.prepare('UPDATE players SET bait_count = bait_count - 1 WHERE id = ?').run(req.playerId);
+  const updated = db.prepare('SELECT bait_count FROM players WHERE id = ?').get(req.playerId);
+  res.json({ baitCount: updated.bait_count });
+});
+
+app.post('/api/fishing/catch', requirePlayer, (req, res) => {
+  const player = db.prepare('SELECT * FROM players WHERE id = ?').get(req.playerId);
+  const now = Date.now();
+  if (player.last_fished_at && now - player.last_fished_at < FISHING_COOLDOWN_MS) {
+    return res.status(429).json({ error: 'Espera um pouco antes de fisgar de novo.' });
+  }
+
+  // 2% de chance de vir um booster (pra abrir na loja depois, ver /api/shop/open-pending-booster) —
+  // checado antes de tudo, igual maybeUpgradeToVariant: se bater, pula o sorteio normal de baixo.
+  if (Math.random() < FISHING_BOOSTER_CHANCE) {
+    db.prepare('UPDATE players SET pending_boosters = pending_boosters + 1, last_fished_at = ? WHERE id = ?').run(now, req.playerId);
+    const updatedPlayer = db.prepare('SELECT gold_coins, pal_fluid, wheat, lettuce, tomato, pending_boosters FROM players WHERE id = ?').get(req.playerId);
+    return res.json({ type: 'booster', amount: 1, player: updatedPlayer });
+  }
+
+  const rewardType = pickWeightedKey(FISHING_REWARD_WEIGHTS);
+  const result = { type: rewardType };
+
+  if (rewardType === 'nothing') {
+    db.prepare('UPDATE players SET last_fished_at = ? WHERE id = ?').run(now, req.playerId);
+  } else if (rewardType === 'gold') {
+    const amount = randomInt(...FISHING_GOLD_RANGE);
+    db.prepare('UPDATE players SET gold_coins = gold_coins + ?, last_fished_at = ? WHERE id = ?').run(amount, now, req.playerId);
+    result.amount = amount;
+  } else if (rewardType === 'ingredient') {
+    const amount = randomInt(...FISHING_INGREDIENT_RANGE);
+    db.prepare('UPDATE players SET wheat = wheat + ?, lettuce = lettuce + ?, tomato = tomato + ?, last_fished_at = ? WHERE id = ?')
+      .run(amount, amount, amount, now, req.playerId);
+    result.amount = amount;
+  } else if (rewardType === 'pal_fluid') {
+    const amount = randomInt(...FISHING_FLUID_RANGE);
+    db.prepare('UPDATE players SET pal_fluid = pal_fluid + ?, last_fished_at = ? WHERE id = ?').run(amount, now, req.playerId);
+    result.amount = amount;
+  } else {
+    // Mesmo sorteio/upgrade dos boosters (weightedRandomCard + maybeUpgradeToVariant) — 1 carta só,
+    // reaproveitando as MESMAS porcentagens de vir a versão Altered Art (5%/2%/15%/4%, ver
+    // maybeUpgradeToVariant), em vez de inventar uma tabela nova só pra pesca.
+    const pool = db.prepare("SELECT * FROM cards WHERE set_code = ? AND card_number NOT LIKE '%-%-%'").all(BOOSTER_SET);
+    const card = maybeUpgradeToVariant(weightedRandomCard(pool));
+    const current = db.prepare('SELECT quantity FROM player_cards WHERE player_id = ? AND card_number = ?').get(req.playerId, card.card_number)?.quantity || 0;
+
+    if (current >= maxOwnedCopies(card)) {
+      result.fluidGained = RARITY_FLUID[card.rarity] || 5;
+      db.prepare('UPDATE players SET pal_fluid = pal_fluid + ?, last_fished_at = ? WHERE id = ?').run(result.fluidGained, now, req.playerId);
+    } else {
+      result.fluidGained = 0;
+      db.prepare(`
+        INSERT INTO player_cards (player_id, card_number, quantity) VALUES (?, ?, ?)
+        ON CONFLICT(player_id, card_number) DO UPDATE SET quantity = excluded.quantity
+      `).run(req.playerId, card.card_number, current + 1);
+      db.prepare('UPDATE players SET last_fished_at = ? WHERE id = ?').run(now, req.playerId);
+    }
+
+    result.card = {
+      ...card, colors: JSON.parse(card.colors), keywords: JSON.parse(card.keywords), is_lucky: !!card.is_lucky,
+      image_url: `/${card.image_path}`
+    };
+  }
+
+  const updatedPlayer = db.prepare('SELECT gold_coins, pal_fluid, wheat, lettuce, tomato FROM players WHERE id = ?').get(req.playerId);
+  res.json({ ...result, player: updatedPlayer });
 });
 
 // ---------- Modo Arena: draft temporário estilo Hearthstone ----------
@@ -4861,6 +5074,7 @@ io.on('connection', (socket) => {
     if (!match.turnManager.pendingBattle || match.turnManager.pendingBattle.waitingFor !== 'block') return;
     match.turnManager.resolveBlock({ blockerIndex, none });
     emitState();
+    maybeRunBotTurn(); // resolver o bloqueio pode ter sido o que faltava pro bot seguir o turno dele.
   });
 
   // 7d. Jogador joga uma carta Quick/Interrupt (ou passa) durante o Quick Step do ataque do bot
@@ -4869,6 +5083,9 @@ io.on('connection', (socket) => {
     if (!match.turnManager.pendingBattle || match.turnManager.pendingBattle.waitingFor !== 'quick') return;
     match.turnManager.resolveQuickStep({ cardNumber, kind, pass });
     emitState();
+    // mesmo motivo do resolveBlock acima — sem isso, um bot cujo turno só dependesse desse fluxo
+    // (e não de um await já em andamento) ficaria parado pra sempre.
+    maybeRunBotTurn();
   });
 
   // 7d2. Jogador escolhe COMO pagar o custo do Interrupt (suspender 1 Soul, ou descartar 1 carta extra)
@@ -4878,6 +5095,7 @@ io.on('connection', (socket) => {
     if (method !== 'soul' && method !== 'discard') return;
     match.turnManager.resolveInterruptCost({ method });
     emitState();
+    maybeRunBotTurn();
   });
 
   // 7d3. Jogador escolhe QUAL carta extra descartar pro custo do Interrupt (método "descarte")
@@ -4886,6 +5104,7 @@ io.on('connection', (socket) => {
     if (!match.turnManager.pendingBattle || match.turnManager.pendingBattle.waitingFor !== 'interruptDiscardChoice') return;
     match.turnManager.resolveInterruptDiscard({ cardNumber });
     emitState();
+    maybeRunBotTurn();
   });
 
   socket.on('disconnect', () => {

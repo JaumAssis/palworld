@@ -421,6 +421,13 @@ class TurnManager {
   resolveQuickStep(choice) {
     const battle = this.pendingBattle
     if (!battle || battle.waitingFor !== 'quick') return { success: false }
+    // battle.waitingFor continua 'quick' durante TODA a escolha de alvo própria de um Quick Card
+    // recém-jogado (ex.: Crystal Breath, "Quick Choose 1 Pal...") — playQuickCard abre um
+    // pendingEffect e o Quick Step só é retomado de verdade depois que ele for resolvido (ver
+    // _pendingQuickStepContinuation). Sem essa checagem, um Pass (ou outro Quick Card) mandado
+    // NESSA janela era aceito, terminava a batalha inteira e abandonava esse pendingEffect pra
+    // sempre — travando toda ação futura, já que todo handler recusa agir com pendingEffect aberto.
+    if (this.pendingEffect) return { success: false }
 
     if (choice.pass) {
       battle.quickResolved = true
