@@ -3315,6 +3315,129 @@ app.post('/api/admin/gold/give', requireAdmin, (req, res) => {
   res.json({ username: player.username, amount, goldCoins: updated.gold_coins });
 });
 
+// Acha a sessão online (PvP ou substituto de bot) desse playerId, se houver — só usado pelas
+// ferramentas de admin. O resto do código sempre busca sessão por socket (getSessionBySocket), nunca
+// por playerId, porque cada handler já sabe de qual lado veio; aqui é o inverso (admin só tem o
+// username, precisa varrer).
+function getOnlineSessionByPlayerId(playerId) {
+  for (const session of onlineSessions.values()) {
+    if (session.sides.A.playerId === playerId || session.sides.B.playerId === playerId) return session;
+  }
+  return null;
+}
+
+// Terceira ferramenta de admin: acha o estado de partida travada de um jogador (online e/ou vs Bot)
+// antes de decidir reiniciar. Também reporta run de Arena/Expedição travada em 'in_progress'/
+// 'in_battle' mesmo sem NENHUMA sessão viva em memória (ex.: sobrevivente de um restart do
+// processo) — é justamente esse tipo de caso, sem sessão nenhuma pra reconectar sozinho, que mais
+// precisa do reset manual.
+app.post('/api/admin/match/lookup', requireAdmin, (req, res) => {
+  const { username } = req.body || {};
+  if (typeof username !== 'string') return res.status(400).json({ error: 'invalid_username' });
+
+  const player = db.prepare(`
+    SELECT p.id AS playerId, u.username AS username
+    FROM players p JOIN users u ON u.id = p.user_id
+    WHERE u.username = ?
+  `).get(username);
+  if (!player) return res.status(404).json({ error: 'Usuário não encontrado.' });
+
+  const session = getOnlineSessionByPlayerId(player.playerId);
+  const botMatch = botMatches.get(player.playerId);
+  const arenaRun = getActiveArenaRun(player.playerId);
+  const roguelikeRun = getActiveRoguelikeRun(player.playerId);
+
+  res.json({
+    username: player.username,
+    onlineMatch: session ? { matchType: session.matchType, started: !!session.turnManager } : null,
+    botMatch: botMatch ? { roguelikeRunId: botMatch.roguelikeRunId || null, started: !!botMatch.turnManager } : null,
+    stuckArenaRun: (arenaRun && arenaRun.status === 'in_progress') ? { id: arenaRun.id } : null,
+    stuckRoguelikeRun: (roguelikeRun && roguelikeRun.status === 'in_battle') ? { id: roguelikeRun.id } : null
+  });
+});
+
+const MATCH_RESET_MESSAGE = 'Um administrador reiniciou essa partida. Nenhuma derrota foi registrada.';
+
+// Reinicia a partida travada de um jogador sem contar derrota nem mexer em pontos de rank/vidas — a
+// run de Arena (draft)/Expedição volta pro estado "pronta pra continuar" (mantém vitórias/derrotas/
+// deck já acumulados, NÃO cancela nem reembolsa como /api/admin/arena/cancel), só descarta a partida
+// travada em si. Se a partida for PvP de verdade (2 humanos), o oponente TAMBÉM perde a partida em
+// andamento (sem derrota registrada pra ele também) — não tem como reiniciar só o lado de um.
+app.post('/api/admin/match/reset', requireAdmin, (req, res) => {
+  const { username } = req.body || {};
+  if (typeof username !== 'string') return res.status(400).json({ error: 'invalid_username' });
+
+  const player = db.prepare(`
+    SELECT p.id AS playerId, u.username AS username
+    FROM players p JOIN users u ON u.id = p.user_id
+    WHERE u.username = ?
+  `).get(username);
+  if (!player) return res.status(404).json({ error: 'Usuário não encontrado.' });
+
+  let resetSomething = false;
+
+  const session = getOnlineSessionByPlayerId(player.playerId);
+  if (session) {
+    resetSomething = true;
+    clearTimeout(session.chooseOrderFallbackTimer);
+    clearTimeout(session.disconnectGraceTimer);
+    for (const side of ['A', 'B']) {
+      const entry = session.sides[side];
+      if (side !== session.botSide) entry.socket.emit('match:adminReset', { message: MATCH_RESET_MESSAGE });
+      // Arena (draft) tem run própria por lado — sem isso ficava presa em 'in_progress' pra sempre,
+      // travando o jogador de entrar numa fila nova (mesmo motivo do cancelamento manual, só que
+      // aqui volta a 'ready' em vez de 'finished' — a run continua de onde parou).
+      if (entry.arenaRunId) {
+        db.prepare("UPDATE arena_runs SET status = 'ready' WHERE id = ? AND status = 'in_progress'").run(entry.arenaRunId);
+      }
+      socketRoomMap.delete(entry.socket.id);
+    }
+    onlineSessions.delete(session.roomId);
+    releaseBotFromMatch(session);
+  }
+
+  const botMatch = botMatches.get(player.playerId);
+  if (botMatch) {
+    resetSomething = true;
+    botMatches.delete(player.playerId);
+    if (botMatch.roguelikeRunId) {
+      db.prepare("UPDATE roguelike_runs SET status = 'traveling' WHERE id = ? AND status = 'in_battle'").run(botMatch.roguelikeRunId);
+    }
+    // O `match` da conexão viva do jogador é uma variável local da conexão (ver `let match` em
+    // io.on('connection')) — apagar só a entrada de botMatches não muda o que aquela conexão já tem
+    // na memória dela. Força uma reconexão (o socket.io do cliente reconecta sozinho na hora) pra
+    // essa conexão nova já nascer lendo botMatches de novo (agora vazio) — é a única forma de "zerar"
+    // o `match` de fora, já que não dá pra alcançar a closure de outra conexão diretamente.
+    const liveSocket = connectedSockets.get(player.playerId);
+    if (liveSocket) {
+      liveSocket.emit('bot:adminReset', { message: MATCH_RESET_MESSAGE });
+      liveSocket.disconnect(true);
+    }
+  }
+
+  // Sem sessão/match nenhum em memória (ex.: sobrevivente de um restart do processo, onde
+  // onlineSessions/botMatches voltam vazios do zero) — mesmo assim destrava a run pelo estado salvo
+  // no banco, senão esse é justamente o caso em que NENHUM reconnect algum resolveria sozinho.
+  if (!session) {
+    const arenaRun = getActiveArenaRun(player.playerId);
+    if (arenaRun && arenaRun.status === 'in_progress') {
+      resetSomething = true;
+      db.prepare("UPDATE arena_runs SET status = 'ready' WHERE id = ?").run(arenaRun.id);
+    }
+  }
+  if (!botMatch) {
+    const roguelikeRun = getActiveRoguelikeRun(player.playerId);
+    if (roguelikeRun && roguelikeRun.status === 'in_battle') {
+      resetSomething = true;
+      db.prepare("UPDATE roguelike_runs SET status = 'traveling' WHERE id = ?").run(roguelikeRun.id);
+    }
+  }
+
+  if (!resetSomething) return res.status(404).json({ error: 'Esse jogador não está em nenhuma partida travada agora.' });
+
+  res.json({ username: player.username, reset: true });
+});
+
 // ---------- Modo Expedição: rotas de progressão (Fase 1 — escolha de deck e mapa) ----------
 
 function getActiveRoguelikeRun(playerId) {

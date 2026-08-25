@@ -104,6 +104,15 @@ function GameBoard() {
       if (roguelikeRunId) navigate('/roguelike')
     })
 
+    // Um admin reiniciou essa partida travada (ver AdminMatchResetPanel) — o servidor já força a
+    // reconexão do socket logo em seguida (o `match` da partida vs Bot vive preso à conexão, então
+    // só assim ele nasce limpo de novo do lado do servidor); aqui só avisa e manda pro menu, já que
+    // não tem mais nenhum estado válido pra continuar mostrando nessa tela.
+    socket.on('bot:adminReset', (data) => {
+      alert(data.message)
+      navigate('/')
+    })
+
     return () => {
       clearTimeout(damageRevealTimerRef.current)
       socket.off('bot:rpsPrompt')
@@ -111,6 +120,7 @@ function GameBoard() {
       socket.off('bot:mulliganPrompt')
       socket.off('bot:state')
       socket.off('bot:error')
+      socket.off('bot:adminReset')
     }
   }, [])
 

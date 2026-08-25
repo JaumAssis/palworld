@@ -671,6 +671,150 @@ function AdminGoldPanel({ onClose }) {
   )
 }
 
+// Terceira ferramenta de admin: busca um jogador e reinicia a partida travada dele (online e/ou vs
+// Bot, incluindo o caso raro de run de Arena/Expedição travada sem sessão viva nenhuma — ver
+// /api/admin/match/reset) sem contar derrota nem mexer em pontos de rank/vidas. Mesmo layout/fluxo
+// dos outros 2 painéis — busca → mostra o que foi achado → confirma a ação.
+function AdminMatchResetPanel({ onClose }) {
+  const { t } = useLanguage()
+  const [checking, setChecking] = useState(true)
+  const [isAdmin, setIsAdmin] = useState(false)
+
+  const [username, setUsername] = useState('')
+  const [lookupResult, setLookupResult] = useState(null)
+  const [lookupError, setLookupError] = useState('')
+  const [actionMsg, setActionMsg] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [showResetConfirm, setShowResetConfirm] = useState(false)
+
+  useEffect(() => {
+    apiFetch('/api/admin/status').then(r => r.json()).then(data => {
+      setIsAdmin(!!data.isAdmin)
+      setChecking(false)
+    })
+  }, [])
+
+  const lookup = () => {
+    if (!username.trim()) return
+    setLookupError('')
+    setActionMsg('')
+    setLookupResult(null)
+    setBusy(true)
+    apiJson('/api/admin/match/lookup', { method: 'POST', body: JSON.stringify({ username: username.trim() }) })
+      .then(setLookupResult)
+      .catch(err => setLookupError(err.message || t('adminUserNotFound')))
+      .finally(() => setBusy(false))
+  }
+
+  const hasStuckMatch = lookupResult && (
+    lookupResult.onlineMatch || lookupResult.botMatch || lookupResult.stuckArenaRun || lookupResult.stuckRoguelikeRun
+  )
+
+  const resetMatch = () => {
+    setShowResetConfirm(false)
+    setBusy(true)
+    apiJson('/api/admin/match/reset', { method: 'POST', body: JSON.stringify({ username: username.trim() }) })
+      .then(data => {
+        setActionMsg(t('adminMatchResetDoneMsg', { username: data.username }))
+        lookup() // recarrega o painel — deve mostrar "sem partida travada" agora
+      })
+      .catch(err => setLookupError(err.message))
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+    }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: 'var(--panel-w-sm)', background: '#fff', borderRadius: '20px',
+        padding: 'var(--sp-lg)', boxShadow: '0 20px 60px rgba(0,0,0,0.4)', textAlign: 'left'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <h2 style={{ margin: 0, color: '#222', fontSize: 'var(--fs-lg)' }}>🔄 {t('adminMatchPanelTitle')}</h2>
+          <button onClick={onClose} style={{ padding: '4px 10px', fontSize: 'var(--fs-sm)' }}>✕</button>
+        </div>
+
+        {checking && <p style={{ color: '#666', fontSize: 'var(--fs-sm)' }}>{t('loading')}</p>}
+
+        {!checking && !isAdmin && (
+          <p style={{ color: '#666', fontSize: 'var(--fs-sm)' }}>{t('adminSessionExpired')}</p>
+        )}
+
+        {!checking && isAdmin && (
+          <div>
+            <p style={{ color: '#777', fontSize: 'var(--fs-2xs)', margin: '0 0 10px' }}>{t('adminMatchToolDesc')}</p>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input
+                type="text"
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && lookup()}
+                placeholder={t('adminUsernamePlaceholder')}
+                style={{ flex: 1, padding: 'var(--sp-sm)', fontSize: 'var(--fs-sm)' }}
+              />
+              <button className="sign-button" onClick={lookup} disabled={busy || !username.trim()}>{t('adminSearchButton')}</button>
+            </div>
+
+            {lookupError && <p style={{ color: 'red', fontSize: 'var(--fs-xs)', marginTop: '8px' }}>{lookupError}</p>}
+            {actionMsg && <p style={{ color: '#2e7d32', fontSize: 'var(--fs-xs)', marginTop: '8px' }}>{actionMsg}</p>}
+
+            {lookupResult && (
+              <div style={{ marginTop: '14px', background: '#f5f5f5', borderRadius: '10px', padding: 'var(--sp-md)', color: '#222', fontSize: 'var(--fs-sm)' }}>
+                <p style={{ margin: '0 0 10px' }}><strong>{lookupResult.username}</strong></p>
+                {hasStuckMatch ? (
+                  <>
+                    <ul style={{ margin: '0 0 10px', paddingLeft: '18px', fontSize: 'var(--fs-2xs)', color: '#555' }}>
+                      {lookupResult.onlineMatch && (
+                        <li>{t('adminMatchStatusOnline', { matchType: lookupResult.onlineMatch.matchType })}</li>
+                      )}
+                      {lookupResult.botMatch && <li>{t('adminMatchStatusBot')}</li>}
+                      {lookupResult.stuckArenaRun && (
+                        <li>{t('adminMatchStatusArenaRun', { id: lookupResult.stuckArenaRun.id })}</li>
+                      )}
+                      {lookupResult.stuckRoguelikeRun && (
+                        <li>{t('adminMatchStatusRoguelikeRun', { id: lookupResult.stuckRoguelikeRun.id })}</li>
+                      )}
+                    </ul>
+                    <button
+                      className="sign-button" onClick={() => setShowResetConfirm(true)} disabled={busy}
+                      style={{ width: '100%', background: '#a5541b', color: '#fff' }}
+                    >
+                      {t('adminMatchResetButton')}
+                    </button>
+                  </>
+                ) : (
+                  <p style={{ margin: 0, fontSize: 'var(--fs-2xs)', color: '#999' }}>{t('adminMatchNoStuckMatch')}</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {showResetConfirm && (
+          <div onClick={() => setShowResetConfirm(false)} style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100
+          }}>
+            <div onClick={e => e.stopPropagation()} style={{
+              width: 'var(--panel-w-xs)', background: '#fff', borderRadius: '14px', padding: 'var(--sp-lg)', textAlign: 'center'
+            }}>
+              <p style={{ color: '#222', fontSize: 'var(--fs-sm)' }}>{t('adminMatchResetConfirm', { username })}</p>
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '14px' }}>
+                <button className="sign-button" onClick={resetMatch} style={{ background: '#a5541b', color: '#fff' }}>
+                  {t('adminMatchResetConfirmYes')}
+                </button>
+                <button className="sign-button" onClick={() => setShowResetConfirm(false)}>{t('adminMatchResetConfirmNo')}</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function MissionsPopup({ onClose }) {
   const { t } = useLanguage()
   const [missions, setMissions] = useState([])
@@ -859,6 +1003,7 @@ function MainMenu() {
   const [showInfo, setShowInfo] = useState(false)
   const [showAdmin, setShowAdmin] = useState(false)
   const [showAdminGold, setShowAdminGold] = useState(false)
+  const [showAdminMatchReset, setShowAdminMatchReset] = useState(false)
   // Só true pra quem já passou pelo /admin-login (rota sem link nenhum na UI, ver AdminLoginPage) —
   // os botões 🛠️/💰 abaixo só são renderizados quando isso é true, então nenhum outro usuário
   // logado vê rastro nenhum de admin em lugar nenhum (antes disso aparecia pra qualquer um que logasse).
@@ -1025,6 +1170,16 @@ function MainMenu() {
           {isAdminSession && (
             <button
               className="currency-badge"
+              onClick={() => setShowAdminMatchReset(true)}
+              title={t('adminMatchPanelTitle')}
+              style={{ padding: 'var(--sp-xs) var(--sp-md)', fontSize: 'var(--fs-md)', cursor: 'pointer' }}
+            >
+              🔄
+            </button>
+          )}
+          {isAdminSession && (
+            <button
+              className="currency-badge"
               onClick={() => setShowAdminGold(true)}
               title={t('adminGoldPanelTitle')}
               style={{ padding: 'var(--sp-xs) var(--sp-md)', fontSize: 'var(--fs-md)', cursor: 'pointer' }}
@@ -1057,6 +1212,7 @@ function MainMenu() {
 
       {showAdmin && <AdminPanel onClose={() => { setShowAdmin(false); refreshPlayer() }} />}
       {showAdminGold && <AdminGoldPanel onClose={() => { setShowAdminGold(false); refreshPlayer() }} />}
+      {showAdminMatchReset && <AdminMatchResetPanel onClose={() => setShowAdminMatchReset(false)} />}
     </div>
   )
 }

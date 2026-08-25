@@ -156,6 +156,15 @@ function FindMatchDeckSelect() {
       setStage('opponentLeft')
     })
 
+    // Um admin reiniciou essa partida travada (ver AdminMatchResetPanel) — sem derrota registrada,
+    // então não faz sentido reaproveitar match:opponentLeft (que implica vitória por W.O.). Só avisa
+    // e manda de volta pro menu; se a run de Arena/Expedição envolvida seguir de onde parou, o
+    // jogador acessa ela de novo por lá.
+    socket.on('match:adminReset', ({ message }) => {
+      alert(message)
+      navigate('/', { replace: true })
+    })
+
     // Desafio direto (clicar no nick de alguém no chat)
     socket.on('lobbyChat:challengeSent', ({ challengeId, targetUsername }) => {
       setOutgoingChallengeId(challengeId)
@@ -186,6 +195,7 @@ function FindMatchDeckSelect() {
       socket.off('match:state')
       socket.off('match:error')
       socket.off('match:opponentLeft')
+      socket.off('match:adminReset')
       socket.off('lobbyChat:challengeSent')
       socket.off('lobbyChat:challengeReceived')
       socket.off('lobbyChat:challengeDenied')
