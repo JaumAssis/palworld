@@ -687,6 +687,12 @@ function AdminMatchResetPanel({ onClose }) {
   const [actionMsg, setActionMsg] = useState('')
   const [busy, setBusy] = useState(false)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
+  // Lista ao vivo de partidas em andamento (ver /api/admin/matches/active) — pra dar pro admin uma
+  // visão geral e notar sozinho uma travada de verdade, em vez de precisar já saber o username de
+  // quem reclamou. Só busca/atualiza enquanto o painel está aberto e a sessão de admin é válida.
+  const [activeMatches, setActiveMatches] = useState(null)
+  const [unstuckMsg, setUnstuckMsg] = useState('')
+  const [unstuckBusy, setUnstuckBusy] = useState(null) // username sendo destravado agora (desabilita só o botão dele)
 
   useEffect(() => {
     apiFetch('/api/admin/status').then(r => r.json()).then(data => {
@@ -694,6 +700,41 @@ function AdminMatchResetPanel({ onClose }) {
       setChecking(false)
     })
   }, [])
+
+  useEffect(() => {
+    if (!isAdmin) return
+    const loadActive = () => apiFetch('/api/admin/matches/active').then(r => r.json()).then(setActiveMatches).catch(() => {})
+    loadActive()
+    const poll = setInterval(loadActive, 5000)
+    return () => clearInterval(poll)
+  }, [isAdmin])
+
+  const unstick = (targetUsername) => {
+    setUnstuckMsg('')
+    setUnstuckBusy(targetUsername)
+    apiJson('/api/admin/matches/unstick', { method: 'POST', body: JSON.stringify({ username: targetUsername }) })
+      .then(() => setUnstuckMsg(t('adminMatchUnstuckMsg', { username: targetUsername })))
+      .catch(err => setUnstuckMsg(err.message))
+      .finally(() => setUnstuckBusy(null))
+  }
+
+  // Junta as 2 listas (online + vs Bot/Expedição) num formato único pra renderizar, com os que têm
+  // um pendingEffect aberto primeiro (os mais prováveis de precisar de atenção) e, entre esses, o
+  // mais antigo primeiro.
+  const matchRows = activeMatches ? [
+    ...activeMatches.online.map(m => ({
+      key: `online-${m.roomId}`, usernames: m.usernames.filter(u => u !== '(bot)'),
+      label: `${m.matchType} — ${m.usernames.join(' vs ')}`, ...m
+    })),
+    ...activeMatches.bot.map(m => ({
+      key: `bot-${m.playerId}`, usernames: [m.username],
+      label: m.roguelikeRunId ? `Expedição — ${m.username}` : `vs Bot — ${m.username}`, ...m
+    }))
+  ].sort((a, b) => {
+    const ageA = a.pendingEffect?.ageMs ?? -1
+    const ageB = b.pendingEffect?.ageMs ?? -1
+    return ageB - ageA
+  }) : []
 
   const lookup = () => {
     if (!username.trim()) return
@@ -745,6 +786,37 @@ function AdminMatchResetPanel({ onClose }) {
 
         {!checking && isAdmin && (
           <div>
+            <h3 style={{ margin: '0 0 6px', color: '#222', fontSize: 'var(--fs-md)' }}>{t('adminActiveMatchesTitle')}</h3>
+            {unstuckMsg && <p style={{ color: '#2e7d32', fontSize: 'var(--fs-xs)', margin: '0 0 8px' }}>{unstuckMsg}</p>}
+            <div style={{ maxHeight: '220px', overflowY: 'auto', border: '1px solid #eee', borderRadius: '8px', marginBottom: '16px' }}>
+              {matchRows.length === 0 ? (
+                <p style={{ margin: 0, padding: 'var(--sp-sm)', fontSize: 'var(--fs-2xs)', color: '#999' }}>{t('adminNoActiveMatches')}</p>
+              ) : matchRows.map(row => {
+                const stuck = row.pendingEffect != null
+                return (
+                  <div key={row.key} style={{
+                    padding: 'var(--sp-sm)', borderBottom: '1px solid #f0f0f0', fontSize: 'var(--fs-2xs)',
+                    background: stuck ? '#fff3e0' : 'transparent'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ color: '#222' }}>{row.label} — {row.currentPhase || '?'} ({row.activePlayerName || '?'})</span>
+                      {stuck && row.usernames.map(u => (
+                        <button key={u} className="sign-button" disabled={unstuckBusy === u}
+                                onClick={() => unstick(u)} style={{ padding: '2px 8px', fontSize: 'var(--fs-2xs)', background: '#a5541b', color: '#fff', flexShrink: 0 }}>
+                          {t('adminUnstickButton')}
+                        </button>
+                      ))}
+                    </div>
+                    {stuck && (
+                      <p style={{ margin: '4px 0 0', color: '#a5541b', fontWeight: 600 }}>
+                        {t('adminStuckSince', { kind: row.pendingEffect.kind, seconds: Math.round((row.pendingEffect.ageMs || 0) / 1000) })}
+                      </p>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
             <p style={{ color: '#777', fontSize: 'var(--fs-2xs)', margin: '0 0 10px' }}>{t('adminMatchToolDesc')}</p>
             <div style={{ display: 'flex', gap: '8px' }}>
               <input

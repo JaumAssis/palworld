@@ -497,7 +497,7 @@ function finishArenaDraftRun(session) {
 // próximo trecho do mapa (não há recompensa nem escolha pendente pra resolver); vitória de Boss
 // encerra a run em vitória; vitória normal abre a escolha de recompensa (1-de-3, só Structure/
 // Gear/Event) — o nó só vira 'cleared' quando o pick for resolvido (ver /api/roguelike/resolve-choice).
-// Chamado 1x por partida via checkRoguelikeBattleResult, dentro do emitState() do socket vs Bot.
+// Chamado 1x por partida via checkBotRoguelikeBattleResult, dentro de emitBotState (modo vs Bot).
 const ROGUELIKE_BATTLE_WIN_DOGECOINS = 25; // por vitória em batalha — proposta, ajustável
 
 // Fórmula de conversão ao fim de uma run — ajustada depois do feedback de que gold estava fácil
@@ -674,7 +674,11 @@ function emitMatchState(session) {
 // caía sempre no erro "deck ainda não está pronto" — o run.status já tinha saído de 'ready' assim
 // que a partida pareou, então a checagem de fila rejeitava, mesmo a partida estando 100% válida.
 function resyncMatchState(session, socket) {
-  if (session.turnManager) { emitMatchState(session); return; }
+  if (session.turnManager) {
+    forceResolveStalePendingEffect(session.turnManager);
+    emitMatchState(session);
+    return;
+  }
 
   const side = getSideBySocket(session, socket);
   if (session.rpsWinnerSide) {
@@ -1479,6 +1483,189 @@ function computeTiming(startTimeIso, readyTimeIso) {
   const remainingMs = Math.max(0, new Date(readyTimeIso).getTime() - Date.now());
   return { totalMs, remainingMs };
 }
+
+// Tempo máximo que um pendingEffect pode ficar aberto sem ninguém conseguir resolvê-lo antes da
+// rede de segurança abaixo forçar uma resolução padrão — bem generoso (não é pra apressar ninguém
+// pensando na jogada), só existe pra recuperar de bugs ainda não encontrados que deixem esse
+// estado preso pra sempre (mesmo espírito do CHOOSE_ORDER_FALLBACK_MS/teto de iterações do
+// BotBrain, agora pra qualquer efeito pendente de qualquer carta, não um caso específico só).
+const STALE_PENDING_EFFECT_MS = 45000;
+
+// Resolve o pendingEffect ATUAL com o padrão mais seguro possível — pula se for opcional, senão
+// pega o 1º alvo/opção/carta válida (nunca inventa um valor fora do que o próprio pendingEffect já
+// oferecia). Extraído de forceResolveStalePendingEffect pra poder ser chamado tanto pela rede de
+// segurança automática (só depois de 45s parado) quanto por um admin clicando "Destravar" na hora
+// (ver /api/admin/matches/unstick) — mesma lógica, só a condição de "quando" chamar muda.
+function resolvePendingEffectWithDefaults(tm) {
+  const pending = tm.pendingEffect;
+  if (!pending) return false;
+
+  console.warn(`[watchdog] resolvendo pendingEffect (kind=${pending.kind}, carta=${pending.sourceCardName || '?'}) com padrão seguro.`);
+
+  if (pending.kind === 'modal') {
+    EffectEngine.resolveModalChoice(tm, 0);
+  } else if (pending.kind === 'cardChoice') {
+    if (pending.optional) {
+      EffectEngine.resolveCardChoice(tm, { skip: true });
+    } else {
+      const idx = (pending.cards || []).findIndex(c => c.selectable);
+      EffectEngine.resolveCardChoice(tm, { index: idx >= 0 ? idx : 0 });
+    }
+  } else if (pending.kind === 'amount') {
+    EffectEngine.continuePendingEffect(tm, { amount: pending.min });
+  } else {
+    // 'effect' ou 'cost'
+    if (pending.optional) {
+      EffectEngine.continuePendingEffect(tm, { skip: true });
+    } else if (pending.validTargets && pending.validTargets.length > 0) {
+      const target = pending.validTargets[0];
+      EffectEngine.continuePendingEffect(tm, { owner: target.owner, index: target.index, zone: target.zone });
+    } else {
+      // Não opcional mas sem alvo válido nenhum (situação anômala) — ainda assim pula, pra não
+      // ficar preso pra sempre; pior caso é o efeito não aplicar nada, nunca a partida travar.
+      EffectEngine.continuePendingEffect(tm, { skip: true });
+    }
+  }
+  return true;
+}
+
+// Chamada nos pontos de reconexão/resync (onde o jogador preso mais naturalmente reaparece: recarregar
+// a página, reabrir a aba) — ver TurnManager.js pro getter/setter que registra `_pendingEffectSetAt`
+// em TODA atribuição de pendingEffect, sem precisar tocar nos ~16 lugares em EffectEngine.js que
+// abrem um. Só age depois de STALE_PENDING_EFFECT_MS — não interrompe ninguém ainda decidindo a jogada.
+function forceResolveStalePendingEffect(tm) {
+  const pending = tm.pendingEffect;
+  if (!pending || !tm._pendingEffectSetAt) return false;
+  if (Date.now() - tm._pendingEffectSetAt < STALE_PENDING_EFFECT_MS) return false;
+  return resolvePendingEffectWithDefaults(tm);
+}
+
+// ---------- Versões "globais" (fora de qualquer closure de socket) do trio emitState/
+// checkWinMission/checkRoguelikeBattleResult/maybeRunBotTurn do modo vs Bot ----------
+// Extraídas da closure de io.on('connection') pra poderem ser chamadas de QUALQUER lugar — o motivo
+// direto é a varredura periódica logo abaixo (STALE_PENDING_EFFECT_SWEEP_MS), que precisa notificar
+// o jogador certo assim que destrava um pendingEffect preso, sem esperar ele reconectar/recarregar
+// pra isso acontecer (diferente do forceResolveStalePendingEffect chamado nos pontos de reconexão,
+// que só agia quando o jogador voltava sozinho). Os handlers dentro de io.on('connection') continuam
+// com `emitState()`/`maybeRunBotTurn()` funcionando idênticos a antes — viram só um repasse fino pra
+// essas versões globais (ver logo abaixo de `let match = ...`), nenhum comportamento muda pra eles.
+function checkBotWinMission(match, playerId) {
+  if (match && match.turnManager.gameOver && match.turnManager.winner === match.playerState && !match.winCounted) {
+    incrementMission(playerId, 'win_games', null, 1);
+    match.winCounted = true;
+  }
+}
+
+function checkBotRoguelikeBattleResult(match) {
+  if (!match || !match.roguelikeRunId || match.roguelikeResultApplied || !match.turnManager.gameOver) return;
+  applyRoguelikeBattleResult(match.roguelikeRunId, match.turnManager.winner === match.playerState);
+  match.roguelikeResultApplied = true;
+}
+
+function emitBotState(match, socket, playerId) {
+  if (!match) return;
+  checkBotWinMission(match, playerId);
+  checkBotRoguelikeBattleResult(match);
+  const { turnManager } = match;
+
+  const currentlyNight = turnManager.isNight;
+  if (match._lastKnownNight === undefined) match._lastKnownNight = currentlyNight;
+  if (currentlyNight !== match._lastKnownNight) {
+    turnManager._addLog(currentlyNight ? 'Anoiteceu.' : 'Amanheceu.');
+    match._lastKnownNight = currentlyNight;
+  }
+
+  const pending = turnManager.pendingEffect;
+  const battle = turnManager.pendingBattle;
+  socket.emit('bot:state', {
+    turnNumber: turnManager.turnNumber,
+    currentPhase: turnManager.currentPhase,
+    activePlayer: turnManager.activePlayer.playerName,
+    isPlayerTurn: turnManager.activePlayer === match.playerState,
+    player: match.playerState.toPublicState(match.botState),
+    bot: match.botState.toPublicState(match.playerState),
+    hand: match.playerState.hand,
+    isNight: turnManager.isNight,
+    gameOver: turnManager.gameOver,
+    winner: turnManager.winner ? turnManager.winner.playerName : null,
+    log: turnManager.log.slice(-MATCH_LOG_TAIL),
+    logTotal: turnManager.log.length,
+    pendingEffect: pending ? {
+      kind: pending.kind,
+      sourceCardName: pending.sourceCardName,
+      description: pending.description,
+      optional: pending.optional,
+      validTargets: pending.validTargets,
+      min: pending.min,
+      max: pending.max,
+      options: pending.options ? pending.options.map(o => o.description) : null,
+      cards: pending.cards ? pending.cards.map(entry => ({
+        cardNumber: entry.card.card_number, name: entry.card.name, imageUrl: entry.card.image_url, selectable: entry.selectable
+      })) : null
+    } : null,
+    pendingBattle: battle ? {
+      waitingFor: battle.waitingFor,
+      attackerName: battle.attackerInstance.data.name,
+      targetType: battle.target.type,
+      targetName: battle.target.type === 'player' ? null : battle.target.instance.data.name,
+      validBlockers: (battle.validBlockers || []).map(p => match.playerState.basePals.indexOf(p)),
+      quickOptions: (battle.quickOptions || []).map(o => ({
+        cardNumber: o.card.card_number, name: o.card.name, imageUrl: o.card.image_url, kind: o.kind
+      })),
+      interruptCard: battle.interruptCard ? {
+        cardNumber: battle.interruptCard.card_number, name: battle.interruptCard.name, imageUrl: battle.interruptCard.image_url
+      } : null
+    } : null,
+    lastDamageReveal: turnManager.lastDamageReveal
+  });
+}
+
+async function runBotTurnGlobal(match, socket, playerId) {
+  await BotBrain.playTurn({
+    tm: match.turnManager,
+    self: match.botState,
+    opponent: match.playerState,
+    emit: () => emitBotState(match, socket, playerId),
+    isAlive: () => !!match && !match.turnManager.gameOver && socket.connected,
+    delay,
+    timing: BotBrain.VS_PLAYER_TIMING,
+    skill: match.botSkill
+  });
+}
+
+function maybeRunBotTurnGlobal(match, socket, playerId) {
+  if (!match || !match.turnManager || match.turnManager.gameOver) return;
+  if (match.turnManager.activePlayer === match.botState) {
+    runBotTurnGlobal(match, socket, playerId)
+      .catch(err => console.error(`[bot] erro rodando turno do bot (player ${playerId}):`, err));
+  }
+}
+
+// Rede de segurança automática de VERDADE: varre todas as partidas em andamento periodicamente e
+// resolve sozinha qualquer pendingEffect preso há mais de STALE_PENDING_EFFECT_MS, empurrando o
+// estado atualizado na hora — sem precisar que o jogador reconecte/recarregue a página pra disparar
+// a recuperação (isso já existia nos pontos de reconexão, mas só agia quando o jogador voltava
+// sozinho). Se o jogador estiver offline no momento (ex.: fechou a aba), ainda assim resolve o
+// estado do jogo (pra já estar destravado quando ele voltar) — só não tem socket real pra empurrar
+// nada, daí o socket-dummy abaixo.
+const STALE_PENDING_EFFECT_SWEEP_MS = 10000;
+const DUMMY_SOCKET = { connected: true, emit: () => {} };
+
+setInterval(() => {
+  for (const session of onlineSessions.values()) {
+    if (session.turnManager && forceResolveStalePendingEffect(session.turnManager)) {
+      emitMatchState(session); // já chama maybeRunOnlineBotTurn sozinho no final
+    }
+  }
+
+  for (const [playerId, match] of botMatches.entries()) {
+    if (match.turnManager && forceResolveStalePendingEffect(match.turnManager)) {
+      const liveSocket = connectedSockets.get(playerId) || DUMMY_SOCKET;
+      emitBotState(match, liveSocket, playerId);
+      maybeRunBotTurnGlobal(match, liveSocket, playerId);
+    }
+  }
+}, STALE_PENDING_EFFECT_SWEEP_MS);
 
 // ---------- FARMING ----------
 // Requisitos de work_keywords: "Farming" cobre plantar+regar, "Collecting" cobre colheita.
@@ -3651,6 +3838,92 @@ app.post('/api/admin/match/reset', requireAdmin, (req, res) => {
   res.json({ username: player.username, reset: true });
 });
 
+// Resume um único pendingEffect (kind/carta/há quanto tempo travado) — usado tanto pelo painel de
+// admin (lista ao vivo abaixo) quanto pra montar o texto de diagnóstico exibido pro admin.
+function describePendingEffect(tm) {
+  if (!tm || !tm.pendingEffect) return null;
+  return {
+    kind: tm.pendingEffect.kind,
+    sourceCardName: tm.pendingEffect.sourceCardName || null,
+    ageMs: tm._pendingEffectSetAt ? Date.now() - tm._pendingEffectSetAt : null
+  };
+}
+
+// Lista TODAS as partidas em andamento agora (online + vs Bot/Expedição) com o suficiente pra um
+// admin bater o olho e notar uma travada de verdade: fase atual, de quem é a vez, e — o mais
+// importante — se tem um pendingEffect aberto e há quanto tempo (ver getter/setter em
+// TurnManager.js). Não filtra nada no servidor de propósito; o painel decide como destacar.
+app.get('/api/admin/matches/active', requireAdmin, (req, res) => {
+  const online = [];
+  for (const session of onlineSessions.values()) {
+    const tm = session.turnManager;
+    online.push({
+      roomId: session.roomId,
+      matchType: session.matchType,
+      usernames: ['A', 'B'].map(side => side === session.botSide ? '(bot)' : (getUsernameForPlayer(session.sides[side].playerId) || '?')),
+      turnNumber: tm ? tm.turnNumber : null,
+      currentPhase: tm ? tm.currentPhase : null,
+      activePlayerName: tm ? tm.activePlayer.playerName : null,
+      pendingEffect: describePendingEffect(tm),
+      pendingBattle: (tm && tm.pendingBattle) ? { waitingFor: tm.pendingBattle.waitingFor } : null
+    });
+  }
+
+  const bot = [];
+  for (const [playerId, match] of botMatches.entries()) {
+    const tm = match.turnManager;
+    bot.push({
+      playerId,
+      username: getUsernameForPlayer(playerId) || '?',
+      roguelikeRunId: match.roguelikeRunId || null,
+      turnNumber: tm ? tm.turnNumber : null,
+      currentPhase: tm ? tm.currentPhase : null,
+      activePlayerName: tm ? tm.activePlayer.playerName : null,
+      pendingEffect: describePendingEffect(tm),
+      pendingBattle: (tm && tm.pendingBattle) ? { waitingFor: tm.pendingBattle.waitingFor } : null
+    });
+  }
+
+  res.json({ online, bot });
+});
+
+// Destrava SÓ o efeito pendente (mesma resolução com padrão seguro da rede de segurança automática,
+// só que na hora, sem esperar os 45s) — bem mais leve que /api/admin/match/reset, que mata a
+// partida inteira; aqui o jogo continua de onde estava, só a escolha travada é respondida por ele.
+app.post('/api/admin/matches/unstick', requireAdmin, (req, res) => {
+  const { username } = req.body || {};
+  if (typeof username !== 'string') return res.status(400).json({ error: 'invalid_username' });
+
+  const player = db.prepare(`
+    SELECT p.id AS playerId, u.username AS username
+    FROM players p JOIN users u ON u.id = p.user_id
+    WHERE u.username = ?
+  `).get(username);
+  if (!player) return res.status(404).json({ error: 'Usuário não encontrado.' });
+
+  const session = getOnlineSessionByPlayerId(player.playerId);
+  if (session && session.turnManager && session.turnManager.pendingEffect) {
+    resolvePendingEffectWithDefaults(session.turnManager);
+    emitMatchState(session); // função global — empurra o estado novo pros 2 lados na hora
+    return res.json({ username: player.username, unstuck: true });
+  }
+
+  const botMatch = botMatches.get(player.playerId);
+  if (botMatch && botMatch.turnManager && botMatch.turnManager.pendingEffect) {
+    resolvePendingEffectWithDefaults(botMatch.turnManager);
+    // emitBotState agora é global (extraída da closure de conexão pra varredura periódica poder
+    // chamar de fora) — empurra o estado novo na hora, sem precisar mais forçar uma reconexão.
+    const liveSocket = connectedSockets.get(player.playerId);
+    if (liveSocket) {
+      emitBotState(botMatch, liveSocket, player.playerId);
+      maybeRunBotTurnGlobal(botMatch, liveSocket, player.playerId);
+    }
+    return res.json({ username: player.username, unstuck: true });
+  }
+
+  return res.status(404).json({ error: 'Esse jogador não tem nenhum efeito pendente travado agora.' });
+});
+
 // ---------- Modo Expedição: rotas de progressão (Fase 1 — escolha de deck e mapa) ----------
 
 function getActiveRoguelikeRun(playerId) {
@@ -4547,83 +4820,16 @@ io.on('connection', (socket) => {
   // — assim sobrevivem à reconexão junto com o resto do estado. Se fossem closures locais, uma
   // reconexão resetaria essas flags pra false enquanto match.turnManager.gameOver continuasse true,
   // e o próximo emitState() contaria a mesma vitória/resultado de run 2x.
-  function checkWinMission() {
-    if (match && match.turnManager.gameOver && match.turnManager.winner === match.playerState && !match.winCounted) {
-      incrementMission(playerId, 'win_games', null, 1);
-      match.winCounted = true;
-    }
-  }
-
-  // Aplica o resultado da batalha na run do Modo Expedição (vidas, recompensa, fim de run) 1x só
-  // por partida — equivalente ao checkWinMission acima, mas só dispara quando a partida nasceu de
-  // um roguelikeRunId (ver bot:start). Bot de batalha comum (deckId) nunca tem essa propriedade.
-  function checkRoguelikeBattleResult() {
-    if (!match || !match.roguelikeRunId || match.roguelikeResultApplied || !match.turnManager.gameOver) return;
-    applyRoguelikeBattleResult(match.roguelikeRunId, match.turnManager.winner === match.playerState);
-    match.roguelikeResultApplied = true;
-  }
-
-  function emitState() {
-    if (!match) return;
-    checkWinMission();
-    checkRoguelikeBattleResult();
-    const { turnManager } = match;
-
-    // Night (5.3) é um estado contínuo (ex: Shadowbeak "enquanto descansada, é noite") — não é uma
-    // ação única como "It becomes night", então nunca tinha uma linha de log avisando a transição.
-    const currentlyNight = turnManager.isNight;
-    if (match._lastKnownNight === undefined) match._lastKnownNight = currentlyNight;
-    if (currentlyNight !== match._lastKnownNight) {
-      turnManager._addLog(currentlyNight ? 'Anoiteceu.' : 'Amanheceu.');
-      match._lastKnownNight = currentlyNight;
-    }
-
-    const pending = turnManager.pendingEffect;
-    const battle = turnManager.pendingBattle;
-    socket.emit('bot:state', {
-      turnNumber: turnManager.turnNumber,
-      currentPhase: turnManager.currentPhase,
-      activePlayer: turnManager.activePlayer.playerName,
-      isPlayerTurn: turnManager.activePlayer === match.playerState,
-      player: match.playerState.toPublicState(match.botState),
-      bot: match.botState.toPublicState(match.playerState),
-      hand: match.playerState.hand, // mão completa só pro dono
-      isNight: turnManager.isNight,
-      gameOver: turnManager.gameOver,
-      winner: turnManager.winner ? turnManager.winner.playerName : null,
-      log: turnManager.log.slice(-MATCH_LOG_TAIL),
-      logTotal: turnManager.log.length,
-      pendingEffect: pending ? {
-        kind: pending.kind,
-        sourceCardName: pending.sourceCardName,
-        description: pending.description,
-        optional: pending.optional,
-        validTargets: pending.validTargets,
-        min: pending.min,
-        max: pending.max,
-        options: pending.options ? pending.options.map(o => o.description) : null,
-        cards: pending.cards ? pending.cards.map(entry => ({
-          cardNumber: entry.card.card_number, name: entry.card.name, imageUrl: entry.card.image_url, selectable: entry.selectable
-        })) : null
-      } : null,
-      pendingBattle: battle ? {
-        waitingFor: battle.waitingFor,
-        attackerName: battle.attackerInstance.data.name,
-        // Sem isso, o jogador via só "X está atacando!" sem saber SE é a própria cara dele, um
-        // Pal ou uma Structure — o prompt de bloqueio/Quick Step precisa dizer o alvo de verdade.
-        targetType: battle.target.type,
-        targetName: battle.target.type === 'player' ? null : battle.target.instance.data.name,
-        validBlockers: (battle.validBlockers || []).map(p => match.playerState.basePals.indexOf(p)),
-        quickOptions: (battle.quickOptions || []).map(o => ({
-          cardNumber: o.card.card_number, name: o.card.name, imageUrl: o.card.image_url, kind: o.kind
-        })),
-        interruptCard: battle.interruptCard ? {
-          cardNumber: battle.interruptCard.card_number, name: battle.interruptCard.name, imageUrl: battle.interruptCard.image_url
-        } : null
-      } : null,
-      lastDamageReveal: turnManager.lastDamageReveal
-    });
-  }
+  //
+  // checkWinMission/emitState viraram repasses finos pras versões globais (ver checkBotWinMission/
+  // checkBotRoguelikeBattleResult/emitBotState, logo depois de forceResolveStalePendingEffect) —
+  // extraídas da closure pra a varredura periódica (STALE_PENDING_EFFECT_SWEEP_MS) conseguir chamar
+  // de fora, sem precisar esperar esse socket específico reconectar. checkWinMission ainda é usado
+  // isolado em alguns handlers (ver bot:attack etc.); checkRoguelikeBattleResult só era chamado de
+  // dentro do emitState antigo — agora emitBotState já cuida disso sozinho, sem precisar de um
+  // repasse próprio aqui.
+  function checkWinMission() { checkBotWinMission(match, playerId); }
+  function emitState() { emitBotState(match, socket, playerId); }
 
   // Reconexão numa partida vs Bot já em andamento pra esse jogador (match veio de botMatches, não de
   // um bot:start novo) — sem isso, o cliente reconectado ficava com a tela antiga pra sempre,
@@ -4632,7 +4838,11 @@ io.on('connection', (socket) => {
   // relatado (turno passa, tudo destravado no servidor, mas o cliente nunca soube). O caso raro de
   // reconectar bem no meio do Jokenpô/mulligan não reenvia o prompt exato (sem essa info guardada em
   // match hoje) — fica pra uma novidade só se voltar a ser reportado.
-  if (match && match.turnManager) emitState();
+  if (match && match.turnManager) {
+    forceResolveStalePendingEffect(match.turnManager);
+    emitState();
+    maybeRunBotTurn(); // resolver um efeito preso pode ter sido o que faltava pro bot seguir o turno dele.
+  }
 
   // 1. Cliente pede pra iniciar partida contra bot, passando o id do deck escolhido — OU o id de
   // uma run do Modo Expedição em vez de deckId (batalha/chefe de um nó do mapa, ver
@@ -4647,7 +4857,11 @@ io.on('connection', (socket) => {
     // sozinho". Se o jogo já começou, só resincroniza o estado atual; se ainda está no
     // RPS/mulligan, ignora (o cliente já tem o prompt certo na tela).
     if (match && (!match.turnManager || !match.turnManager.gameOver)) {
-      if (match.turnManager) emitState();
+      if (match.turnManager) {
+        forceResolveStalePendingEffect(match.turnManager);
+        emitState();
+        maybeRunBotTurn();
+      }
       return;
     }
 
@@ -4784,32 +4998,10 @@ io.on('connection', (socket) => {
     maybeRunBotTurn();
   });
 
-  // Delegação fina pro cérebro compartilhado (BotBrain) — a decisão de o que jogar/atacar/ativar
-  // vive lá (mesmo módulo usado pelo substituto de fila online), aqui só a fiação específica desse
-  // socket (playerState/botState do fechamento, emitState, e o critério de "ainda vale a pena agir").
-  async function runBotTurnWithDelays() {
-    await BotBrain.playTurn({
-      tm: match.turnManager,
-      self: match.botState,
-      opponent: match.playerState,
-      emit: emitState,
-      isAlive: () => !!match && !match.turnManager.gameOver && socket.connected,
-      delay,
-      timing: BotBrain.VS_PLAYER_TIMING,
-      skill: match.botSkill
-    });
-  }
-
-  function maybeRunBotTurn() {
-    if (!match || match.turnManager.gameOver) return;
-    if (match.turnManager.activePlayer === match.botState) {
-      // .catch é essencial aqui (mesmo motivo do maybeRunOnlineBotTurn): sem ele, um erro dentro de
-      // BotBrain.playTurn vira promise rejeitada sem tratamento e derruba o processo inteiro, levando
-      // junto TODAS as partidas do servidor — não só essa vs Bot.
-      runBotTurnWithDelays() // não aguarda (assíncrono), vai emitindo estado conforme age
-        .catch(err => console.error(`[bot] erro rodando turno do bot (player ${playerId}):`, err));
-    }
-  }
+  // Repasses finos pras versões globais (ver runBotTurnGlobal/maybeRunBotTurnGlobal, perto de
+  // forceResolveStalePendingEffect) — mesmo motivo/padrão de checkWinMission/emitState acima.
+  async function runBotTurnWithDelays() { return runBotTurnGlobal(match, socket, playerId); }
+  function maybeRunBotTurn() { maybeRunBotTurnGlobal(match, socket, playerId); }
 
   // 5. Jogador clica em "Encerrar Turno" (só age se for a vez dele, na Main Phase)
   socket.on('bot:advancePhase', () => {

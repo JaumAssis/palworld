@@ -170,6 +170,11 @@ const pt = {
   adminMatchResetConfirmYes: 'Sim, reiniciar',
   adminMatchResetConfirmNo: 'Voltar',
   adminMatchResetDoneMsg: ({ username }) => `Partida de ${username} reiniciada.`,
+  adminActiveMatchesTitle: '📡 Partidas em andamento',
+  adminNoActiveMatches: 'Nenhuma partida em andamento agora.',
+  adminUnstickButton: 'Destravar',
+  adminStuckSince: ({ kind, seconds }) => `⏱ Efeito pendente (${kind}) preso há ${seconds}s`,
+  adminMatchUnstuckMsg: ({ username }) => `Efeito pendente de ${username} destravado.`,
 
   // ---------- CardGrid ----------
   cardGridLoading: 'Carregando cartas...',
@@ -840,6 +845,11 @@ const en = {
   adminMatchResetConfirmYes: 'Yes, reset',
   adminMatchResetConfirmNo: 'Go back',
   adminMatchResetDoneMsg: ({ username }) => `${username}'s match has been reset.`,
+  adminActiveMatchesTitle: '📡 Matches in progress',
+  adminNoActiveMatches: 'No matches in progress right now.',
+  adminUnstickButton: 'Unstick',
+  adminStuckSince: ({ kind, seconds }) => `⏱ Pending effect (${kind}) stuck for ${seconds}s`,
+  adminMatchUnstuckMsg: ({ username }) => `${username}'s pending effect was unstuck.`,
 
   // ---------- CardGrid ----------
   cardGridLoading: 'Loading cards...',

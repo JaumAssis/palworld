@@ -40,6 +40,20 @@ class TurnManager {
     this._addLog(`Jogo iniciado. ${this.activePlayer.playerName} começa.`)
   }
 
+  // Getter/setter em vez de campo puro: registra QUANDO um pendingEffect foi aberto, sem precisar
+  // tocar em nenhum dos ~16 lugares em EffectEngine.js que fazem `turnManager.pendingEffect = {...}`
+  // (a atribuição normal continua funcionando idêntica de fora — só passa por aqui por baixo).
+  // Usado como rede de segurança de último recurso (ver forceResolveStalePendingEffect em
+  // server.js): se por algum bug ainda não encontrado um pendingEffect ficar aberto tempo demais
+  // sem ninguém conseguir resolvê-lo, o jogo se recupera sozinho em vez de travar pra sempre — o
+  // mesmo espírito do CHOOSE_ORDER_FALLBACK_MS e do teto de iterações do BotBrain, só que pra
+  // qualquer efeito pendente, de qualquer carta, em vez de um caso específico só.
+  get pendingEffect() { return this._pendingEffectValue }
+  set pendingEffect(value) {
+    this._pendingEffectValue = value
+    this._pendingEffectSetAt = value ? Date.now() : null
+  }
+
   get defendingPlayer() {
     return this.activePlayer === this.player1 ? this.player2 : this.player1
   }
