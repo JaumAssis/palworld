@@ -220,7 +220,7 @@ function Breeding({ onClose } = {}) {
         }}>
           <div style={{ padding: '14px 16px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h2 style={{ margin: 0, fontSize: 'var(--fs-lg)', display: 'flex', alignItems: 'center', gap: '8px', color: '#fff3d6', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>
-              <img src="/egg.png" alt="Breeding" style={{ width: 'clamp(20px, 2vw, 30px)', height: 'clamp(20px, 2vw, 30px)' }} /> Breeding
+              <img src="/egg.png" alt="" style={{ width: 'clamp(20px, 2vw, 30px)', height: 'clamp(20px, 2vw, 30px)' }} /> {t('menuBreeding')}
             </h2>
             {onClose
               ? <button onClick={onClose} style={{ fontSize: 'var(--fs-sm)', color: '#ffd479', background: 'none', border: 'none', cursor: 'pointer', textShadow: '1px 1px 2px rgba(0,0,0,0.7)' }}>{t('exit')}</button>

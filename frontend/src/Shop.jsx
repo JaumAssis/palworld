@@ -241,8 +241,8 @@ function Shop({ onClose } = {}) {
           {view === 'items' ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {[
-                { key: 'cake', name: 'Cake', img: '/Cake_icon.webp', desc: t('cakeDesc'), price: 15 },
-                { key: 'special_cake', name: 'Special Cake', img: '/Special_Cake_icon.webp', desc: t('specialCakeDesc'), price: 30 }
+                { key: 'cake', name: t('cakeItemName'), img: '/Cake_icon.webp', desc: t('cakeDesc'), price: 15 },
+                { key: 'special_cake', name: t('specialCakeItemName'), img: '/Special_Cake_icon.webp', desc: t('specialCakeDesc'), price: 30 }
               ].map(item => (
                 <div key={item.key} style={{ background: '#fff', borderRadius: '14px', padding: 'var(--sp-sm)', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 1px 4px rgba(0,0,0,0.1)' }}>
                   <img src={item.img} alt={item.name} style={{ width: 'clamp(42px, 4.5vw, 62px)', height: 'clamp(42px, 4.5vw, 62px)' }} />

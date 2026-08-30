@@ -384,7 +384,7 @@ function Farming({ onClose } = {}) {
           display: 'flex', flexDirection: 'column'
         }}>
           <div style={{ padding: '14px 16px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ margin: 0, fontSize: 'var(--fs-lg)', color: '#3a2410', textShadow: '0 1px 2px rgba(255,255,255,0.5)' }}>🌱 Farming</h2>
+            <h2 style={{ margin: 0, fontSize: 'var(--fs-lg)', color: '#3a2410', textShadow: '0 1px 2px rgba(255,255,255,0.5)' }}>{t('menuFarming')}</h2>
             {onClose
               ? <button onClick={onClose} style={{ fontSize: 'var(--fs-sm)', color: '#5c3418', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, textShadow: '0 1px 2px rgba(255,255,255,0.5)' }}>{t('exit')}</button>
               : <Link to="/" style={{ fontSize: 'var(--fs-sm)', color: '#5c3418', textDecoration: 'none', fontWeight: 600, textShadow: '0 1px 2px rgba(255,255,255,0.5)' }}>{t('exit')}</Link>}

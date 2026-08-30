@@ -1193,8 +1193,8 @@ function MainMenu() {
         <button className="sign-button sign-button-fluid" onClick={() => guard(() => setPopup('fishing'))}>🎣 {t('menuFishing')}</button>
         <button className="sign-button sign-button-fluid" onClick={() => guard(() => setPopup('farming'))}>{t('menuFarming')}</button>
         <button className="sign-button sign-button-fluid" onClick={() => guard(() => setPopup('breeding'))} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <img src="/egg.png" alt="Breeding" style={{ width: 'clamp(22px, 2vw, 32px)', height: 'clamp(22px, 2vw, 32px)' }} />
-          Breeding
+          <img src="/egg.png" alt="" style={{ width: 'clamp(22px, 2vw, 32px)', height: 'clamp(22px, 2vw, 32px)' }} />
+          {t('menuBreeding')}
         </button>
         <div style={{ display: 'flex', gap: '6px' }}>
           <button className="sign-button sign-button-fluid" onClick={() => guard(() => setShowMissions(true))}>{t('menuDailyMissions')}</button>
