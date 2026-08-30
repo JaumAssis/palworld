@@ -92,6 +92,53 @@ function CardPicker({ onSelect, onClose, ownedPals, selectedNumbers, requiredKey
   )
 }
 
+// Popout genérico pra digitar a quantidade direto (em vez de clicar em +/− repetidas vezes) — usado
+// tanto pelo forno (Cake/Special Cake) quanto pela Bancada (Isca). `editor` vem de
+// openQuantityEditor(current, max, onConfirm) — o botão >> preenche o campo com o máximo possível.
+function QuantityEditorModal({ editor, onClose }) {
+  const { t } = useLanguage()
+  const [text, setText] = useState(String(editor.current))
+
+  const confirm = () => {
+    const parsed = Math.floor(Number(text))
+    const clamped = Math.max(1, Math.min(editor.max, Number.isFinite(parsed) ? parsed : 1))
+    editor.onConfirm(clamped)
+    onClose()
+  }
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: '#fff', borderRadius: '14px', width: 'var(--panel-w-xs)', maxWidth: '90vw',
+        padding: 'var(--sp-lg)', textAlign: 'center'
+      }}>
+        <h3 style={{ margin: '0 0 12px', color: '#222', fontSize: 'var(--fs-md)' }}>{t('quantityEditorTitle')}</h3>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', justifyContent: 'center' }}>
+          <input
+            type="number" min={1} max={editor.max} value={text}
+            onChange={e => setText(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && confirm()}
+            autoFocus
+            style={{ width: '90px', padding: 'var(--sp-sm)', fontSize: 'var(--fs-md)', textAlign: 'center' }}
+          />
+          <button type="button" onClick={() => setText(String(editor.max))} title={t('quantityEditorMaxTitle')}
+                  style={{ padding: 'var(--sp-xs) var(--sp-sm)', fontSize: 'var(--fs-sm)' }}>
+            ≫
+          </button>
+        </div>
+        <p style={{ margin: '8px 0 0', fontSize: 'var(--fs-2xs)', color: '#999' }}>{t('quantityEditorMaxHint', { max: editor.max })}</p>
+        <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '16px' }}>
+          <button className="sign-button" onClick={confirm} style={{ background: '#a5541b', color: '#fff' }}>{t('quantityEditorConfirm')}</button>
+          <button className="sign-button" onClick={onClose}>{t('quantityEditorCancel')}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function Farming({ onClose } = {}) {
   const { t } = useLanguage()
   const [isOpen, setIsOpen] = useState(false)
@@ -119,6 +166,9 @@ function Farming({ onClose } = {}) {
   const [workbenchError, setWorkbenchError] = useState('')
   const [workbenchRemainingMs, setWorkbenchRemainingMs] = useState(null)
   const [craftQty, setCraftQty] = useState(1)
+  // Popout de digitar a quantidade direto (forno ou bancada) — { current, max, onConfirm } ou null.
+  const [quantityEditor, setQuantityEditor] = useState(null)
+  const openQuantityEditor = (current, max, onConfirm) => setQuantityEditor({ current, max, onConfirm })
 
   useEffect(() => {
     loadOwnedPals()
@@ -501,6 +551,10 @@ function Farming({ onClose } = {}) {
                       <strong style={{ fontSize: 'var(--fs-sm)', minWidth: '18px' }}>{qty}</strong>
                       <button type="button" onClick={() => changeBakeQty(type, 1)} disabled={qty >= maxQty}
                               style={{ width: 'clamp(24px, 2.4vw, 32px)', height: 'clamp(24px, 2.4vw, 32px)', padding: 0, fontSize: 'var(--fs-sm)' }}>+</button>
+                      <button type="button" title={t('quantityEditorButtonTitle')}
+                              onClick={() => openQuantityEditor(qty, maxQty, (v) => setBakeQty(prev => ({ ...prev, [type]: v })))}
+                              disabled={maxQty < 1}
+                              style={{ width: 'clamp(24px, 2.4vw, 32px)', height: 'clamp(24px, 2.4vw, 32px)', padding: 0, fontSize: 'var(--fs-sm)' }}>✏️</button>
                     </div>
                     <button onClick={() => bake(type)} disabled={!player || !kindlingPal || player.wheat < amount * qty || player.lettuce < amount * qty || player.tomato < amount * qty} style={{ fontSize: 'var(--fs-sm)' }}>
                       {t(bakeKey)}
@@ -577,6 +631,10 @@ function Farming({ onClose } = {}) {
                 <strong style={{ fontSize: 'var(--fs-sm)', minWidth: '18px' }}>{craftQty}</strong>
                 <button type="button" onClick={() => changeCraftQty(1)} disabled={craftQty >= maxCraftQty()}
                         style={{ width: 'clamp(24px, 2.4vw, 32px)', height: 'clamp(24px, 2.4vw, 32px)', padding: 0, fontSize: 'var(--fs-sm)' }}>+</button>
+                <button type="button" title={t('quantityEditorButtonTitle')}
+                        onClick={() => openQuantityEditor(craftQty, maxCraftQty(), setCraftQty)}
+                        disabled={maxCraftQty() < 1}
+                        style={{ width: 'clamp(24px, 2.4vw, 32px)', height: 'clamp(24px, 2.4vw, 32px)', padding: 0, fontSize: 'var(--fs-sm)' }}>✏️</button>
               </div>
               <button
                 onClick={craftBait}
@@ -610,6 +668,10 @@ function Farming({ onClose } = {}) {
           onClose={() => setPickingCrafter(false)}
           onSelect={(card) => { setCrafterPal(card); setPickingCrafter(false) }}
         />
+      )}
+
+      {quantityEditor && (
+        <QuantityEditorModal editor={quantityEditor} onClose={() => setQuantityEditor(null)} />
       )}
 
       {picking && (

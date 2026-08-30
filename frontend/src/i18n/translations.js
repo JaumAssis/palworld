@@ -292,6 +292,12 @@ const pt = {
   ingredientsForBait: ({ amount }) => `${amount} de cada ingrediente`,
   craftBaitButton: 'Craftar Isca',
   chooseCrafterFirst: 'Escolha um Pal com Crafting primeiro.',
+  quantityEditorButtonTitle: 'Digitar quantidade',
+  quantityEditorTitle: 'Quantidade',
+  quantityEditorMaxTitle: 'Máximo possível',
+  quantityEditorMaxHint: ({ max }) => `Máximo possível agora: ${max}`,
+  quantityEditorConfirm: 'Confirmar',
+  quantityEditorCancel: 'Cancelar',
 
   // ---------- MyCollection ----------
   collectionLoading: 'Carregando álbum...',
@@ -962,6 +968,12 @@ const en = {
   ingredientsForBait: ({ amount }) => `${amount} of each ingredient`,
   craftBaitButton: 'Craft Bait',
   chooseCrafterFirst: 'Choose a Pal with Crafting first.',
+  quantityEditorButtonTitle: 'Type quantity',
+  quantityEditorTitle: 'Quantity',
+  quantityEditorMaxTitle: 'Max possible',
+  quantityEditorMaxHint: ({ max }) => `Max possible right now: ${max}`,
+  quantityEditorConfirm: 'Confirm',
+  quantityEditorCancel: 'Cancel',
 
   // ---------- MyCollection ----------
   collectionLoading: 'Loading album...',
