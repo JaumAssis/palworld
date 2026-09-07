@@ -5,8 +5,8 @@ const t = {
   brandName: 'python.trilha',
 
   // ---------- tela inicial do /learning (2 quadrados) ----------
-  landingTitle: 'Central de Aprendizado',
-  landingSubtitle: 'O que você quer fazer?',
+  landingTitle: 'GameBox Learning',
+  landingSubtitle: 'Biblioteca gratuita de conhecimento',
   landingCatalogTitle: 'Catálogo',
   landingMinigamesTitle: 'Minigames',
   landingComingSoonTag: 'Em breve',
