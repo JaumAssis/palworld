@@ -22,6 +22,7 @@ import { useAuth } from './auth/AuthContext'
 import { useTheme } from './theme/ThemeContext'
 import { apiFetch, apiJson } from './api'
 import OnlineBadge from './OnlineBadge'
+import LearningApp from './learning/LearningApp'
 
 // Bloqueia rotas que exigem login (o backend já rejeita com 401; isso evita o "flash" da
 // tela antes do redirect e cobre navegação direta/F5). Leva o aviso de login pelo state da
@@ -1517,6 +1518,9 @@ function App() {
         <Route path="/roguelike" element={<RequireAuth><Roguelike /></RequireAuth>} />
         {/* Sem link nenhum na UI — só alcançável digitando a URL direto (ver AdminLoginPage). */}
         <Route path="/admin-login" element={<AdminLoginPage />} />
+        {/* Produto à parte (trilha de Python) — roteamento próprio dentro de LearningApp; ver
+            frontend/src/learning/. Sem link no menu, só alcançável digitando /learning direto. */}
+        <Route path="/learning/*" element={<LearningApp />} />
       </Routes>
     </BrowserRouter>
   )

@@ -148,6 +148,17 @@ function onUserCreated(userId) {
 
 app.use('/api/auth', createAuthRouter(db, { onUserCreated }));
 
+// /learning: produto à parte (trilha de Python), banco e conteúdo próprios em backend/learning/ —
+// só reaproveita req.playerId (linha 127-129) pra ligar progresso a quem já tem conta no jogo. Se o
+// currículo estiver quebrado, isso derruba só essa rota (ver validateCurriculum em
+// learning/content/index.js) — o try/catch garante que o resto do site continua no ar.
+try {
+  const { createLearningRouter } = require('./learning/routes');
+  app.use('/api/learning', createLearningRouter());
+} catch (err) {
+  console.error('[learning] rota desativada — currículo ou módulo inválido:', err.message);
+}
+
 // Serve as imagens das cartas como arquivos estáticos
 // /cardart/BP01-001.png
 app.use('/cardart', express.static(path.join(__dirname, 'public', 'cardart')));
