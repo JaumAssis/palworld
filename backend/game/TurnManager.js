@@ -36,6 +36,7 @@ class TurnManager {
     this.log = []
     this._damageRevealSeq = 0
     this.lastDamageReveal = null
+    this.startedAt = new Date().toISOString() // usado só pra registrar quando a partida começou nos logs persistidos (ver persistMatchLog em server.js)
 
     this._addLog(`Jogo iniciado. ${this.activePlayer.playerName} começa.`)
   }

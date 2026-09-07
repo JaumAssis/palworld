@@ -455,6 +455,13 @@ function checkOnlineWinMissions(session) {
   finishArenaRankPoints(session);
   finishArenaDraftRun(session);
   releaseBotFromMatch(session);
+
+  // Grava o log de 1x só, com fim natural — ver persistMatchLog (bem mais abaixo) pro contexto de
+  // por que isso existe (rastrear o bug de travamento pelo admin, ver /api/admin/matches/trace).
+  if (!session.logPersisted) {
+    session.logPersisted = true;
+    persistMatchLogForSession(session, 'finished');
+  }
 }
 
 // Aplica o resultado de 1 partida (vitória ou derrota) numa run de Arena (draft): soma no placar,
@@ -675,7 +682,7 @@ function emitMatchState(session) {
 // que a partida pareou, então a checagem de fila rejeitava, mesmo a partida estando 100% válida.
 function resyncMatchState(session, socket) {
   if (session.turnManager) {
-    forceResolveStalePendingEffect(session.turnManager);
+    forceResolveStalePendingEffect(session.turnManager, () => persistMatchLogForSession(session, 'stuck_auto_resolved'));
     emitMatchState(session);
     return;
   }
@@ -998,6 +1005,10 @@ function abandonOnlineSession(session, side) {
     message: 'Seu oponente desconectou. Você venceu por W.O.',
     arenaPointsChange
   });
+  if (session.turnManager && !session.logPersisted) {
+    session.logPersisted = true;
+    persistMatchLogForSession(session, 'disconnect_wo');
+  }
   socketRoomMap.delete(session.sides.A.socket.id);
   socketRoomMap.delete(session.sides.B.socket.id);
   onlineSessions.delete(session.roomId);
@@ -1484,6 +1495,78 @@ function computeTiming(startTimeIso, readyTimeIso) {
   return { totalMs, remainingMs };
 }
 
+// ---------- Histórico persistido de log de partida (pra rastrear o bug de travamento) ----------
+// TurnManager.log só existe em memória enquanto a sessão/match existir — depois que a partida acaba
+// (ou é destravada/reiniciada), o log se perdia pra sempre, mesmo sendo justamente o que mais
+// ajudaria a investigar bugs de travamento. Guarda as últimas 10 partidas de cada jogador (poda no
+// próprio insert) — ver /api/admin/matches/trace, o painel de admin "Rastrear".
+db.exec(`
+  CREATE TABLE IF NOT EXISTS match_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_id INTEGER NOT NULL,
+    match_type TEXT NOT NULL,
+    opponent_name TEXT,
+    started_at TEXT,
+    ended_at TEXT NOT NULL,
+    turn_count INTEGER,
+    winner_name TEXT,
+    ended_reason TEXT NOT NULL,
+    log_json TEXT NOT NULL
+  )
+`);
+db.exec('CREATE INDEX IF NOT EXISTS idx_match_logs_player_id ON match_logs(player_id, id DESC)');
+
+const MATCH_LOGS_KEPT_PER_PLAYER = 10;
+
+// Grava o log de 1 jogador (não da partida inteira — pra partida com 2 humanos, cada lado ganha sua
+// própria linha, com o MESMO conteúdo de log) e poda pro teto de MATCH_LOGS_KEPT_PER_PLAYER na hora.
+// endedReason: 'finished' (fim natural) | 'stuck_auto_resolved' (retrato tirado bem no momento em
+// que a rede de segurança precisou intervir — o de maior interesse pra depurar o próprio bug de
+// travamento) | 'admin_reset' | 'disconnect_wo'.
+function persistMatchLog(tm, { playerId, matchType, opponentName, endedReason }) {
+  if (!tm) return;
+  db.prepare(`
+    INSERT INTO match_logs (player_id, match_type, opponent_name, started_at, ended_at, turn_count, winner_name, ended_reason, log_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    playerId, matchType, opponentName || null,
+    tm.startedAt || null, new Date().toISOString(), tm.turnNumber,
+    tm.winner ? tm.winner.playerName : null,
+    endedReason, JSON.stringify(tm.log)
+  );
+  db.prepare(`
+    DELETE FROM match_logs WHERE player_id = ? AND id NOT IN (
+      SELECT id FROM match_logs WHERE player_id = ? ORDER BY id DESC LIMIT ?
+    )
+  `).run(playerId, playerId, MATCH_LOGS_KEPT_PER_PLAYER);
+}
+
+// Grava pros 2 lados reais de uma sessão online de uma vez (pula o lado bot, que não tem histórico
+// de jogador de verdade pra guardar).
+function persistMatchLogForSession(session, endedReason) {
+  const tm = session.turnManager;
+  if (!tm) return;
+  for (const side of ['A', 'B']) {
+    if (session.sides[side].isBot) continue;
+    persistMatchLog(tm, {
+      playerId: session.sides[side].playerId,
+      matchType: session.matchType,
+      opponentName: session.states[otherSide(side)].playerName,
+      endedReason
+    });
+  }
+}
+
+function persistMatchLogForBotMatch(match, playerId, endedReason) {
+  if (!match || !match.turnManager) return;
+  persistMatchLog(match.turnManager, {
+    playerId,
+    matchType: match.roguelikeRunId ? 'roguelike' : 'bot',
+    opponentName: match.botState.playerName,
+    endedReason
+  });
+}
+
 // Tempo máximo que um pendingEffect pode ficar aberto sem ninguém conseguir resolvê-lo antes da
 // rede de segurança abaixo forçar uma resolução padrão — bem generoso (não é pra apressar ninguém
 // pensando na jogada), só existe pra recuperar de bugs ainda não encontrados que deixem esse
@@ -1533,10 +1616,14 @@ function resolvePendingEffectWithDefaults(tm) {
 // a página, reabrir a aba) — ver TurnManager.js pro getter/setter que registra `_pendingEffectSetAt`
 // em TODA atribuição de pendingEffect, sem precisar tocar nos ~16 lugares em EffectEngine.js que
 // abrem um. Só age depois de STALE_PENDING_EFFECT_MS — não interrompe ninguém ainda decidindo a jogada.
-function forceResolveStalePendingEffect(tm) {
+// `onStuck`, se passado, é chamado ANTES de resolver — é o retrato ('stuck_auto_resolved') mais
+// valioso pra investigar o próprio bug de travamento, então bem melhor gravar aqui, no exato momento
+// em que a rede de segurança precisou intervir, do que só depender do log já perdido depois.
+function forceResolveStalePendingEffect(tm, onStuck) {
   const pending = tm.pendingEffect;
   if (!pending || !tm._pendingEffectSetAt) return false;
   if (Date.now() - tm._pendingEffectSetAt < STALE_PENDING_EFFECT_MS) return false;
+  if (onStuck) onStuck();
   return resolvePendingEffectWithDefaults(tm);
 }
 
@@ -1562,10 +1649,19 @@ function checkBotRoguelikeBattleResult(match) {
   match.roguelikeResultApplied = true;
 }
 
+// Mesmo motivo/idempotência de checkOnlineWinMissions (ver logo acima) pro modo vs Bot/Expedição —
+// ver persistMatchLog mais abaixo pro contexto completo.
+function checkBotMatchLogPersist(match, playerId) {
+  if (!match || !match.turnManager.gameOver || match.logPersisted) return;
+  match.logPersisted = true;
+  persistMatchLogForBotMatch(match, playerId, 'finished');
+}
+
 function emitBotState(match, socket, playerId) {
   if (!match) return;
   checkBotWinMission(match, playerId);
   checkBotRoguelikeBattleResult(match);
+  checkBotMatchLogPersist(match, playerId);
   const { turnManager } = match;
 
   const currentlyNight = turnManager.isNight;
@@ -1653,13 +1749,15 @@ const DUMMY_SOCKET = { connected: true, emit: () => {} };
 
 setInterval(() => {
   for (const session of onlineSessions.values()) {
-    if (session.turnManager && forceResolveStalePendingEffect(session.turnManager)) {
+    const onStuck = () => persistMatchLogForSession(session, 'stuck_auto_resolved');
+    if (session.turnManager && forceResolveStalePendingEffect(session.turnManager, onStuck)) {
       emitMatchState(session); // já chama maybeRunOnlineBotTurn sozinho no final
     }
   }
 
   for (const [playerId, match] of botMatches.entries()) {
-    if (match.turnManager && forceResolveStalePendingEffect(match.turnManager)) {
+    const onStuck = () => persistMatchLogForBotMatch(match, playerId, 'stuck_auto_resolved');
+    if (match.turnManager && forceResolveStalePendingEffect(match.turnManager, onStuck)) {
       const liveSocket = connectedSockets.get(playerId) || DUMMY_SOCKET;
       emitBotState(match, liveSocket, playerId);
       maybeRunBotTurnGlobal(match, liveSocket, playerId);
@@ -3779,6 +3877,10 @@ app.post('/api/admin/match/reset', requireAdmin, (req, res) => {
   const session = getOnlineSessionByPlayerId(player.playerId);
   if (session) {
     resetSomething = true;
+    if (session.turnManager && !session.logPersisted) {
+      session.logPersisted = true;
+      persistMatchLogForSession(session, 'admin_reset');
+    }
     clearTimeout(session.chooseOrderFallbackTimer);
     clearTimeout(session.disconnectGraceTimer);
     for (const side of ['A', 'B']) {
@@ -3799,6 +3901,10 @@ app.post('/api/admin/match/reset', requireAdmin, (req, res) => {
   const botMatch = botMatches.get(player.playerId);
   if (botMatch) {
     resetSomething = true;
+    if (botMatch.turnManager && !botMatch.logPersisted) {
+      botMatch.logPersisted = true;
+      persistMatchLogForBotMatch(botMatch, player.playerId, 'admin_reset');
+    }
     botMatches.delete(player.playerId);
     if (botMatch.roguelikeRunId) {
       db.prepare("UPDATE roguelike_runs SET status = 'traveling' WHERE id = ? AND status = 'in_battle'").run(botMatch.roguelikeRunId);
@@ -3922,6 +4028,62 @@ app.post('/api/admin/matches/unstick', requireAdmin, (req, res) => {
   }
 
   return res.status(404).json({ error: 'Esse jogador não tem nenhum efeito pendente travado agora.' });
+});
+
+// "Rastrear": devolve a partida acontecendo AGORA pra esse jogador (se houver, direto da memória —
+// ainda não terminou, não tem o que já estar persistido) + as últimas MATCH_LOGS_KEPT_PER_PLAYER
+// partidas já persistidas (ver persistMatchLog acima) — pra investigar o bug de travamento olhando
+// o log real de jogadas de partidas que travaram (ended_reason='stuck_auto_resolved'/'admin_reset').
+app.post('/api/admin/matches/trace', requireAdmin, (req, res) => {
+  const { username } = req.body || {};
+  if (typeof username !== 'string') return res.status(400).json({ error: 'invalid_username' });
+
+  const player = db.prepare(`
+    SELECT p.id AS playerId, u.username AS username
+    FROM players p JOIN users u ON u.id = p.user_id
+    WHERE u.username = ?
+  `).get(username);
+  if (!player) return res.status(404).json({ error: 'Usuário não encontrado.' });
+
+  let live = null;
+  const session = getOnlineSessionByPlayerId(player.playerId);
+  if (session && session.turnManager) {
+    const side = ['A', 'B'].find(s => session.sides[s].playerId === player.playerId);
+    live = {
+      matchType: session.matchType,
+      opponentName: session.states[otherSide(side)].playerName,
+      turnNumber: session.turnManager.turnNumber,
+      currentPhase: session.turnManager.currentPhase,
+      gameOver: session.turnManager.gameOver,
+      log: session.turnManager.log
+    };
+  } else {
+    const botMatch = botMatches.get(player.playerId);
+    if (botMatch && botMatch.turnManager) {
+      live = {
+        matchType: botMatch.roguelikeRunId ? 'roguelike' : 'bot',
+        opponentName: botMatch.botState.playerName,
+        turnNumber: botMatch.turnManager.turnNumber,
+        currentPhase: botMatch.turnManager.currentPhase,
+        gameOver: botMatch.turnManager.gameOver,
+        log: botMatch.turnManager.log
+      };
+    }
+  }
+
+  const history = db.prepare(`
+    SELECT id, match_type AS matchType, opponent_name AS opponentName, started_at AS startedAt,
+           ended_at AS endedAt, turn_count AS turnCount, winner_name AS winnerName,
+           ended_reason AS endedReason, log_json AS logJson
+    FROM match_logs WHERE player_id = ? ORDER BY id DESC LIMIT ?
+  `).all(player.playerId, MATCH_LOGS_KEPT_PER_PLAYER).map(row => ({
+    id: row.id, matchType: row.matchType, opponentName: row.opponentName,
+    startedAt: row.startedAt, endedAt: row.endedAt, turnCount: row.turnCount,
+    winnerName: row.winnerName, endedReason: row.endedReason,
+    log: JSON.parse(row.logJson)
+  }));
+
+  res.json({ username: player.username, live, history });
 });
 
 // ---------- Modo Expedição: rotas de progressão (Fase 1 — escolha de deck e mapa) ----------
@@ -4839,7 +5001,7 @@ io.on('connection', (socket) => {
   // reconectar bem no meio do Jokenpô/mulligan não reenvia o prompt exato (sem essa info guardada em
   // match hoje) — fica pra uma novidade só se voltar a ser reportado.
   if (match && match.turnManager) {
-    forceResolveStalePendingEffect(match.turnManager);
+    forceResolveStalePendingEffect(match.turnManager, () => persistMatchLogForBotMatch(match, playerId, 'stuck_auto_resolved'));
     emitState();
     maybeRunBotTurn(); // resolver um efeito preso pode ter sido o que faltava pro bot seguir o turno dele.
   }
@@ -4858,7 +5020,7 @@ io.on('connection', (socket) => {
     // RPS/mulligan, ignora (o cliente já tem o prompt certo na tela).
     if (match && (!match.turnManager || !match.turnManager.gameOver)) {
       if (match.turnManager) {
-        forceResolveStalePendingEffect(match.turnManager);
+        forceResolveStalePendingEffect(match.turnManager, () => persistMatchLogForBotMatch(match, playerId, 'stuck_auto_resolved'));
         emitState();
         maybeRunBotTurn();
       }

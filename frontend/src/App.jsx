@@ -888,6 +888,152 @@ function AdminMatchResetPanel({ onClose }) {
   )
 }
 
+// Um bloco de partida (ao vivo ou já persistida) com o log completo escondido atrás de um clique —
+// os logs podem ter centenas de linhas, então mostrar tudo aberto de cara deixaria a lista
+// impossível de navegar.
+function TraceMatchEntry({ label, meta, log, highlight }) {
+  const { t } = useLanguage()
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div style={{
+      border: `1px solid ${highlight ? '#a5541b' : '#eee'}`, borderRadius: '8px', padding: 'var(--sp-sm)',
+      marginBottom: '8px', background: highlight ? '#fff3e0' : '#fafafa'
+    }}>
+      <div onClick={() => setExpanded(v => !v)} style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+        <div>
+          <strong style={{ fontSize: 'var(--fs-sm)', color: '#222' }}>{label}</strong>
+          <p style={{ margin: '2px 0 0', fontSize: 'var(--fs-2xs)', color: '#666' }}>{meta}</p>
+        </div>
+        <span style={{ fontSize: 'var(--fs-sm)', color: '#999', flexShrink: 0 }}>{expanded ? '▲' : '▼'}</span>
+      </div>
+      {expanded && (
+        <div style={{
+          marginTop: '8px', maxHeight: '260px', overflowY: 'auto', background: '#fff',
+          border: '1px solid #ddd', borderRadius: '6px', padding: 'var(--sp-xs)'
+        }}>
+          {log.length === 0 ? (
+            <p style={{ margin: 0, fontSize: 'var(--fs-2xs)', color: '#999' }}>{t('adminTraceEmptyLog')}</p>
+          ) : log.map((line, i) => (
+            <p key={i} style={{ margin: '0 0 2px', fontSize: 'var(--fs-2xs)', color: '#333', fontFamily: 'monospace' }}>{line}</p>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Ferramenta de admin: busca um jogador e mostra a partida acontecendo AGORA (se houver, log ao
+// vivo direto da memória) + as últimas 10 partidas já encerradas (persistidas em match_logs — ver
+// server.js) — pra investigar o bug de travamento pelo log real de jogadas, não só pelo relato do
+// jogador. Entradas com ended_reason 'stuck_auto_resolved'/'admin_reset' vêm destacadas: são
+// justamente os casos em que a partida travou de verdade.
+function AdminTracePanel({ onClose }) {
+  const { t } = useLanguage()
+  const [checking, setChecking] = useState(true)
+  const [isAdmin, setIsAdmin] = useState(false)
+
+  const [username, setUsername] = useState('')
+  const [result, setResult] = useState(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    apiFetch('/api/admin/status').then(r => r.json()).then(data => {
+      setIsAdmin(!!data.isAdmin)
+      setChecking(false)
+    })
+  }, [])
+
+  const trace = () => {
+    if (!username.trim()) return
+    setError('')
+    setResult(null)
+    setBusy(true)
+    apiJson('/api/admin/matches/trace', { method: 'POST', body: JSON.stringify({ username: username.trim() }) })
+      .then(setResult)
+      .catch(err => setError(err.message || t('adminUserNotFound')))
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+    }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: 'var(--panel-w-sm)', maxHeight: '85vh', overflowY: 'auto', background: '#fff', borderRadius: '20px',
+        padding: 'var(--sp-lg)', boxShadow: '0 20px 60px rgba(0,0,0,0.4)', textAlign: 'left'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <h2 style={{ margin: 0, color: '#222', fontSize: 'var(--fs-lg)' }}>📜 {t('adminTracePanelTitle')}</h2>
+          <button onClick={onClose} style={{ padding: '4px 10px', fontSize: 'var(--fs-sm)' }}>✕</button>
+        </div>
+
+        {checking && <p style={{ color: '#666', fontSize: 'var(--fs-sm)' }}>{t('loading')}</p>}
+
+        {!checking && !isAdmin && (
+          <p style={{ color: '#666', fontSize: 'var(--fs-sm)' }}>{t('adminSessionExpired')}</p>
+        )}
+
+        {!checking && isAdmin && (
+          <div>
+            <p style={{ color: '#777', fontSize: 'var(--fs-2xs)', margin: '0 0 10px' }}>{t('adminTraceToolDesc')}</p>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input
+                type="text"
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && trace()}
+                placeholder={t('adminUsernamePlaceholder')}
+                style={{ flex: 1, padding: 'var(--sp-sm)', fontSize: 'var(--fs-sm)' }}
+              />
+              <button className="sign-button" onClick={trace} disabled={busy || !username.trim()}>{t('adminTraceButton')}</button>
+            </div>
+
+            {error && <p style={{ color: 'red', fontSize: 'var(--fs-xs)', marginTop: '8px' }}>{error}</p>}
+
+            {result && (
+              <div style={{ marginTop: '14px' }}>
+                <p style={{ margin: '0 0 10px', color: '#222', fontSize: 'var(--fs-sm)' }}><strong>{result.username}</strong></p>
+
+                {result.live ? (
+                  <TraceMatchEntry
+                    label={t('adminTraceLiveLabel')}
+                    meta={t('adminTraceLiveMeta', {
+                      matchType: result.live.matchType, opponent: result.live.opponentName,
+                      turn: result.live.turnNumber, phase: result.live.currentPhase || '?'
+                    })}
+                    log={result.live.log}
+                    highlight
+                  />
+                ) : (
+                  <p style={{ margin: '0 0 10px', fontSize: 'var(--fs-2xs)', color: '#999' }}>{t('adminTraceNoLiveMatch')}</p>
+                )}
+
+                <h3 style={{ margin: '14px 0 6px', color: '#222', fontSize: 'var(--fs-sm)' }}>{t('adminTraceHistoryTitle')}</h3>
+                {result.history.length === 0 ? (
+                  <p style={{ margin: 0, fontSize: 'var(--fs-2xs)', color: '#999' }}>{t('adminTraceNoHistory')}</p>
+                ) : result.history.map(entry => (
+                  <TraceMatchEntry
+                    key={entry.id}
+                    label={t('adminTraceHistoryLabel', { matchType: entry.matchType, opponent: entry.opponentName || '?' })}
+                    meta={t('adminTraceHistoryMeta', {
+                      endedAt: entry.endedAt, turnCount: entry.turnCount ?? '?',
+                      winner: entry.winnerName || '—', reason: t(`adminTraceReason_${entry.endedReason}`)
+                    })}
+                    log={entry.log}
+                    highlight={entry.endedReason === 'stuck_auto_resolved' || entry.endedReason === 'admin_reset'}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function MissionsPopup({ onClose }) {
   const { t } = useLanguage()
   const [missions, setMissions] = useState([])
@@ -1077,6 +1223,7 @@ function MainMenu() {
   const [showAdmin, setShowAdmin] = useState(false)
   const [showAdminGold, setShowAdminGold] = useState(false)
   const [showAdminMatchReset, setShowAdminMatchReset] = useState(false)
+  const [showAdminTrace, setShowAdminTrace] = useState(false)
   // Só true pra quem já passou pelo /admin-login (rota sem link nenhum na UI, ver AdminLoginPage) —
   // os botões 🛠️/💰 abaixo só são renderizados quando isso é true, então nenhum outro usuário
   // logado vê rastro nenhum de admin em lugar nenhum (antes disso aparecia pra qualquer um que logasse).
@@ -1245,6 +1392,16 @@ function MainMenu() {
           {isAdminSession && (
             <button
               className="currency-badge"
+              onClick={() => setShowAdminTrace(true)}
+              title={t('adminTracePanelTitle')}
+              style={{ padding: 'var(--sp-xs) var(--sp-md)', fontSize: 'var(--fs-md)', cursor: 'pointer' }}
+            >
+              📜
+            </button>
+          )}
+          {isAdminSession && (
+            <button
+              className="currency-badge"
               onClick={() => setShowAdminMatchReset(true)}
               title={t('adminMatchPanelTitle')}
               style={{ padding: 'var(--sp-xs) var(--sp-md)', fontSize: 'var(--fs-md)', cursor: 'pointer' }}
@@ -1288,6 +1445,7 @@ function MainMenu() {
       {showAdmin && <AdminPanel onClose={() => { setShowAdmin(false); refreshPlayer() }} />}
       {showAdminGold && <AdminGoldPanel onClose={() => { setShowAdminGold(false); refreshPlayer() }} />}
       {showAdminMatchReset && <AdminMatchResetPanel onClose={() => setShowAdminMatchReset(false)} />}
+      {showAdminTrace && <AdminTracePanel onClose={() => setShowAdminTrace(false)} />}
     </div>
   )
 }
