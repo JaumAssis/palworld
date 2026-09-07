@@ -5,28 +5,31 @@ import { useLearningT } from './learningI18n'
 import { TerminalTopBar, LessonNode, Spinner, ErrorNotice } from './LearningUI'
 import './learning.css'
 
-export default function LearningHome() {
+// Trilha de UM curso — courseId vem da rota (ver LearningApp.jsx). Título/subtítulo exibidos vêm
+// da própria API (data.course), não de texto fixo aqui, porque este componente serve qualquer
+// curso (Python, Lógica de Programação, etc.), não só Python.
+export default function LearningHome({ courseId }) {
   const t = useLearningT()
   const navigate = useNavigate()
   const [track, setTrack] = useState(null)
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    apiJson('/api/learning/track?course=python')
+    apiJson(`/api/learning/track?course=${encodeURIComponent(courseId)}`)
       .then(setTrack)
       .catch(() => setError(t('trackLoadError')))
-  }, [])
+  }, [courseId])
 
   return (
     <div className="learn-page">
       <div className="learn-container">
-        <TerminalTopBar promptPath="trilha-python">
-          <Link to="/learning" className="learn-back-link">{t('backToCatalogButton')}</Link>
+        <TerminalTopBar promptPath={`trilha-${courseId}`}>
+          <Link to="/learning/catalogo" className="learn-back-link">{t('backToCatalogButton')}</Link>
         </TerminalTopBar>
 
         <header className="learn-hero">
-          <h1 className="learn-hero-title">{t('trackTitle')}</h1>
-          <p className="learn-hero-subtitle">{t('trackSubtitle')}</p>
+          <h1 className="learn-hero-title">{track?.course.title ?? t('trackLoading')}</h1>
+          {track && <p className="learn-hero-subtitle">{track.course.subtitle}</p>}
         </header>
 
         {error && <ErrorNotice>{error}</ErrorNotice>}
@@ -49,7 +52,7 @@ export default function LearningHome() {
                         ...lesson,
                         goal: lesson.status === 'locked' ? t('lessonLockedHint') : lesson.goal
                       }}
-                      onClick={() => lesson.status !== 'locked' && navigate(`/learning/python/${lesson.id}`)}
+                      onClick={() => lesson.status !== 'locked' && navigate(`/learning/${courseId}/${lesson.id}`)}
                     />
                   ))}
                 </div>

@@ -19,6 +19,15 @@ export function CodeBlock({ code }) {
   return <pre className="learn-code"><code>{code}</code></pre>
 }
 
+export function StatPill({ icon, label }) {
+  return (
+    <span className="learn-stat-pill">
+      <span className="learn-stat-icon">{icon}</span>
+      {label}
+    </span>
+  )
+}
+
 export function ProgressBar({ current, total }) {
   const pct = total > 0 ? Math.round((current / total) * 100) : 0
   return (

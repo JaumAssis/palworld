@@ -69,6 +69,29 @@ function checkQuestion(q, lessonId, errors) {
   }
 }
 
+// Intro de uma lição: aceita o formato novo, multi-slide (uma tela de apresentação por conceito,
+// terminando no botão de começar as perguntas) ou o formato legado de um bloco só (`body` + `code`
+// opcional, usado hoje pelo curso de Python) — o roteador normaliza os dois pro mesmo formato
+// antes de expor à API (ver normalizeIntro em ../routes.js). Toda lição PRECISA ter introdução: ela
+// tem que ensinar todo conceito que as questões vão cobrar, não só testar em cima do que não foi
+// explicado (ver feedback do usuário sobre a didática do curso).
+function checkIntro(intro, lessonId, errors) {
+  const where = `lição "${lessonId}".intro`;
+  if (!intro) { errors.push(`${where}: toda lição precisa ter introdução`); return; }
+
+  if (Array.isArray(intro.slides)) {
+    if (intro.slides.length === 0) { errors.push(`${where}.slides: precisa ter pelo menos 1 slide`); return; }
+    intro.slides.forEach((slide, i) => {
+      checkText(slide.title, `${where}.slides[${i}].title`, errors);
+      checkText(slide.body, `${where}.slides[${i}].body`, errors);
+    });
+  } else if (intro.body !== undefined) {
+    checkText(intro.body, `${where}.body`, errors);
+  } else {
+    errors.push(`${where}: precisa ter "slides" (array, formato novo) ou "body" (texto, formato legado)`);
+  }
+}
+
 function loadCourseDir(courseId) {
   const courseDir = path.join(COURSES_DIR, courseId);
   const meta = require(path.join(courseDir, 'meta.js'));
@@ -136,7 +159,7 @@ function validateAll(rawCourses) {
         if (lesson.xp !== undefined && !(Number.isInteger(lesson.xp) && lesson.xp > 0)) {
           errors.push(`lição "${lesson.id}": xp precisa ser inteiro positivo`);
         }
-        if (lesson.intro) checkText(lesson.intro.body, `lição "${lesson.id}".intro.body`, errors);
+        checkIntro(lesson.intro, lesson.id, errors);
 
         const questionIds = new Set();
         for (const q of lesson.questions || []) {

@@ -1,30 +1,60 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { apiJson } from '../api'
 import { useAuth } from '../auth/AuthContext'
 import { useLearningT } from './learningI18n'
-import { TerminalTopBar } from './LearningUI'
+import { TerminalTopBar, StatPill } from './LearningUI'
 import LearningAuthModal from './LearningAuthModal'
 import pythonLogo from './python-logo.webp'
 import './learning.css'
 
-// Tela inicial do /learning: catálogo de cursos. Só Python existe de verdade por enquanto — o
-// card de Lógica de Programação é só o anúncio visual do próximo curso (sem conteúdo/rota real
-// ainda por trás), acima do Python por pedido do usuário.
+// Cursos sem conteúdo/rota nenhuma por trás — só pra dar volume visual ao catálogo, mostrando a
+// variedade de trilhas que podem vir depois. Sempre desabilitados (tom cinza escuro + "Em breve").
+const COMING_SOON_COURSE_IDS = [
+  'gamemaker', 'arduino', 'containers', 'redes', 'csharp', 'distribuida', 'linux', 'owasp',
+  'cybersecurity', 'nodejs', 'frontend', 'php', 'bigdata', 'nuvemModelos', 'iac', 'cloud'
+]
+
+// Catálogo de cursos (/learning/catalogo) — um nível abaixo da tela inicial (/learning, ver
+// LearningLanding.jsx). Lógica de Programação e Python já têm conteúdo real por trás — Lógica
+// aparece acima do Python por pedido do usuário. XP e sequência de dias são globais (soma de todos
+// os cursos, ver GET /api/learning/stats) e aparecem só aqui, não repetidos dentro de cada curso.
 export default function LearningCatalog() {
   const t = useLearningT()
   const navigate = useNavigate()
   const { user } = useAuth()
   const [authMode, setAuthMode] = useState(null) // null | 'login' | 'register'
+  const [stats, setStats] = useState(null)
+
+  // Só busca quando logado — sem setState síncrono no corpo do efeito (mesmo padrão de
+  // LearningLesson.jsx). Se o usuário deslogar, a renderização já esconde os pills via `user &&`,
+  // sem precisar limpar `stats` explicitamente.
+  useEffect(() => {
+    if (!user) return
+    apiJson('/api/learning/stats').then(setStats).catch(() => {})
+  }, [user])
 
   return (
     <div className="learn-page">
       <div className="learn-container">
-        <TerminalTopBar />
+        <TerminalTopBar>
+          <Link to="/learning" className="learn-back-link">{t('backToLandingButton')}</Link>
+        </TerminalTopBar>
 
         <header className="learn-hero">
           <h1 className="learn-hero-title">{t('catalogTitle')}</h1>
           <p className="learn-hero-subtitle">{t('catalogSubtitle')}</p>
         </header>
+
+        {user && stats && (
+          <div className="learn-stats-row">
+            <StatPill icon="⚡" label={`${stats.totalXp} ${t('xpLabel')}`} />
+            <StatPill
+              icon="🔥"
+              label={stats.currentStreak > 0 ? t('streakLabel', { n: stats.currentStreak }) : t('streakLabelZero')}
+            />
+          </div>
+        )}
 
         {!user && (
           <div className="learn-visitor-banner">
@@ -41,13 +71,13 @@ export default function LearningCatalog() {
         )}
 
         <div className="learn-lesson-list">
-          <button className="learn-node learn-node--locked" disabled>
-            <span className="learn-node-icon">🔒</span>
+          <button className="learn-node learn-node--available" onClick={() => navigate('/learning/logica')}>
+            <span className="learn-node-icon">🧠</span>
             <span className="learn-node-body">
               <span className="learn-node-title">{t('courseLogicaTitle')}</span>
               <span className="learn-node-goal">{t('courseLogicaDescription')}</span>
             </span>
-            <span className="learn-node-xp">{t('catalogComingSoonTag')}</span>
+            <span className="learn-node-xp">{t('catalogAvailableTag')}</span>
           </button>
 
           <button className="learn-node learn-node--available" onClick={() => navigate('/learning/python')}>
@@ -58,6 +88,17 @@ export default function LearningCatalog() {
             </span>
             <span className="learn-node-xp">{t('catalogAvailableTag')}</span>
           </button>
+
+          {COMING_SOON_COURSE_IDS.map(id => (
+            <button key={id} className="learn-node learn-node--locked" disabled>
+              <span className="learn-node-icon">🔒</span>
+              <span className="learn-node-body">
+                <span className="learn-node-title">{t(`comingSoon_${id}_title`)}</span>
+                <span className="learn-node-goal">{t(`comingSoon_${id}_desc`)}</span>
+              </span>
+              <span className="learn-node-xp">{t('landingComingSoonTag')}</span>
+            </button>
+          ))}
         </div>
       </div>
 

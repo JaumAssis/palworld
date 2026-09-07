@@ -9,7 +9,7 @@ import './learning.css'
 // Estados possíveis do fluxo de uma tentativa: carregando -> (teoria opcional) -> pergunta ->
 // feedback (repete até a última) -> resultado. A correção de cada pergunta SEMPRE vem do servidor
 // (feedback.correct) — nada aqui decide certo/errado no cliente.
-export default function LearningLesson() {
+export default function LearningLesson({ courseId }) {
   const t = useLearningT()
   const navigate = useNavigate()
   const { lessonId } = useParams()
@@ -19,6 +19,7 @@ export default function LearningLesson() {
   const [phase, setPhase] = useState('loading')
   const [fatalError, setFatalError] = useState(null)
   const [session, setSession] = useState(null)
+  const [slideIndex, setSlideIndex] = useState(0)
   const [index, setIndex] = useState(0)
   const [selectedChoiceId, setSelectedChoiceId] = useState(null)
   const [typedText, setTypedText] = useState('')
@@ -45,6 +46,7 @@ export default function LearningLesson() {
   const retry = () => {
     setPhase('loading')
     setFatalError(null)
+    setSlideIndex(0)
     setIndex(0)
     setSelectedChoiceId(null)
     setTypedText('')
@@ -110,7 +112,7 @@ export default function LearningLesson() {
     return (
       <div className="learn-page">
         <div className="learn-container">
-          <TerminalTopBar promptPath="trilha-python"><Link to="/learning/python" className="learn-back-link">{t('backToTrackButton')}</Link></TerminalTopBar>
+          <TerminalTopBar promptPath={`trilha-${courseId}`}><Link to={`/learning/${courseId}`} className="learn-back-link">{t('backToTrackButton')}</Link></TerminalTopBar>
           <ErrorNotice>{fatalError}</ErrorNotice>
         </div>
       </div>
@@ -128,23 +130,53 @@ export default function LearningLesson() {
   return (
     <div className="learn-page">
       <div className="learn-container">
-        <TerminalTopBar promptPath="trilha-python">
+        <TerminalTopBar promptPath={`trilha-${courseId}`}>
           <button
             className="learn-back-link"
-            onClick={() => { if (phase === 'result' || window.confirm(t('exitLessonConfirm'))) navigate('/learning/python') }}
+            onClick={() => { if (phase === 'result' || window.confirm(t('exitLessonConfirm'))) navigate(`/learning/${courseId}`) }}
           >
             {t('backToTrackButton')}
           </button>
         </TerminalTopBar>
 
-        {phase === 'intro' && (
-          <div className="learn-panel learn-intro">
-            <h1 className="learn-intro-title">{session.lesson.title}</h1>
-            <p className="learn-intro-body">{session.lesson.intro.body}</p>
-            <CodeBlock code={session.lesson.intro.code} />
-            <button className="learn-btn" onClick={() => setPhase('question')}>{t('introStartButton')}</button>
-          </div>
-        )}
+        {phase === 'intro' && (() => {
+          const slides = session.lesson.intro.slides
+          const slide = slides[slideIndex]
+          const isLastSlide = slideIndex === slides.length - 1
+          return (
+            <div className="learn-panel learn-intro">
+              <h1 className="learn-intro-title">{session.lesson.title}</h1>
+              {slides.length > 1 && (
+                <p className="learn-question-counter">{t('introSlideCounter', { n: slideIndex + 1, total: slides.length })}</p>
+              )}
+
+              <h2 className="learn-slide-title">{slide.title}</h2>
+              <p className="learn-intro-body">{slide.body}</p>
+              <CodeBlock code={slide.code} />
+
+              {slides.length > 1 && (
+                <div className="learn-slide-dots">
+                  {slides.map((_, i) => (
+                    <span key={i} className={`learn-slide-dot${i === slideIndex ? ' learn-slide-dot--active' : ''}`} />
+                  ))}
+                </div>
+              )}
+
+              <div className="learn-panel-actions">
+                {slideIndex > 0 && (
+                  <button className="learn-btn learn-btn--ghost" onClick={() => setSlideIndex(i => i - 1)}>
+                    {t('introPrevButton')}
+                  </button>
+                )}
+                {isLastSlide ? (
+                  <button className="learn-btn" onClick={() => setPhase('question')}>{t('introStartButton')}</button>
+                ) : (
+                  <button className="learn-btn" onClick={() => setSlideIndex(i => i + 1)}>{t('introNextButton')}</button>
+                )}
+              </div>
+            </div>
+          )
+        })()}
 
         {(phase === 'question' || phase === 'feedback') && currentQuestion && (
           <div className="learn-panel">
@@ -231,11 +263,11 @@ export default function LearningLesson() {
             <div className="learn-panel-actions">
               {!result.passed && <button className="learn-btn" onClick={retry}>{t('retryButton')}</button>}
               {result.passed && !result.visitorOnly && result.nextLessonId && (
-                <button className="learn-btn" onClick={() => navigate(`/learning/python/${result.nextLessonId}`)}>
+                <button className="learn-btn" onClick={() => navigate(`/learning/${courseId}/${result.nextLessonId}`)}>
                   {t('nextLessonButton')}
                 </button>
               )}
-              <button className="learn-btn learn-btn--ghost" onClick={() => navigate('/learning/python')}>{t('backToTrackButton')}</button>
+              <button className="learn-btn learn-btn--ghost" onClick={() => navigate(`/learning/${courseId}`)}>{t('backToTrackButton')}</button>
             </div>
           </div>
         )}

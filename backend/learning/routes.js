@@ -55,6 +55,17 @@ function publicQuestion(q) {
   return base;
 }
 
+// Normaliza os dois formatos de intro aceitos pelo currículo (ver checkIntro em ./content/index.js)
+// pro mesmo formato de saída — o front só lida com "slides", nunca precisa saber se a lição foi
+// escrita no formato novo (multi-slide) ou no legado (um bloco só, usado hoje pelo curso de Python).
+function normalizeIntro(lesson) {
+  if (!lesson.intro) return null;
+  if (Array.isArray(lesson.intro.slides)) {
+    return { slides: lesson.intro.slides.map(s => ({ title: s.title, body: s.body, code: s.code || null })) };
+  }
+  return { slides: [{ title: lesson.title, body: lesson.intro.body, code: lesson.intro.code || null }] };
+}
+
 const getProgressStmt = db.prepare('SELECT * FROM lesson_progress WHERE player_id = ? AND lesson_id = ?');
 
 function getLessonStatus(playerId, entry) {
@@ -75,8 +86,30 @@ function getOrCreateStats(playerId) {
   return row;
 }
 
+// learner_stats é UMA linha por jogador, não por curso — XP e sequência são globais (praticar
+// qualquer curso conta pra mesma sequência), por isso este payload não depende de course.
+function buildStatsPayload(req) {
+  const loggedIn = !!req.playerId;
+  const stats = loggedIn
+    ? getOrCreateStats(req.playerId)
+    : { total_xp: 0, current_streak: 0, best_streak: 0, lessons_completed: 0 };
+  return {
+    totalXp: stats.total_xp,
+    currentStreak: stats.current_streak,
+    bestStreak: stats.best_streak,
+    lessonsCompleted: stats.lessons_completed,
+    loggedIn
+  };
+}
+
 function createLearningRouter() {
   const router = express.Router();
+
+  // Estatísticas globais do aluno (XP total, sequência de dias) — mostradas só no catálogo, por
+  // pedido do usuário, em vez de repetidas em cada curso.
+  router.get('/stats', (req, res) => {
+    res.json(buildStatsPayload(req));
+  });
 
   // Trilha completa de UM curso: módulos, lições (com status de trava/conclusão) e estatísticas do
   // aluno. ?course= é obrigatório — cada curso destrava suas próprias lições de forma independente
@@ -86,10 +119,6 @@ function createLearningRouter() {
     if (!course) return res.status(400).json({ error: 'invalid_payload' });
 
     const loggedIn = !!req.playerId;
-    const stats = loggedIn
-      ? getOrCreateStats(req.playerId)
-      : { total_xp: 0, current_streak: 0, best_streak: 0, lessons_completed: 0 };
-
     const modules = course.modules.map(mod => ({
       id: mod.id,
       levelKey: mod.levelKey,
@@ -113,13 +142,7 @@ function createLearningRouter() {
 
     res.json({
       course: { id: course.id, title: course.title, subtitle: course.subtitle },
-      stats: {
-        totalXp: stats.total_xp,
-        currentStreak: stats.current_streak,
-        bestStreak: stats.best_streak,
-        lessonsCompleted: stats.lessons_completed,
-        loggedIn
-      },
+      stats: buildStatsPayload(req),
       modules
     });
   });
@@ -152,9 +175,7 @@ function createLearningRouter() {
         title: entry.lesson.title,
         goal: entry.lesson.goal,
         xpReward: entry.lesson.xp || DEFAULT_XP,
-        intro: entry.lesson.intro
-          ? { body: entry.lesson.intro.body, code: entry.lesson.intro.code || null }
-          : null,
+        intro: normalizeIntro(entry.lesson),
         questions: entry.lesson.questions.map(q => publicQuestion(q))
       }
     });
