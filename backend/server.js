@@ -1765,9 +1765,22 @@ async function runBotTurnGlobal(match, socket, playerId) {
 
 function maybeRunBotTurnGlobal(match, socket, playerId) {
   if (!match || !match.turnManager || match.turnManager.gameOver) return;
-  if (match.turnManager.activePlayer === match.botState) {
+  // match._botTurnRunning evita reentrância — espelha exatamente a mesma guarda que
+  // maybeRunOnlineBotTurn já tinha (ver _botTurnRunning ali em cima) e que faltava aqui. Sem isso,
+  // handlers como bot:resolveQuickStep/resolveInterruptCost/resolveBlock chamam maybeRunBotTurn()
+  // de novo assim que resolvem SÓ a sub-etapa deles (ex: Quick Step -> Interrupt Cost, a batalha
+  // continua pendente), e como `activePlayer` ainda é o bot, isso disparava um 2º playTurn
+  // CONCORRENTE por cima do 1º, que ainda está suspenso em `await battle.waitPromise` — o 2º loop
+  // podia sobrescrever tm.pendingBattle com outro ataque, deixando o 1º (e o cliente) esperando pra
+  // sempre uma resolução que nunca mais chegava. Checar pendingEffect/pendingBattle aqui também
+  // impede começar um turno novo enquanto qualquer um dos dois ainda estiver aberto.
+  const tm = match.turnManager;
+  if (match._botTurnRunning || tm.pendingEffect || tm.pendingBattle) return;
+  if (tm.activePlayer === match.botState) {
+    match._botTurnRunning = true;
     runBotTurnGlobal(match, socket, playerId)
-      .catch(err => console.error(`[bot] erro rodando turno do bot (player ${playerId}):`, err));
+      .catch(err => console.error(`[bot] erro rodando turno do bot (player ${playerId}):`, err))
+      .finally(() => { match._botTurnRunning = false; });
   }
 }
 
