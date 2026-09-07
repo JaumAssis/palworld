@@ -1515,6 +1515,12 @@ db.exec(`
   )
 `);
 db.exec('CREATE INDEX IF NOT EXISTS idx_match_logs_player_id ON match_logs(player_id, id DESC)');
+// Log INTERNO de execução (eventos de socket recebidos, exceções, estado do motor logo depois de
+// cada um) — diferente de log_json, que é o log bonito pro JOGADOR ("Fulano jogou Crystal Breath").
+// Esse aqui existe pra dar pra ver a sequência exata de chamadas que o SERVIDOR processou, incluindo
+// o que foi rejeitado por algum guard e qualquer exceção lançada — ver addDebugTrace/o wrapper de
+// socket.on mais abaixo.
+try { db.exec('ALTER TABLE match_logs ADD COLUMN debug_trace_json TEXT'); } catch (e) {}
 
 const MATCH_LOGS_KEPT_PER_PLAYER = 10;
 
@@ -1523,16 +1529,16 @@ const MATCH_LOGS_KEPT_PER_PLAYER = 10;
 // endedReason: 'finished' (fim natural) | 'stuck_auto_resolved' (retrato tirado bem no momento em
 // que a rede de segurança precisou intervir — o de maior interesse pra depurar o próprio bug de
 // travamento) | 'admin_reset' | 'disconnect_wo'.
-function persistMatchLog(tm, { playerId, matchType, opponentName, endedReason }) {
+function persistMatchLog(tm, { playerId, matchType, opponentName, endedReason, debugTrace }) {
   if (!tm) return;
   db.prepare(`
-    INSERT INTO match_logs (player_id, match_type, opponent_name, started_at, ended_at, turn_count, winner_name, ended_reason, log_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO match_logs (player_id, match_type, opponent_name, started_at, ended_at, turn_count, winner_name, ended_reason, log_json, debug_trace_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     playerId, matchType, opponentName || null,
     tm.startedAt || null, new Date().toISOString(), tm.turnNumber,
     tm.winner ? tm.winner.playerName : null,
-    endedReason, JSON.stringify(tm.log)
+    endedReason, JSON.stringify(tm.log), JSON.stringify(debugTrace || [])
   );
   db.prepare(`
     DELETE FROM match_logs WHERE player_id = ? AND id NOT IN (
@@ -1542,7 +1548,8 @@ function persistMatchLog(tm, { playerId, matchType, opponentName, endedReason })
 }
 
 // Grava pros 2 lados reais de uma sessão online de uma vez (pula o lado bot, que não tem histórico
-// de jogador de verdade pra guardar).
+// de jogador de verdade pra guardar). O debugTrace é o MESMO array pros 2 lados — é o log interno da
+// SESSÃO (eventos de socket recebidos de qualquer um dos dois lados), não por jogador.
 function persistMatchLogForSession(session, endedReason) {
   const tm = session.turnManager;
   if (!tm) return;
@@ -1552,7 +1559,8 @@ function persistMatchLogForSession(session, endedReason) {
       playerId: session.sides[side].playerId,
       matchType: session.matchType,
       opponentName: session.states[otherSide(side)].playerName,
-      endedReason
+      endedReason,
+      debugTrace: session.debugTrace
     });
   }
 }
@@ -1563,8 +1571,34 @@ function persistMatchLogForBotMatch(match, playerId, endedReason) {
     playerId,
     matchType: match.roguelikeRunId ? 'roguelike' : 'bot',
     opponentName: match.botState.playerName,
-    endedReason
+    endedReason,
+    debugTrace: match.debugTrace
   });
+}
+
+// Teto de linhas do log interno guardado por partida — dá folga de sobra pra capturar o que levou a
+// um travamento (a rede de segurança só age depois de 45s parado, então não tem MUITA coisa
+// acontecendo nesse meio tempo) sem deixar a memória crescer sem limite em partidas bem longas.
+const MAX_DEBUG_TRACE_LINES = 200;
+
+// Acrescenta 1 linha ao log interno de execução do objeto (session ou match) — usado pelo wrapper
+// de socket.on logo abaixo. `obj` guarda o array direto nele mesmo (não em outro lugar) porque tanto
+// session quanto match já são os objetos que persistMatchLogForSession/BotMatch recebem.
+function addDebugTrace(obj, line) {
+  if (!obj.debugTrace) obj.debugTrace = [];
+  obj.debugTrace.push(`[${new Date().toISOString()}] ${line}`);
+  if (obj.debugTrace.length > MAX_DEBUG_TRACE_LINES) obj.debugTrace.shift();
+}
+
+// Serializa o payload de um evento de socket pro log interno sem arriscar quebrar em payload
+// gigante/circular (nunca deveria ter isso aqui, mas é entrada externa — melhor não confiar).
+function safeStringifyPayload(payload) {
+  try {
+    const s = JSON.stringify(payload === undefined ? {} : payload);
+    return s.length > 300 ? s.slice(0, 300) + '…' : s;
+  } catch (e) {
+    return '[não serializável]';
+  }
 }
 
 // Tempo máximo que um pendingEffect pode ficar aberto sem ninguém conseguir resolvê-lo antes da
@@ -4055,7 +4089,8 @@ app.post('/api/admin/matches/trace', requireAdmin, (req, res) => {
       turnNumber: session.turnManager.turnNumber,
       currentPhase: session.turnManager.currentPhase,
       gameOver: session.turnManager.gameOver,
-      log: session.turnManager.log
+      log: session.turnManager.log,
+      debugTrace: session.debugTrace || []
     };
   } else {
     const botMatch = botMatches.get(player.playerId);
@@ -4066,7 +4101,8 @@ app.post('/api/admin/matches/trace', requireAdmin, (req, res) => {
         turnNumber: botMatch.turnManager.turnNumber,
         currentPhase: botMatch.turnManager.currentPhase,
         gameOver: botMatch.turnManager.gameOver,
-        log: botMatch.turnManager.log
+        log: botMatch.turnManager.log,
+        debugTrace: botMatch.debugTrace || []
       };
     }
   }
@@ -4074,13 +4110,14 @@ app.post('/api/admin/matches/trace', requireAdmin, (req, res) => {
   const history = db.prepare(`
     SELECT id, match_type AS matchType, opponent_name AS opponentName, started_at AS startedAt,
            ended_at AS endedAt, turn_count AS turnCount, winner_name AS winnerName,
-           ended_reason AS endedReason, log_json AS logJson
+           ended_reason AS endedReason, log_json AS logJson, debug_trace_json AS debugTraceJson
     FROM match_logs WHERE player_id = ? ORDER BY id DESC LIMIT ?
   `).all(player.playerId, MATCH_LOGS_KEPT_PER_PLAYER).map(row => ({
     id: row.id, matchType: row.matchType, opponentName: row.opponentName,
     startedAt: row.startedAt, endedAt: row.endedAt, turnCount: row.turnCount,
     winnerName: row.winnerName, endedReason: row.endedReason,
-    log: JSON.parse(row.logJson)
+    log: JSON.parse(row.logJson),
+    debugTrace: JSON.parse(row.debugTraceJson || '[]')
   }));
 
   res.json({ username: player.username, live, history });
@@ -4441,6 +4478,38 @@ io.on('connection', (socket) => {
   // Sobrescreve de propósito se já havia um socket antigo pra esse playerId (2ª aba/reconexão) —
   // o socket mais recente é o que deve receber desafios/mensagens dali pra frente.
   connectedSockets.set(playerId, socket);
+
+  // Instrumenta automaticamente todo handler match:*/bot:* registrado nessa conexão daqui pra frente
+  // com um log interno de execução (debug trace) — sem precisar tocar em cada handler individualmente.
+  // Só existe pra alimentar o botão "Rastrear" do admin: registra o evento recebido, o estado do motor
+  // logo depois, e qualquer exceção não tratada, pra ajudar a achar a causa real do bug de travamento
+  // (o `match` referenciado aqui é o `let match = ...` declarado mais abaixo nesta mesma conexão —
+  // funciona por closure normal, já que essa função só roda de fato quando um evento chega, momento em
+  // que `match` já está inicializado). Eventos fora de match:*/bot:* (chat de lobby, contagem online,
+  // disconnect etc.) passam direto pro socket.on real, sem nenhum overhead.
+  const realSocketOn = socket.on.bind(socket);
+  socket.on = function (event, handler) {
+    if (typeof event !== 'string' || (!event.startsWith('match:') && !event.startsWith('bot:'))) {
+      return realSocketOn(event, handler);
+    }
+    return realSocketOn(event, function (payload) {
+      const traceTarget = event.startsWith('match:') ? getSessionBySocket(socket) : match;
+      if (traceTarget) addDebugTrace(traceTarget, `→ ${event} ${safeStringifyPayload(payload)}`);
+
+      try {
+        handler(payload);
+      } catch (err) {
+        if (traceTarget) addDebugTrace(traceTarget, `✖ EXCEÇÃO em ${event}: ${err.message}`);
+        console.error(`[trace] exceção não tratada em ${event} (player ${playerId}):`, err);
+        return;
+      }
+
+      const tm = traceTarget && traceTarget.turnManager;
+      if (tm) {
+        addDebugTrace(traceTarget, `← fase=${tm.currentPhase} vez=${tm.activePlayer?.playerName || '-'} pendingEffect=${tm.pendingEffect?.kind || '-'} pendingBattle=${tm.pendingBattle?.waitingFor || '-'} gameOver=${tm.gameOver}`);
+      }
+    });
+  };
 
   // Reconexão numa partida online já em andamento (F5, blip de rede, ou o próprio socket.io
   // reconectando sozinho com um socket.id novo) — rebinda esse lado da sessão pro socket novo e

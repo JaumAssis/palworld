@@ -888,12 +888,36 @@ function AdminMatchResetPanel({ onClose }) {
   )
 }
 
-// Um bloco de partida (ao vivo ou já persistida) com o log completo escondido atrás de um clique —
-// os logs podem ter centenas de linhas, então mostrar tudo aberto de cara deixaria a lista
-// impossível de navegar.
-function TraceMatchEntry({ label, meta, log, highlight }) {
+// Baixa um array de linhas como .txt local (Blob + <a> temporário) — sem enviar nada pra fora, só
+// salva no disco do admin que está com o painel aberto, então não passa por nenhum serviço externo.
+function downloadTraceLines(filename, lines) {
+  const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+// Um bloco de partida (ao vivo ou já persistida) com os logs completos escondidos atrás de um
+// clique — podem ter centenas de linhas, então mostrar tudo aberto de cara deixaria a lista
+// impossível de navegar. Alterna entre o log do jogo (bonito, pro jogador) e o log interno de
+// execução (eventos de socket/estado do motor, pra caçar a causa do bug de travamento) via abas.
+function TraceMatchEntry({ label, meta, log, debugTrace, highlight, filenamePrefix }) {
   const { t } = useLanguage()
   const [expanded, setExpanded] = useState(false)
+  const [tab, setTab] = useState('game')
+  const trace = debugTrace || []
+  const activeLines = tab === 'game' ? log : trace
+
+  const tabButtonStyle = active => ({
+    padding: '4px 10px', fontSize: 'var(--fs-2xs)', borderRadius: '6px', border: '1px solid #ccc',
+    background: active ? '#333' : '#fff', color: active ? '#fff' : '#333', cursor: 'pointer'
+  })
+
   return (
     <div style={{
       border: `1px solid ${highlight ? '#a5541b' : '#eee'}`, borderRadius: '8px', padding: 'var(--sp-sm)',
@@ -907,15 +931,30 @@ function TraceMatchEntry({ label, meta, log, highlight }) {
         <span style={{ fontSize: 'var(--fs-sm)', color: '#999', flexShrink: 0 }}>{expanded ? '▲' : '▼'}</span>
       </div>
       {expanded && (
-        <div style={{
-          marginTop: '8px', maxHeight: '260px', overflowY: 'auto', background: '#fff',
-          border: '1px solid #ddd', borderRadius: '6px', padding: 'var(--sp-xs)'
-        }}>
-          {log.length === 0 ? (
-            <p style={{ margin: 0, fontSize: 'var(--fs-2xs)', color: '#999' }}>{t('adminTraceEmptyLog')}</p>
-          ) : log.map((line, i) => (
-            <p key={i} style={{ margin: '0 0 2px', fontSize: 'var(--fs-2xs)', color: '#333', fontFamily: 'monospace' }}>{line}</p>
-          ))}
+        <div style={{ marginTop: '8px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap', gap: '6px' }}>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <button onClick={() => setTab('game')} style={tabButtonStyle(tab === 'game')}>{t('adminTraceTabGame')}</button>
+              <button onClick={() => setTab('debug')} style={tabButtonStyle(tab === 'debug')}>{t('adminTraceTabDebug')}</button>
+            </div>
+            <button
+              onClick={() => downloadTraceLines(`${filenamePrefix || 'trace'}_${tab}.txt`, activeLines)}
+              disabled={activeLines.length === 0}
+              style={{ padding: '4px 10px', fontSize: 'var(--fs-2xs)' }}
+            >
+              ⬇ {t('adminTraceDownloadButton')}
+            </button>
+          </div>
+          <div style={{
+            maxHeight: '260px', overflowY: 'auto', background: '#fff',
+            border: '1px solid #ddd', borderRadius: '6px', padding: 'var(--sp-xs)'
+          }}>
+            {activeLines.length === 0 ? (
+              <p style={{ margin: 0, fontSize: 'var(--fs-2xs)', color: '#999' }}>{t('adminTraceEmptyLog')}</p>
+            ) : activeLines.map((line, i) => (
+              <p key={i} style={{ margin: '0 0 2px', fontSize: 'var(--fs-2xs)', color: '#333', fontFamily: 'monospace' }}>{line}</p>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -1004,6 +1043,8 @@ function AdminTracePanel({ onClose }) {
                       turn: result.live.turnNumber, phase: result.live.currentPhase || '?'
                     })}
                     log={result.live.log}
+                    debugTrace={result.live.debugTrace}
+                    filenamePrefix={`${result.username}_live`}
                     highlight
                   />
                 ) : (
@@ -1022,6 +1063,8 @@ function AdminTracePanel({ onClose }) {
                       winner: entry.winnerName || '—', reason: t(`adminTraceReason_${entry.endedReason}`)
                     })}
                     log={entry.log}
+                    debugTrace={entry.debugTrace}
+                    filenamePrefix={`${result.username}_${entry.id}`}
                     highlight={entry.endedReason === 'stuck_auto_resolved' || entry.endedReason === 'admin_reset'}
                   />
                 ))}
