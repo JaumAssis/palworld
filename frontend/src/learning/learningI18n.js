@@ -26,10 +26,12 @@ const t = {
   courseLogicaDescription: 'Algoritmos, fluxogramas e pseudocódigo — a base antes de qualquer linguagem.',
   coursePythonTitle: 'Python',
   coursePythonDescription: 'Do zero ao avançado, uma lição de cada vez.',
+  courseGamemakerTitle: 'Desenvolvimento de Jogos (GameMaker)',
+  courseGamemakerDescription: 'Sprites, objetos, eventos e a lógica por trás dos seus primeiros jogos.',
+  courseSpedTitle: 'SPED: Escrituração Fiscal e Contábil',
+  courseSpedDescription: 'Os jargões e a lógica por trás da ECD, ECF, EFD Fiscal e EFD Contribuições.',
 
   // ---------- catálogo: cursos "em breve" (só visual, sem conteúdo/rota por trás) ----------
-  comingSoon_gamemaker_title: 'Desenvolvimento de Jogos (GameMaker)',
-  comingSoon_gamemaker_desc: 'Lógica de jogos 2D do zero, sem precisar de uma engine complexa.',
   comingSoon_arduino_title: 'Arduino',
   comingSoon_arduino_desc: 'Eletrônica e programação para prototipar hardware físico.',
   comingSoon_containers_title: 'Containers (Docker)',
