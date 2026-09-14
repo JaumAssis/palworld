@@ -16,11 +16,11 @@ const COMING_SOON_COURSE_IDS = [
 ]
 
 // Catálogo de cursos (/learning/catalogo) — um nível abaixo da tela inicial (/learning, ver
-// LearningLanding.jsx). Lógica de Programação, Python, GameMaker e SPED já têm conteúdo real por
-// trás — Lógica aparece acima do Python por pedido do usuário. XP e sequência de dias são globais
-// (soma de todos os cursos, ver GET /api/learning/stats) e aparecem só aqui, não repetidos por
-// curso. SPED é um curso conceitual (jargões/estrutura fiscal-contábil), sem dado pessoal/real de
-// empresa em nenhum exemplo de conteúdo.
+// LearningLanding.jsx). Lógica de Programação, Python, Rust, GameMaker e SPED já têm conteúdo real
+// por trás — Lógica aparece acima do Python por pedido do usuário, e Rust logo abaixo do Python
+// (idem). XP e sequência de dias são globais (soma de todos os cursos, ver GET /api/learning/stats)
+// e aparecem só aqui, não repetidos por curso. SPED é um curso conceitual (jargões/estrutura
+// fiscal-contábil), sem dado pessoal/real de empresa em nenhum exemplo de conteúdo.
 export default function LearningCatalog() {
   const t = useLearningT()
   const navigate = useNavigate()
@@ -87,6 +87,15 @@ export default function LearningCatalog() {
             <span className="learn-node-body">
               <span className="learn-node-title">{t('coursePythonTitle')}</span>
               <span className="learn-node-goal">{t('coursePythonDescription')}</span>
+            </span>
+            <span className="learn-node-xp">{t('catalogAvailableTag')}</span>
+          </button>
+
+          <button className="learn-node learn-node--available" onClick={() => navigate('/learning/rust')}>
+            <span className="learn-node-icon">🦀</span>
+            <span className="learn-node-body">
+              <span className="learn-node-title">{t('courseRustTitle')}</span>
+              <span className="learn-node-goal">{t('courseRustDescription')}</span>
             </span>
             <span className="learn-node-xp">{t('catalogAvailableTag')}</span>
           </button>

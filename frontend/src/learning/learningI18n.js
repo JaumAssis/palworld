@@ -26,6 +26,8 @@ const t = {
   courseLogicaDescription: 'Algoritmos, fluxogramas e pseudocódigo — a base antes de qualquer linguagem.',
   coursePythonTitle: 'Python',
   coursePythonDescription: 'Do zero ao avançado, uma lição de cada vez.',
+  courseRustTitle: 'Rust',
+  courseRustDescription: 'Ownership, borrowing e a segurança de memória sem garbage collector.',
   courseGamemakerTitle: 'Desenvolvimento de Jogos (GameMaker)',
   courseGamemakerDescription: 'Sprites, objetos, eventos e a lógica por trás dos seus primeiros jogos.',
   courseSpedTitle: 'SPED: Escrituração Fiscal e Contábil',
