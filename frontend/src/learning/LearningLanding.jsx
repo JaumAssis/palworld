@@ -3,9 +3,10 @@ import { useLearningT } from './learningI18n'
 import { TerminalTopBar } from './LearningUI'
 import './learning.css'
 
-// Tela inicial do /learning — só os 2 quadrados (Catálogo / Minigames). O Catálogo leva pra lista
-// de cursos (o que era /learning antes desta tela existir, agora em /learning/catalogo). Minigames
-// não faz nada por enquanto — fica desabilitado, sem rota nenhuma por trás ainda.
+// Tela inicial do /learning — 3 quadrados (Catálogo / Instalação / Minigames). O Catálogo leva pra
+// lista de cursos (o que era /learning antes desta tela existir, agora em /learning/catalogo).
+// Instalação (guias de como instalar e começar a usar as linguagens/ferramentas dos cursos) e
+// Minigames não fazem nada por enquanto — ficam desabilitados, sem rota nenhuma por trás ainda.
 export default function LearningLanding() {
   const t = useLearningT()
   const navigate = useNavigate()
@@ -24,6 +25,12 @@ export default function LearningLanding() {
           <button className="learn-square" onClick={() => navigate('/learning/catalogo')}>
             <span className="learn-square-icon">📚</span>
             <span className="learn-square-title">{t('landingCatalogTitle')}</span>
+          </button>
+
+          <button className="learn-square learn-square--disabled" disabled>
+            <span className="learn-square-icon">🛠️</span>
+            <span className="learn-square-title">{t('landingInstallTitle')}</span>
+            <span className="learn-square-tag">{t('landingComingSoonTag')}</span>
           </button>
 
           <button className="learn-square learn-square--disabled" disabled>

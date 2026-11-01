@@ -8,6 +8,7 @@ const t = {
   landingTitle: 'GameBox Learning',
   landingSubtitle: 'Biblioteca gratuita de conhecimento',
   landingCatalogTitle: 'Catálogo',
+  landingInstallTitle: 'Instalação',
   landingMinigamesTitle: 'Minigames',
   landingComingSoonTag: 'Em breve',
 
@@ -36,12 +37,12 @@ const t = {
   courseSpedDescription: 'Os jargões e a lógica por trás da ECD, ECF, EFD Fiscal e EFD Contribuições.',
   courseContainersTitle: 'Containers (Docker)',
   courseContainersDescription: 'Imagens, Dockerfile, Compose e a operação segura de containers: do primeiro run à produção.',
+  courseRedesTitle: 'Redes de Computadores',
+  courseRedesDescription: 'Do cabo e do endereço IP até roteamento, segurança e a arquitetura da internet.',
+  courseCsharpTitle: 'C# e .NET',
+  courseCsharpDescription: 'Da primeira linha de C# a APIs, nuvem e performance na plataforma .NET.',
 
   // ---------- catálogo: cursos "em breve" (só visual, sem conteúdo/rota por trás) ----------
-  comingSoon_redes_title: 'Redes de Computadores',
-  comingSoon_redes_desc: 'Como os dados trafegam entre máquinas, protocolos e a internet.',
-  comingSoon_csharp_title: 'C# e .NET',
-  comingSoon_csharp_desc: 'Linguagem e plataforma da Microsoft para aplicações e jogos.',
   comingSoon_distribuida_title: 'Computação Distribuída',
   comingSoon_distribuida_desc: 'Sistemas que dividem processamento entre várias máquinas.',
   comingSoon_linux_title: 'Linux',
