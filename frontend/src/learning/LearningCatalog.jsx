@@ -11,14 +11,14 @@ import './learning.css'
 // Cursos sem conteúdo/rota nenhuma por trás — só pra dar volume visual ao catálogo, mostrando a
 // variedade de trilhas que podem vir depois. Sempre desabilitados (tom cinza escuro + "Em breve").
 const COMING_SOON_COURSE_IDS = [
-  'arduino', 'containers', 'redes', 'csharp', 'distribuida', 'linux', 'owasp',
+  'redes', 'csharp', 'distribuida', 'linux', 'owasp',
   'cybersecurity', 'nodejs', 'frontend', 'php', 'bigdata', 'nuvemModelos', 'iac', 'cloud'
 ]
 
 // Catálogo de cursos (/learning/catalogo) — um nível abaixo da tela inicial (/learning, ver
-// LearningLanding.jsx). Lógica de Programação, Python, Rust, GameMaker e SPED já têm conteúdo real
-// por trás — Lógica aparece acima do Python por pedido do usuário, e Rust logo abaixo do Python
-// (idem). XP e sequência de dias são globais (soma de todos os cursos, ver GET /api/learning/stats)
+// LearningLanding.jsx). Lógica de Programação, Python, Rust, Arduino, GameMaker, SPED e Containers já
+// têm conteúdo real por trás — Lógica aparece acima do Python por pedido do usuário, e Rust e Arduino logo
+// abaixo do Python (idem). XP e sequência de dias são globais (soma de todos os cursos, ver GET /api/learning/stats)
 // e aparecem só aqui, não repetidos por curso. SPED é um curso conceitual (jargões/estrutura
 // fiscal-contábil), sem dado pessoal/real de empresa em nenhum exemplo de conteúdo.
 export default function LearningCatalog() {
@@ -100,6 +100,15 @@ export default function LearningCatalog() {
             <span className="learn-node-xp">{t('catalogAvailableTag')}</span>
           </button>
 
+          <button className="learn-node learn-node--available" onClick={() => navigate('/learning/arduino')}>
+            <span className="learn-node-icon">🔌</span>
+            <span className="learn-node-body">
+              <span className="learn-node-title">{t('courseArduinoTitle')}</span>
+              <span className="learn-node-goal">{t('courseArduinoDescription')}</span>
+            </span>
+            <span className="learn-node-xp">{t('catalogAvailableTag')}</span>
+          </button>
+
           <button className="learn-node learn-node--available" onClick={() => navigate('/learning/gamemaker')}>
             <span className="learn-node-icon">🕹️</span>
             <span className="learn-node-body">
@@ -114,6 +123,15 @@ export default function LearningCatalog() {
             <span className="learn-node-body">
               <span className="learn-node-title">{t('courseSpedTitle')}</span>
               <span className="learn-node-goal">{t('courseSpedDescription')}</span>
+            </span>
+            <span className="learn-node-xp">{t('catalogAvailableTag')}</span>
+          </button>
+
+          <button className="learn-node learn-node--available" onClick={() => navigate('/learning/containers')}>
+            <span className="learn-node-icon">🐳</span>
+            <span className="learn-node-body">
+              <span className="learn-node-title">{t('courseContainersTitle')}</span>
+              <span className="learn-node-goal">{t('courseContainersDescription')}</span>
             </span>
             <span className="learn-node-xp">{t('catalogAvailableTag')}</span>
           </button>

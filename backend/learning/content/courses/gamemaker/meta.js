@@ -3,7 +3,7 @@
 // validateAll em ../../index.js.
 module.exports = {
   id: 'gamemaker',
-  order: 4,
+  order: 5,
   title: 'Desenvolvimento de Jogos (GameMaker)',
   subtitle: 'Sprites, objetos, eventos e a lógica por trás dos seus primeiros jogos.',
   accent: '#f472b6'
