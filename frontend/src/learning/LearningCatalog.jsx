@@ -11,12 +11,12 @@ import './learning.css'
 // Cursos sem conteúdo/rota nenhuma por trás — só pra dar volume visual ao catálogo, mostrando a
 // variedade de trilhas que podem vir depois. Sempre desabilitados (tom cinza escuro + "Em breve").
 const COMING_SOON_COURSE_IDS = [
-  'cybersecurity', 'nodejs', 'frontend', 'php', 'bigdata', 'nuvemModelos', 'iac', 'cloud'
+  'php', 'bigdata', 'nuvemModelos', 'iac', 'cloud'
 ]
 
 // Catálogo de cursos (/learning/catalogo) — um nível abaixo da tela inicial (/learning, ver
 // LearningLanding.jsx). Lógica de Programação, Python, Rust, Arduino, GameMaker, SPED, Containers, Redes, C#, Computação
-// Distribuída, Linux e Segurança Web (OWASP) já têm conteúdo real por trás — Lógica aparece acima do Python por pedido do usuário, e Rust e Arduino logo
+// Distribuída, Linux, Segurança Web (OWASP), Cibersegurança, Node.js e Frameworks Frontend já têm conteúdo real por trás — Lógica aparece acima do Python por pedido do usuário, e Rust e Arduino logo
 // abaixo do Python (idem). XP e sequência de dias são globais (soma de todos os cursos, ver GET /api/learning/stats)
 // e aparecem só aqui, não repetidos por curso. SPED é um curso conceitual (jargões/estrutura
 // fiscal-contábil), sem dado pessoal/real de empresa em nenhum exemplo de conteúdo.
@@ -176,6 +176,33 @@ export default function LearningCatalog() {
             <span className="learn-node-body">
               <span className="learn-node-title">{t('courseOwaspTitle')}</span>
               <span className="learn-node-goal">{t('courseOwaspDescription')}</span>
+            </span>
+            <span className="learn-node-xp">{t('catalogAvailableTag')}</span>
+          </button>
+
+          <button className="learn-node learn-node--available" onClick={() => navigate('/learning/ciberseguranca')}>
+            <span className="learn-node-icon">🔐</span>
+            <span className="learn-node-body">
+              <span className="learn-node-title">{t('courseCiberTitle')}</span>
+              <span className="learn-node-goal">{t('courseCiberDescription')}</span>
+            </span>
+            <span className="learn-node-xp">{t('catalogAvailableTag')}</span>
+          </button>
+
+          <button className="learn-node learn-node--available" onClick={() => navigate('/learning/nodejs')}>
+            <span className="learn-node-icon">🟢</span>
+            <span className="learn-node-body">
+              <span className="learn-node-title">{t('courseNodejsTitle')}</span>
+              <span className="learn-node-goal">{t('courseNodejsDescription')}</span>
+            </span>
+            <span className="learn-node-xp">{t('catalogAvailableTag')}</span>
+          </button>
+
+          <button className="learn-node learn-node--available" onClick={() => navigate('/learning/frontend')}>
+            <span className="learn-node-icon">🖥️</span>
+            <span className="learn-node-body">
+              <span className="learn-node-title">{t('courseFrontendTitle')}</span>
+              <span className="learn-node-goal">{t('courseFrontendDescription')}</span>
             </span>
             <span className="learn-node-xp">{t('catalogAvailableTag')}</span>
           </button>
